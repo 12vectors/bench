@@ -165,7 +165,12 @@ class BrainWriting(unittest.TestCase):
 
     def test_1_create_with_preview_and_save(self):
         b = self.open("/brain")
-        b.click('#bshell [data-bact="new"]')
+        # New entry opens the Brain Agent's composer (task 175); writing it
+        # yourself is its secondary action, and opens the same form as before
+        b.click('#bshell [data-bact="ag-new"]')
+        if not b.wait("!!document.querySelector('#bshell [data-bact=\"ag-manual\"]')", 5):
+            raise bv.CheckFailed("New entry opened no composer")
+        b.click('#bshell [data-bact="ag-manual"]')
         if not b.wait("!!document.querySelector('#bshell .b-form [data-bf=\"title\"]')", 5):
             raise bv.CheckFailed("New entry opened no form")
         self.type(b, "title", "How Brain writes are protected")
@@ -326,12 +331,17 @@ class BrainWriting(unittest.TestCase):
             b = self.open("/brain", 390, 844, dark)
             b.eval("document.querySelector('#bshell .b-title').focus()")
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement.dataset.bact"), "new")
+            self.assertEqual(b.eval("document.activeElement.dataset.bact"), "ag-new")
             ring = b.eval("getComputedStyle(document.activeElement).outlineStyle")
             self.assertNotEqual(ring, "none", "the focused button shows a ring")
             b.key("Enter")
             if not b.wait("!!document.querySelector('#bshell .b-form')", 5):
                 raise bv.CheckFailed("Enter on New entry opened no form")
+            self.no_overflow(b, f"composer narrow {'night' if dark else 'day'}")
+            shot(f"brain-write-composer-narrow-{'night' if dark else 'day'}")
+            b.click('#bshell [data-bact="ag-manual"]')
+            if not b.wait("!!document.querySelector('#bshell .b-form [data-bf=\"title\"]')", 5):
+                raise bv.CheckFailed("Write it yourself opened no form")
             self.no_overflow(b, f"form narrow {'night' if dark else 'day'}")
             shot(f"brain-write-form-narrow-{'night' if dark else 'day'}")
             b.click('#bshell [data-bact="cancel"]')

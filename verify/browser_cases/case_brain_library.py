@@ -322,7 +322,7 @@ class BrainLibrary(unittest.TestCase):
         self.reset_view(b)
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
         b.key("Tab")
-        self.assertEqual("new", b.eval("document.activeElement?.dataset?.bact || null"))
+        self.assertEqual("ag-new", b.eval("document.activeElement?.dataset?.bact || null"))
         b.key("Tab")
         self.assertEqual("q", b.eval("document.activeElement?.dataset?.bfind || null"))
         order = []

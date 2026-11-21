@@ -88,7 +88,8 @@ async function load(k) {
     if (S.view === 'brain' && key() === k) renderBrain(true);
     return;
   }
-  if (S.view === 'brain' && key() === k) renderBrain();
+  // an entry read for the Brain Agent's diff repaints its panel wherever it is
+  if (S.view === 'brain' && (key() === k || ag)) renderBrain();
 }
 
 /* The reading asked for by "Use the current version" has landed: the
@@ -167,7 +168,8 @@ function emptyGuidance(dir) {
     : '<p><code>brain/</code> holds no entries yet.</p>';
   return `<div class="b-panel b-empty">${where}` +
     '<p>An entry is one Markdown file in <code>brain/</code> under the work root, committed to the ' +
-    'work repository like the cards are. Write one with <strong>New entry</strong>, or by hand ' +
+    'work repository like the cards are. Ask the Brain Agent for one with <strong>New entry</strong> ' +
+    '(it reads the project and proposes a draft you review and apply), write it yourself, or by hand ' +
     'following the version 1 format in AGENTS.md (“The Brain”); a file appears here as soon as it ' +
     'is saved.</p><p class="b-note">Nothing here imports reviews or reference/ files.</p></div>';
 }
@@ -357,13 +359,13 @@ function noResults(index, t) {
   return `<div class="b-panel b-empty" role="status"><p><strong>No entry matches</strong>` +
     `${said ? ' ' + esc(said) : ' the classifications chosen'}.</p>${why}` +
     `<p>Reset to the default view of the ${entries(index.entries.length)}, or write the entry you were looking for.</p>` +
-    `<p>${button('clear-find', 'Reset to default view')} ${button('new', 'New entry')}</p></div>`;
+    `<p>${button('clear-find', 'Reset to default view')} ${button('ag-new', 'New entry')}</p></div>`;
 }
 
 function listHtml(slot) {
   const index = slot.data;
   const head = '<header class="b-head"><div class="b-headrow"><h1 class="b-title" tabindex="-1">Brain</h1>' +
-    (index.directory.state !== 'refused' ? button('new', 'New entry', { primary: true }) : '') + '</div>' +
+    (index.directory.state !== 'refused' ? button('ag-new', 'New entry', { primary: true }) : '') + '</div>' +
     '<p class="b-lede">Maintained project knowledge kept in the work repository\'s ' +
     '<code>brain/</code>, organised by kind. Each entry has a stable address that survives a rename, ' +
     'a new title or a new classification. An entry explains; it does not override configuration, ' +
@@ -373,7 +375,9 @@ function listHtml(slot) {
     return head + stale + `<div class="b-panel b-bad" role="alert"><p><strong>brain/ was not read.</strong> ` +
       `${esc(index.directory.why)}.</p></div>`;
   }
-  if (!index.entries.length) return head + stale + emptyGuidance(index.directory) + diagnosticsBlock(index);
+  if (!index.entries.length) {
+    return head + stale + requestsHtml() + emptyGuidance(index.directory) + diagnosticsBlock(index);
+  }
   const t = tally(index);
   const total = index.entries.length;
   const hiddenAll = t.inKind.filter(e => !shownClass(e.classification));
@@ -391,7 +395,7 @@ function listHtml(slot) {
   const results = !t.visible.length && !emptyKind
     ? noResults(index, t)
     : kinds.map(k => kindSection(index, k, t)).join('');
-  return head + stale + `<div class="b-lib">` + navHtml(index, t) +
+  return head + stale + requestsHtml() + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${results}${diagnosticsBlock(index)}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
@@ -645,6 +649,7 @@ function entryActions(e) {
     return '<p class="b-note">A retired entry is kept as it is; its history and revisions stay readable.</p>';
   }
   return '<div class="b-actions b-entryactions" role="group" aria-label="Change this entry">' +
+    (ag ? '' : button('ag-ask', 'Ask Brain Agent')) +
     button('edit', 'Edit') + button('classify', 'Classify') +
     button('override', e.override ? 'Clear override' : 'Set override') +
     button('retire', 'Retire') + '</div>';
@@ -721,6 +726,459 @@ function entryHtml(slot, id) {
     `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
     warnings + '</article>';
+}
+
+/* ── the Brain Agent (task 175) ───────────────────────────────────────
+
+   A person asks; a launched, read-only agent asks back or proposes; the
+   person reviews, edits and applies. The page holds one request at a
+   time (`ag`): a composer before Generate, then the request the board
+   keeps under `state/brain/drafts/`. Opening the composer reads the
+   preflight (a GET: nothing launched); Generate and Continue are armed and
+   each launch one bounded round; typing an answer sends nothing until
+   Continue. Apply is armed and writes through the Brain's own write. */
+
+let ag = null;
+const drafts = { list: null, at: 0, one: {} };   // id -> {data, at}
+const AG_STATUS = {
+  running: 'Working', questions: 'Waiting for your answers', ready: 'Ready to continue',
+  proposed: 'Draft ready for review', applying: 'Applying', applied: 'Applied',
+  failed: 'Failed', cancelled: 'Cancelled', discarded: 'Discarded',
+};
+
+function agRequest() {
+  return 'ba-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+async function loadDrafts() {
+  if (inflight.has('drafts')) return;
+  inflight.add('drafts');
+  try {
+    const res = await fetch('/api/brain/drafts');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) drafts.list = data;
+  } catch (e) { /* kept as last read */ }
+  drafts.at = Date.now();
+  inflight.delete('drafts');
+  renderBrain();
+}
+
+async function loadDraft(id) {
+  const k = 'd:' + id;
+  if (inflight.has(k)) return;
+  inflight.add(k);
+  try {
+    const res = await fetch('/api/brain/drafts?id=' + encodeURIComponent(id));
+    const data = await res.json().catch(() => ({}));
+    drafts.one[id] = { data: data.draft || null, error: data.error || null, at: Date.now() };
+  } catch (e) {
+    drafts.one[id] = { ...(drafts.one[id] || {}), error: 'the board could not be asked', at: Date.now() };
+  }
+  inflight.delete(k);
+  const d = drafts.one[id].data;
+  if (ag && ag.draftId === id && d) seedEdit(d);
+  renderBrain();
+}
+
+async function loadPreflight() {
+  if (!ag || inflight.has('pf')) return;
+  inflight.add('pf');
+  const q = new URLSearchParams();
+  if (ag.target) q.set('target', ag.target);
+  if (ag.text) q.set('text', ag.text.slice(0, 2000));
+  try {
+    const res = await fetch('/api/brain/draft/preflight?' + q.toString());
+    const data = await res.json().catch(() => ({}));
+    if (ag) ag.preflight = data.preflight || { error: data.error || 'the board could not say' };
+  } catch (e) {
+    if (ag) ag.preflight = { error: 'the board could not be asked' };
+  }
+  inflight.delete('pf');
+  // a reading arriving, not a person's act: it never replaces the button
+  // under a pressed pointer (the release repaints), and it paints under
+  // the person's typing with their caret kept
+  renderBrain('live');
+}
+
+function openComposer(target, revision, title) {
+  ag = { mode: 'compose', target: target || null, expected: revision || null, targetTitle: title || null,
+         text: '', request: agRequest(), preflight: null, busy: false, error: null };
+  loadPreflight();
+}
+
+function openDraft(id) {
+  ag = { mode: 'draft', draftId: id, answers: {}, note: '', edit: null, view: 'rendered',
+         busy: false, error: null, request: agRequest() };
+  loadDraft(id);
+}
+
+function currentDraft() {
+  return ag && ag.draftId && drafts.one[ag.draftId] ? drafts.one[ag.draftId].data : null;
+}
+
+/* The person's edit starts as the proposal, once per proposal round; a
+   repaint or a re-read never overwrites what they typed. */
+function seedEdit(d) {
+  if (!ag || d.status !== 'proposed' || !d.proposal) return;
+  if (ag.edit && ag.edit.round === d.proposalRound) return;
+  const p = d.proposal;
+  ag.edit = { round: d.proposalRound, title: p.title, kind: p.kind, summary: p.summary || '',
+              body: p.body, sources: (p.sources || []).join('\n'), related: (p.related || []).join(', '),
+              classification: p.classification || 'Unclassified',
+              reason: p.classificationWhy || '' };
+}
+
+/* A line diff, bounded: the exact change against the entry this draft
+   read. Equal runs are folded to their edges. */
+function bodyDiff(before, after) {
+  const a = (before || '').split('\n').slice(0, 1500);
+  const b = (after || '').split('\n').slice(0, 1500);
+  const n = a.length, m = b.length;
+  const w = new Array((n + 1) * (m + 1)).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      w[i * (m + 1) + j] = a[i] === b[j] ? w[(i + 1) * (m + 1) + j + 1] + 1
+        : Math.max(w[(i + 1) * (m + 1) + j], w[i * (m + 1) + j + 1]);
+    }
+  }
+  const rows = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { rows.push([' ', a[i]]); i++; j++; }
+    else if (j < m && (i >= n || w[i * (m + 1) + j + 1] >= w[(i + 1) * (m + 1) + j])) { rows.push(['+', b[j]]); j++; }
+    else { rows.push(['-', a[i]]); i++; }
+  }
+  const out = [];
+  rows.forEach((r, k) => {
+    if (r[0] === ' ') {
+      const near = rows.slice(Math.max(0, k - 2), k + 3).some(x => x[0] !== ' ');
+      if (!near) { if (out[out.length - 1] !== '…') out.push('…'); return; }
+    }
+    out.push(r);
+  });
+  if (!rows.some(r => r[0] !== ' ')) return '<p class="b-note">No change to the body.</p>';
+  return '<pre class="b-diff" aria-label="Changes to the body">' + out.map(r => r === '…'
+    ? '<span class="b-diff-gap">…</span>'
+    : `<span class="b-diff-${r[0] === '+' ? 'add' : r[0] === '-' ? 'del' : 'same'}">` +
+      `${r[0] === '+' ? '+ ' : r[0] === '-' ? '− ' : '  '}${esc(r[1])}</span>`).join('\n') + '</pre>';
+}
+
+function preflightHtml(pf) {
+  if (!pf) return '<p class="b-note" role="status" aria-busy="true">Reading what the Brain Agent would use…</p>';
+  if (pf.error) return `<p class="b-warn" role="alert">${esc(pf.error)}</p>`;
+  const sel = pf.selection || {};
+  const model = sel.model && sel.model.value ? sel.model.value : 'harness default';
+  const harness = (sel.harness || {}).name || pf.adapter || 'unknown';
+  const blocked = pf.blockers && pf.blockers.length
+    ? `<div class="b-panel b-bad" role="alert"><p><strong>The Brain Agent cannot be launched here.</strong> ` +
+      `${esc(pf.blockers[0])}</p><p>Nothing will be launched or paid for. You can still write the entry yourself.</p></div>`
+    : '';
+  const w = pf.work || {};
+  const app = pf.app || {};
+  return blocked + '<details class="b-panel b-scope"><summary>What the Brain Agent will read, and what it may do</summary>' +
+    '<dl class="b-facts">' +
+    `<dt>Harness and model</dt><dd>${esc(harness)} · ${esc(model)}</dd>` +
+    `<dt>Application</dt><dd><span class="mono">${esc(app.root || 'none')}</span>` +
+    `${app.commit ? ` at <span class="mono">${esc(app.commit.slice(0, 12))}</span>` : ''}<br>` +
+    `<span class="b-note">${esc(app.how || '')}. ${esc(app.note || '')}.</span></dd>` +
+    `<dt>Work root</dt><dd><span class="mono">${esc(w.root || '')}</span><br><span class="b-note">${esc(String(w.sources || 0))} ` +
+    `file(s) — ${esc(Object.entries(w.counts || {}).map(([k, v]) => `${v} from ${k}/`).join(', ') || 'none')} — ` +
+    `${esc(w.how || '')}.${w.excludedCount ? ` ${esc(String(w.excludedCount))} left out (credential-shaped, links, oversized or over the bound).` : ''}</span></dd>` +
+    `<dt>Never read</dt><dd class="b-note">${esc((pf.denied || {}).patterns ? pf.denied.patterns.join(', ') : '')}; ${esc((pf.denied || {}).private || '')}</dd>` +
+    `<dt>Budget</dt><dd>${esc(String((pf.budget || {}).rounds))} rounds, ${esc(String(Math.round(((pf.budget || {}).secondsPerRound || 0) / 60)))} minutes each, ` +
+    `at most ${esc(String((pf.budget || {}).questions))} questions a round</dd>` +
+    `<dt>Authority</dt><dd>${esc(pf.authority || '')}. Enforced by ${esc(pf.enforcement || '')}.</dd>` +
+    '</dl></details>';
+}
+
+function composerHtml() {
+  const pf = ag.preflight;
+  const related = pf && pf.related && pf.related.length && !ag.target
+    ? '<div class="b-panel"><p><strong>Possibly the better home:</strong> an update keeps one coherent entry ' +
+      'instead of another article. Choosing one switches this request to an update; nothing is written.</p><ul class="b-links">' +
+      pf.related.map(r => `<li>${esc(r.title || r.id)} <span class="mono b-note">${esc(r.id)}</span> ` +
+        button('ag-target', 'Update this instead', { arg: r.id }) + '</li>').join('') + '</ul></div>' : '';
+  const ph = phaseOf(armed.store, 'ag-generate');
+  const blocked = pf && pf.blockers && pf.blockers.length;
+  return `<section class="b-panel b-form b-agent" aria-labelledby="bag-h"><h2 id="bag-h">` +
+    `${ag.target ? `Ask Brain Agent about ${esc(ag.targetTitle || ag.target)}` : 'New entry'}</h2>` +
+    `<p class="b-note">${ag.target
+      ? 'Say what to correct or add. The agent proposes an update of this entry; you review the exact changes, edit them and apply.'
+      : 'Say what this entry should capture. The Brain Agent reads the project, asks if it must, and proposes an entry you review, edit and apply.'}</p>` +
+    field('ag-text', ag.target ? 'What should change' : 'What should this entry capture?',
+      `<textarea id="bf-ag-text" data-ag="text" rows="4" aria-describedby="bh-ag-text">${esc(ag.text)}</textarea>`,
+      ag.target ? 'For example: “The export now writes UTF-8 with a BOM — correct this.”'
+        : 'For example: “Explain how verification works” or “Capture this architecture decision”.') +
+    (ag.target ? '' : '<p class="b-note"><button type="button" class="b-link" data-bact="ag-manual">Write it yourself instead</button></p>') +
+    (ag.error ? `<p class="b-warn" role="alert">Not started: ${esc(ag.error)}</p>` : '') +
+    '<div class="b-actions">' +
+    button('ag-generate', ph === 'armed' ? 'Confirm: launch the Brain Agent' : ag.busy ? 'Starting…' : 'Generate',
+      { primary: true, armed: ph === 'armed', busy: ag.busy, disabled: ag.busy || !ag.text.trim() || !!blocked }) +
+    button('ag-close', 'Cancel', { disabled: ag.busy }) +
+    (ph === 'armed' ? '<span class="b-note" role="status">Click again to launch one bounded, read-only run. It costs tokens.</span>' : '') +
+    // what the run would read arrives after the composer opens: drawn
+    // below the actions, so its arrival never moves Generate under a hand
+    '</div>' + preflightHtml(pf) + related + '</section>';
+}
+
+function progressHtml(d) {
+  const p = d.progress || {};
+  const tool = p.toolActivity;
+  return '<div class="b-progress" aria-live="polite">' +
+    (p.doing ? `<p><strong>Now:</strong> ${esc(p.doing)}</p>` : '') +
+    (p.blocked ? `<p class="b-warn"><strong>Waiting on:</strong> ${esc(p.blocked)}</p>` : '') +
+    '<div class="b-cols"><div><h3>Done</h3><ul>' + (p.done || []).map(x => `<li>${esc(x)}</li>`).join('') + '</ul></div>' +
+    '<div><h3>Remaining</h3><ul>' + ((p.remaining || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li>Nothing</li>') + '</ul></div></div>' +
+    `<p class="b-note">Last update ${esc(p.lastUpdate && p.lastUpdate.at ? p.lastUpdate.at : '—')}` +
+    (tool ? ` · last tool activity ${tool.last ? esc(new Date(tool.last * 1000).toLocaleTimeString()) : 'none yet'}` +
+      (tool.inFlight ? ` (${esc(tool.inFlight)})` : '') + ' — activity, not progress' : '') + '</p></div>';
+}
+
+function conversationHtml(d) {
+  const lines = (d.conversation || []).map(c => `<li class="b-conv-${esc(c.who)}"><span class="b-note mono">${esc(c.at || '')}</span> ` +
+    `<strong>${c.who === 'you' ? 'You' : c.who === 'agent' ? 'Brain Agent' : 'Board'}</strong> · ${esc(c.kind)}: ${esc(c.text)}` +
+    (c.questions ? '<ul>' + c.questions.map(q => `<li>${esc(q)}</li>`).join('') + '</ul>' : '') + '</li>');
+  return '<details class="b-panel"><summary>Conversation (' + lines.length + ')</summary><ol class="b-history">' +
+    lines.join('') + '</ol></details>';
+}
+
+function proposalHtml(d) {
+  const p = d.proposal;
+  const e = ag.edit || {};
+  const target = d.target ? (cache.entries['e:' + d.target] || {}).data : null;
+  const views = ['rendered', 'changes', 'edit'];
+  const tabs = '<div class="b-tabs" role="group" aria-label="The draft">' + views.map(v =>
+    `<button type="button" class="b-tab" data-bact="ag-view" data-barg="${v}" aria-pressed="${ag.view === v}">` +
+    `${v === 'rendered' ? 'Draft' : v === 'changes' ? (d.mode === 'update' ? 'Changes' : 'Whole entry') : 'Edit'}</button>`).join('') + '</div>';
+  let pane;
+  if (ag.view === 'edit') {
+    pane = field('ag-title', 'Title', `<input id="bf-ag-title" data-age="title" type="text" value="${esc(e.title)}" autocomplete="off">`) +
+      field('ag-kind', 'Kind', `<select id="bf-ag-kind" data-age="kind">` + KINDS.map(k =>
+        `<option${k === e.kind ? ' selected' : ''}>${esc(k)}</option>`).join('') + '</select>') +
+      field('ag-summary', 'Summary', `<input id="bf-ag-summary" data-age="summary" type="text" value="${esc(e.summary)}" autocomplete="off">`) +
+      field('ag-sources', 'Sources', `<textarea id="bf-ag-sources" data-age="sources" rows="3">${esc(e.sources)}</textarea>`) +
+      field('ag-related', 'Related entries', `<input id="bf-ag-related" data-age="related" type="text" value="${esc(e.related)}" autocomplete="off">`) +
+      field('ag-body', 'Body', `<textarea id="bf-ag-body" data-age="body" rows="16">${esc(e.body)}</textarea>`);
+    if (d.mode === 'create') {
+      pane += '<fieldset class="b-fieldset"><legend>Classification — the agent suggested ' +
+        `${esc(p.classification)}; you decide</legend>` + ['Current', 'Historical', 'Unclassified'].map(c =>
+        `<label class="b-radio"><input type="radio" name="bf-ag-class" data-age="classification" value="${c}"` +
+        `${e.classification === c ? ' checked' : ''}> ${classChip(c)}</label>`).join('') + '</fieldset>' +
+        field('ag-reason', 'Why this classification', `<input id="bf-ag-reason" data-age="reason" type="text" value="${esc(e.reason)}" autocomplete="off">`);
+    } else {
+      pane += `<p class="b-note">The entry's classification (${esc(target ? target.classification : 'as it is')}) and its history are kept. ` +
+        `The agent suggested ${esc(p.classification)}; change it with Classify after applying, if you agree.</p>`;
+    }
+  } else if (ag.view === 'changes') {
+    pane = d.mode === 'update'
+      ? (target ? `<p class="b-note">Against ${esc(d.target)} as this draft read it (${esc(d.targetRevision || '')}).</p>` +
+          (target.revision !== d.targetRevision ? '<p class="b-warn">The entry has changed since; applying will be refused.</p>' : '') +
+          (e.title !== target.title ? `<p><strong>Title:</strong> <del>${esc(target.title)}</del> → <ins>${esc(e.title)}</ins></p>` : '') +
+          bodyDiff(target.body, e.body) : '<p class="b-note" role="status">Reading the entry…</p>')
+      : bodyDiff('', e.body);
+  } else {
+    pane = `<h3>${esc(e.title)}</h3>${e.summary ? `<p class="b-lede">${esc(e.summary)}</p>` : ''}` +
+      `<div class="b-prose">${md(e.body || '', { base: 3 })}</div>`;
+  }
+  const claims = (p.claims || []).length ? '<h3>Claims, and how far each goes</h3><ul>' + p.claims.map(c =>
+    `<li>${chip('b-claim b-claim-' + esc(c.status), c.status)} ${esc(c.statement)}` +
+    `${c.sources.length ? ` <span class="b-note mono">${c.sources.map(esc).join(', ')}</span>` : ''}</li>`).join('') + '</ul>' : '';
+  const sources = '<h3>Sources it cites, at the revision read</h3><ul class="b-links">' + (d.bindings || []).map(b =>
+    `<li><span class="mono">${esc(b.ref)}</span> <span class="b-note mono">${b.commit ? 'commit ' + esc(b.commit.slice(0, 12)) + ', ' : ''}` +
+    `sha256 ${esc(b.sha256.slice(0, 12))}</span>${b.why ? ` — ${esc(b.why)}` : ''}</li>`).join('') + '</ul>';
+  const suggest = p.suggestTarget && d.mode === 'create'
+    ? `<div class="b-panel" role="note"><p><strong>The agent suggests updating ${esc(p.suggestTarget)} instead.</strong> ` +
+      `${esc(p.suggestWhy || '')}</p><p>Switching asks for a new draft of that entry; nothing is written or launched until you continue.</p>` +
+      button('ag-retarget', phaseOf(armed.store, 'ag-retarget') === 'armed' ? `Confirm: update ${p.suggestTarget} instead` : `Update ${p.suggestTarget} instead`,
+        { arg: p.suggestTarget, armed: phaseOf(armed.store, 'ag-retarget') === 'armed' }) + '</div>' : '';
+  const conflict = d.conflict
+    ? `<div class="b-panel b-bad" role="alert"><h3>Not applied: ${d.conflict.code === 'source-drift'
+        ? 'a source changed' : 'the entry changed'}</h3>` +
+      (d.conflict.sources ? '<ul>' + d.conflict.sources.map(s => `<li><span class="mono">${esc(s.ref)}</span> ${esc(s.why)}</li>`).join('') + '</ul>'
+        : `<p>${esc(d.conflict.why || '')}</p>`) +
+      '<p>Nothing was written. Ask for a revised draft (below) so the agent reads them again, or discard this draft.</p></div>' : '';
+  const kept = d.error && d.error.kept
+    ? `<div class="b-panel b-bad" role="alert"><p><strong>The last round failed (${esc(d.error.code || 'failed')}).</strong> ` +
+      `${esc(d.error.why || '')}</p>${d.error.problems ? '<ul>' + d.error.problems.map(x =>
+        `<li>${esc(x)}</li>`).join('') + '</ul>' : ''}</div>` : '';
+  const ap = phaseOf(armed.store, 'ag-apply');
+  return kept + suggest + conflict + tabs + `<div class="b-panel b-agdraft">${pane}</div>` +
+    (p.uncertainty ? `<p class="b-warn"><strong>Uncertain:</strong> ${esc(p.uncertainty)}</p>` : '') + claims + sources +
+    '<div class="b-actions">' +
+    button('ag-apply', ap === 'armed' ? (d.mode === 'update' ? `Confirm: apply to ${d.target}` : 'Confirm: create this entry')
+      : ag.busy ? 'Applying…' : 'Apply', { primary: true, armed: ap === 'armed', busy: ag.busy, disabled: ag.busy }) +
+    button('ag-discard', phaseOf(armed.store, 'ag-discard') === 'armed' ? 'Confirm: discard' : 'Discard',
+      { armed: phaseOf(armed.store, 'ag-discard') === 'armed', disabled: ag.busy }) +
+    (ap === 'armed' ? `<span class="b-note" role="status">Click again to write ${d.mode === 'update' ? 'this update' : 'this entry'} ` +
+      'through the Brain\'s own revision-guarded write.</span>' : '') + '</div>';
+}
+
+function continueHtml(d) {
+  if (!d.canContinue) {
+    if (d.status === 'proposed') {
+      return `<p class="b-note">This request has used its ${esc(String(d.maxRounds))} rounds: apply, edit and apply, or discard it.</p>`;
+    }
+    return d.status === 'questions' || d.status === 'failed'
+      ? `<p class="b-note">This request has used its ${esc(String(d.maxRounds))} rounds and has no draft to apply: discard it and start a new request.</p>` : '';
+  }
+  const qs = d.status === 'questions' ? (d.questions || []).map(q =>
+    field('ag-q-' + q.id, esc(q.question), `<textarea id="bf-ag-q-${esc(q.id)}" data-agq="${esc(q.id)}" rows="2"` +
+      `${q.why ? ` aria-describedby="bh-ag-q-${esc(q.id)}"` : ''}>${esc(ag.answers[q.id] || '')}</textarea>`,
+      q.why ? esc(q.why) : '')).join('') : '';
+  const label = d.status === 'questions' ? 'Anything else (optional)' : d.status === 'proposed'
+    ? 'What should the revised draft change?' : 'A note for the next round (optional)';
+  const ph = phaseOf(armed.store, 'ag-continue');
+  const word = d.status === 'questions' ? 'Continue' : d.status === 'proposed' ? 'Ask for a revised draft' : 'Try again';
+  return `<div class="b-panel b-continue"><h3>${d.status === 'questions' ? 'The Brain Agent asks' : word}</h3>` + qs +
+    field('ag-note', label, `<textarea id="bf-ag-note" data-ag="note" rows="2">${esc(ag.note)}</textarea>`) +
+    `<p class="b-note">Typing sends nothing. ${esc(word)} launches round ${d.round + 1} of ${d.maxRounds}.</p>` +
+    '<div class="b-actions">' + button('ag-continue', ph === 'armed' ? `Confirm: ${word.toLowerCase()}` : ag.busy ? 'Starting…' : word,
+      { primary: d.status !== 'proposed', armed: ph === 'armed', busy: ag.busy, disabled: ag.busy }) +
+    (ph === 'armed' ? '<span class="b-note" role="status">Click again to launch the next round. It costs tokens.</span>' : '') +
+    '</div></div>';
+}
+
+function draftHtml() {
+  const slot = drafts.one[ag.draftId];
+  const d = slot && slot.data;
+  if (!d) {
+    return `<section class="b-panel b-agent"><h2>Brain Agent</h2><p class="b-note" role="status" aria-busy="true">` +
+      `${esc((slot && slot.error) || 'Reading the request…')}</p>${button('ag-close', 'Close')}</section>`;
+  }
+  const state = AG_STATUS[d.status] || d.status;
+  const tone = { failed: ' b-bad', cancelled: '', discarded: '' }[d.status] || '';
+  let body = progressHtml(d);
+  if (d.status === 'running') {
+    const ph = phaseOf(armed.store, 'ag-cancel');
+    body += '<div class="b-actions">' + button('ag-cancel', ph === 'armed' ? 'Confirm: cancel' : 'Cancel',
+      { armed: ph === 'armed', alarm: true }) + '</div>';
+  } else if (d.status === 'proposed') {
+    body += proposalHtml(d) + continueHtml(d);
+  } else if (d.status === 'questions' || d.status === 'ready') {
+    body += continueHtml(d) + '<div class="b-actions">' + button('ag-discard',
+      phaseOf(armed.store, 'ag-discard') === 'armed' ? 'Confirm: discard' : 'Discard',
+      { armed: phaseOf(armed.store, 'ag-discard') === 'armed' }) + '</div>';
+  } else if (d.status === 'failed') {
+    body += `<div class="b-panel b-bad" role="alert"><p><strong>${esc((d.error || {}).code || 'failed')}:</strong> ` +
+      `${esc((d.error || {}).why || '')}</p>${(d.error || {}).problems ? '<ul>' + d.error.problems.map(x =>
+        `<li>${esc(x)}</li>`).join('') + '</ul>' : ''}<p>Nothing was written.</p></div>` + continueHtml(d) +
+      '<div class="b-actions">' + button('ag-discard', phaseOf(armed.store, 'ag-discard') === 'armed' ? 'Confirm: discard' : 'Discard',
+        { armed: phaseOf(armed.store, 'ag-discard') === 'armed' }) + '</div>';
+  } else if (d.status === 'applied') {
+    const a = d.applied || {};
+    body += `<p>Applied as <a href="${esc(entryHref(a.id))}" data-route data-brain-id="${esc(a.id)}">${esc(a.id)}</a> ` +
+      `(${esc(a.what || '')}). Saved, committed and shared are shown on the entry.</p>`;
+  } else {
+    body += `<p class="b-note">${d.status === 'cancelled' ? 'Cancelled: nothing was written, and this request cannot be applied.'
+      : 'Discarded: the Brain is unchanged.'}</p>`;
+  }
+  return `<section class="b-panel b-agent${tone}" aria-labelledby="bag-h" data-agdraft="${esc(d.id)}">` +
+    `<h2 id="bag-h" tabindex="-1">Brain Agent · ${esc(state)}</h2>` +
+    `<p class="b-note">${d.mode === 'update' ? `Updating <span class="mono">${esc(d.target)}</span>` : 'A new entry'} · ` +
+    `round ${esc(String(d.round))} of ${esc(String(d.maxRounds))} · <span class="mono">${esc(d.id)}</span></p>` +
+    `<blockquote class="b-request">${esc(d.text)}</blockquote>` + body +
+    (ag.error ? `<p class="b-warn" role="alert">${esc(ag.error)}</p>` : '') +
+    conversationHtml(d) +
+    `<p class="b-note">${esc(d.local || '')}. ${button('ag-close', 'Close')}</p></section>`;
+}
+
+function agentHtml() {
+  if (!ag) return '';
+  return ag.mode === 'compose' ? composerHtml() : draftHtml();
+}
+
+function requestsHtml() {
+  const list = drafts.list;
+  if (!list || !list.drafts.length) return '';
+  const open = list.drafts.filter(d => !['applied', 'cancelled', 'discarded'].includes(d.status));
+  if (!open.length) return '';
+  return '<section class="b-panel" aria-labelledby="bag-list"><h2 id="bag-list">Brain Agent requests ' +
+    `<span class="b-count">${open.length}</span></h2><p class="b-note">Private to this board until applied.</p><ul class="b-list">` +
+    open.map(d => `<li class="b-row"><div class="b-rowhead"><span>${esc(d.text.slice(0, 120))}</span>` +
+      chip('b-kind', AG_STATUS[d.status] || d.status) + '</div>' +
+      `<p class="b-meta mono">${esc(d.id)}${d.target ? ' · updating ' + esc(d.target) : ' · new entry'} ` +
+      `${button('ag-open', 'Open', { arg: d.id })}</p></li>`).join('') + '</ul></section>';
+}
+
+async function agAct(name, arg) {
+  if (name === 'ag-new') { openComposer(null); return true; }
+  if (name === 'ag-ask') {
+    const e = currentEntry();
+    if (e) openComposer(e.id, e.revision, e.title);
+    return true;
+  }
+  if (name === 'ag-manual') { ag = null; startWrite('create', null); if (!cache.index) load('index'); return true; }
+  if (name === 'ag-close') { ag = null; armed.sweep(k => !k.startsWith('ag-')); return true; }
+  if (name === 'ag-open') { openDraft(arg); return true; }
+  if (name === 'ag-view' && ag) { ag.view = arg; return true; }
+  if (name === 'ag-target' && ag) {
+    const hit = ((ag.preflight || {}).related || []).find(r => r.id === arg);
+    ag.target = arg; ag.targetTitle = hit ? hit.title : arg; ag.expected = null; ag.preflight = null;
+    loadPreflight();
+    return true;
+  }
+  const costly = { 'ag-generate': 1, 'ag-continue': 1, 'ag-apply': 1, 'ag-discard': 1, 'ag-cancel': 1, 'ag-retarget': 1 };
+  if (!costly[name] || !ag) return false;
+  const said = armed.click(name, undefined, () => renderBrain(true));
+  if (said === 'armed') return true;
+  if (said === 'busy') return true;
+  armed.disarm(name);
+  const d = currentDraft();
+  let url, body;
+  if (name === 'ag-generate') {
+    url = '/api/brain/draft/start';
+    body = { request: ag.request, text: ag.text, target: ag.target || undefined, expected: ag.expected || undefined };
+  } else if (name === 'ag-continue' && d) {
+    url = '/api/brain/draft/continue';
+    body = { id: d.id, request: ag.request, round: d.round, answers: ag.answers, note: ag.note };
+  } else if (name === 'ag-apply' && d && ag.edit) {
+    const e = ag.edit;
+    url = '/api/brain/draft/apply';
+    body = { id: d.id, request: ag.request, round: d.proposalRound, title: e.title, kind: e.kind,
+             summary: e.summary, body: e.body,
+             sources: e.sources.split('\n').map(s => s.trim()).filter(Boolean),
+             related: e.related.split(',').map(s => s.trim()).filter(Boolean),
+             classification: e.classification, reason: e.reason };
+  } else if (name === 'ag-discard' && d) {
+    url = '/api/brain/draft/discard'; body = { id: d.id };
+  } else if (name === 'ag-cancel' && d) {
+    url = '/api/brain/draft/cancel'; body = { id: d.id };
+  } else if (name === 'ag-retarget' && d) {
+    url = '/api/brain/draft/retarget'; body = { id: d.id, round: d.round, target: arg };
+  } else return true;
+  ag.busy = true; ag.error = null;
+  renderBrain(true);
+  const mine = ag;
+  let res = await post(url, body);
+  if (res.status === 0 && (name === 'ag-generate' || name === 'ag-continue' || name === 'ag-apply')) {
+    // no answer: the same request identity again is answered from the record
+    res = await post(url, body);
+  }
+  mine.busy = false;
+  if (ag !== mine) return true;
+  if (!res.ok) {
+    ag.error = res.error || 'refused';
+    if (res.data && res.data.draft) drafts.one[res.data.draft.id] = { data: res.data.draft, at: Date.now() };
+    if (ag.draftId) loadDraft(ag.draftId);
+    renderBrain(true);
+    return true;
+  }
+  ag.request = agRequest();
+  const got = res.data.draft;
+  if (got) drafts.one[got.id] = { data: got, at: Date.now() };
+  if (name === 'ag-generate') { openDraft(got.id); drafts.one[got.id] = { data: got, at: Date.now() }; }
+  if (name === 'ag-continue') { ag.answers = {}; ag.note = ''; }
+  if (name === 'ag-apply' && res.data.operation) {
+    const op = res.data.operation;
+    ops[op.id] = { request: (got.applied || {}).request || '', op, at: Date.now() };
+    forget();
+    toast(`Applied: ${op.id} ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
+      !!(op.commit && op.commit.state === 'failed'));
+  }
+  drafts.at = 0;
+  renderBrain(true);
+  $('#bshell #bag-h')?.focus();
+  return true;
 }
 
 /* ── the writes ────────────────────────────────────────────────────── */
@@ -823,6 +1281,17 @@ function currentEntry() {
 }
 
 function act(name, arg) {
+  if (name.startsWith('ag-')) {
+    // the agent's own steps: what is synchronous (opening, switching a
+    // view) has happened by the time this paints; a POST paints again
+    // when its answer arrives
+    agAct(name, arg);
+    renderBrain(true);
+    if (['ag-new', 'ag-ask', 'ag-target'].includes(name)) $('#bshell [data-ag="text"]')?.focus();
+    if (name === 'ag-manual') $('#bshell .b-form input')?.focus();
+    if (name === 'ag-close') $('#bshell .b-title')?.focus();
+    return;
+  }
   const e = currentEntry();
   if (name === 'clear-find') {
     resetFind();
@@ -904,6 +1373,26 @@ function wire(el) {
       renderBrain(true);
       return;
     }
+    if (ag && f.dataset && (f.dataset.ag || f.dataset.agq || f.dataset.age)) {
+      // the Brain Agent's fields: kept here, sent nothing until a button
+      if (f.dataset.ag === 'text') ag.text = f.value;
+      else if (f.dataset.ag === 'note') ag.note = f.value;
+      else if (f.dataset.agq) ag.answers[f.dataset.agq] = f.value;
+      else if (f.dataset.age && ag.edit) ag.edit[f.dataset.age] = f.value;
+      // Generate becomes available once there is a request; the preflight
+      // is asked again for the words typed (a read) when the field is left.
+      // Leaving it is usually a press on Generate, so nothing is forced:
+      // the repaint waits for that click to be dispatched
+      if (ev.type === 'change' && f.dataset.ag === 'text' && ag.mode === 'compose') {
+        if (!ag.target) loadPreflight();
+        renderBrain();
+      } else if (ev.type === 'input' && f.dataset.ag === 'text') {
+        const gen = el.querySelector('[data-bact="ag-generate"]');
+        const blocked = ag.preflight && ag.preflight.blockers && ag.preflight.blockers.length;
+        if (gen) gen.disabled = ag.busy || !ag.text.trim() || !!blocked;
+      } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
+      return;
+    }
     if (!ed || !f.dataset || !f.dataset.bf) return;
     const name = f.dataset.bf;
     ed.draft[name] = f.type === 'checkbox' ? f.checked : f.value;
@@ -926,6 +1415,14 @@ function wire(el) {
   document.addEventListener('click', () => pressing().done(), true);
   document.addEventListener('pointerup', () => pressing().up(), true);
   document.addEventListener('pointercancel', () => pressing().done(), true);
+  // a request the Brain Agent is working on is read again while it works;
+  // a request waiting on the person is not (it changes only when they act)
+  setInterval(() => {
+    if (S.view !== 'brain' || !ag || !ag.draftId) return;
+    const slot = drafts.one[ag.draftId];
+    const d = slot && slot.data;
+    if (!d || ['running', 'applying'].includes(d.status)) loadDraft(ag.draftId);
+  }, 2000);
 }
 
 function pressing() {
@@ -972,8 +1469,10 @@ function renderBrain(force) {
   // draft away (navigation never writes, and never carries a draft along)
   if (ed && ((ed.mode === 'create') !== (k === 'index') || (ed.id && k !== 'e:' + ed.id))) ed = null;
   // held while a person types, and while a pointer is down on the view
-  if (!force && ((isField(document.activeElement) && el.contains(document.activeElement))
-      || pressing().held())) return;
+  // `live` (the Brain Agent's preflight arriving) paints under a person's
+  // typing — the caret is kept below — but never under a pressed pointer
+  const typing = isField(document.activeElement) && el.contains(document.activeElement);
+  if (force === 'live' ? pressing().held() : !force && (typing || pressing().held())) return;
   let html;
   // a destination has not arrived until its reading has: an entry's own
   // markup may hold other loading notes (its Revisions fold), so this is
@@ -1002,6 +1501,15 @@ function renderBrain(force) {
     if (k === 'index' && ed && ed.mode === 'create' && slot && slot.data) {
       html = back + formHtml(null);
     }
+    if (k === 'index' && (!drafts.list || Date.now() - drafts.at > 10000)) loadDrafts();
+    if (ag && !ed) {
+      // the Brain Agent's request is drawn wherever the person is in the
+      // Brain: alone on the list's page, above the entry on an entry's
+      const d = currentDraft();
+      const target = d ? d.target : ag.target;
+      if (target && !cache.entries['e:' + target]) load('e:' + target);
+      html = k === 'index' ? back + agentHtml() : agentHtml() + html;
+    }
   }
   const arrived = k !== paintedKey && !loading;
   if (html !== painted) {
@@ -1011,13 +1519,17 @@ function renderBrain(force) {
     // the caret is kept in the search box and in a draft's text fields (a
     // forced repaint — the current version read in — lands while typing)
     const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
-      (active.dataset.bf && (active.tagName === 'TEXTAREA' || active.type === 'text')))
+      ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age) &&
+        (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
       ? (active.classList.contains('b-conflict') ? '.b-conflict'
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
         : active.dataset.bkind ? `[data-bkind="${CSS.escape(active.dataset.bkind)}"]`
         : active.dataset.bshow ? `[data-bshow="${CSS.escape(active.dataset.bshow)}"]`
+        : active.dataset.ag ? `[data-ag="${CSS.escape(active.dataset.ag)}"]`
+        : active.dataset.agq ? `[data-agq="${CSS.escape(active.dataset.agq)}"]`
+        : active.dataset.age && active.type !== 'radio' ? `[data-age="${CSS.escape(active.dataset.age)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]`
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +

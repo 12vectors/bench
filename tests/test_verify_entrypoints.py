@@ -674,11 +674,37 @@ class Preflight(Fixture):
 
     def test_backend_prepares_when_node_runs_and_the_module_imports(self):
         self.commit()
+        # `sh`, not the default lsof, so this holds on a machine without lsof
         r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
-                                 "--require-module", "json")
+                                 "--require-module", "json", "--tool", "sh")
         self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
         self.assertEqual("v22.0.0-fixture", data["node"]["version"])
         self.assertTrue(data["dependency"]["importable"])
+        self.assertEqual(["sh"], list(data["tools"]))
+
+    def test_backend_without_a_needed_tool_does_not_prepare(self):
+        # task 180: the stop.sh tests skip without lsof, and verify/backend
+        # refuses a skip — so the preparation says which tool, first
+        self.commit()
+        r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
+                                 "--require-module", "json",
+                                 "--tool", "sh", "--tool", "bench-verify-no-such-tool")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("bench-verify-no-such-tool", data["reason"])
+        self.assertIn("skip", data["reason"])
+        self.assertIsNone(data["tools"]["bench-verify-no-such-tool"])
+
+    def test_backend_needs_lsof_by_default(self):
+        self.commit()
+        only_git = self.base / "only-git"
+        only_git.mkdir()
+        os.symlink(shutil.which("git"), only_git / "git")
+        r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
+                                 "--require-module", "json",
+                                 env_extra={"PATH": str(only_git)})
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertEqual({"lsof": None}, data["tools"])
+        self.assertIn("lsof", data["reason"])
 
     def test_backend_without_node_does_not_prepare(self):
         self.commit()
@@ -691,9 +717,327 @@ class Preflight(Fixture):
     def test_backend_without_markdown_it_does_not_prepare(self):
         self.commit()
         r, data = self.run_entry("preflight", "backend", "--node", str(self.fake_node()),
-                                 "--require-module", "bench_verify_no_such_module")
+                                 "--require-module", "bench_verify_no_such_module",
+                                 "--tool", "sh")
         self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
         self.assertIn("bench_verify_no_such_module", data["reason"])
+
+
+def load_backend():
+    """verify/backend as a module (it has no .py suffix); its main is
+    guarded, so loading it runs nothing."""
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("verify_backend_under_test",
+                                                  str(VERIFY / "backend"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class RequiredTiming(Fixture):
+    """Task 180: the CI leg's contract. A pass of the whole suite there
+    rests on timing evidence this run wrote about exactly the tests that
+    ran; anything less is never read as a complete pass."""
+
+    def test_a_timed_pass_records_its_exact_test_set(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_one(self): pass
+                def test_two(self): pass
+        """)
+        self.commit()
+        r, data = self.run_entry("backend", "--require-timing")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(data["timing"]["collected"])
+        self.assertEqual(2, data["testSet"]["count"])
+        ids = sorted(t["id"] for t in json.loads(
+            Path(data["artifacts"]["timings"]).read_text())["tests"])
+        self.assertEqual(["tests.test_a.T.test_one", "tests.test_a.T.test_two"], ids)
+        import hashlib
+        self.assertEqual(hashlib.sha256("\n".join(ids).encode()).hexdigest(),
+                         data["testSet"]["sha256"])
+
+    def test_it_cannot_be_combined_with_a_focused_or_untimed_run(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_one(self): pass
+        """)
+        self.commit()
+        for extra in (["--select", "tests.test_a"], ["--no-timing"]):
+            r, data = self.run_entry("backend", "--require-timing", *extra)
+            self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+            self.assertIn("--require-timing", data["reason"])
+
+    def test_skips_and_zero_discovery_still_refuse_first(self):
+        self.commit()
+        r, data = self.run_entry("backend", "--require-timing")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("zero tests", data["reason"])
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_ran(self): pass
+                @unittest.skip("needs node")
+                def test_skipped(self): pass
+        """)
+        self.commit()
+        r, data = self.run_entry("backend", "--require-timing")
+        self.assertEqual(SETUP, r.returncode, r.stdout + r.stderr)
+        self.assertIn("skipped", data["reason"])
+
+    def test_a_failing_run_still_keeps_fresh_timing_and_log(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_bad(self): self.assertEqual(1, 2)
+        """)
+        self.commit()
+        r, data = self.run_entry("backend", "--require-timing")
+        self.assertEqual(FAIL, r.returncode, r.stdout + r.stderr)
+        self.assertIn("tests.test_a.T.test_bad", Path(data["artifacts"]["log"]).read_text())
+        timings = json.loads(Path(data["artifacts"]["timings"]).read_text())
+        self.assertEqual(["failure"], [t["outcome"] for t in timings["tests"]])
+        self.assertEqual(1, data["testSet"]["count"])
+
+
+class TestSet(unittest.TestCase):
+    """verify/backend's test_set, on timings files made by hand: what a
+    missing, stale, unreadable or miscounted file reads as."""
+
+    def setUp(self):
+        self.backend = load_backend()
+        self.dir = Path(tempfile.mkdtemp(prefix="bv-testset-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = self.dir / "timings.json"
+
+    def write(self, ids):
+        self.path.write_text(json.dumps({"tests": [{"id": i} for i in ids]}))
+
+    def test_a_fresh_file_naming_the_tests_that_ran_has_no_problems(self):
+        self.write(["t.b", "t.a"])
+        got = self.backend.test_set(self.path, benchverify.time.time() - 5, 2)
+        self.assertEqual([], got["problems"])
+        self.assertEqual(2, got["count"])
+
+    def test_a_missing_file_is_a_problem(self):
+        got = self.backend.test_set(self.path, benchverify.time.time(), 2)
+        self.assertTrue(any("missing" in p for p in got["problems"]), got)
+        self.assertIsNone(got["count"])
+
+    def test_a_file_older_than_the_run_is_a_problem(self):
+        self.write(["t.a"])
+        old = benchverify.time.time() - 3600
+        os.utime(self.path, (old, old))
+        got = self.backend.test_set(self.path, benchverify.time.time(), 1)
+        self.assertTrue(any("before this run" in p for p in got["problems"]), got)
+
+    def test_an_unreadable_file_is_a_problem(self):
+        self.path.write_text("{not json")
+        got = self.backend.test_set(self.path, None, 1)
+        self.assertTrue(any("not readable" in p for p in got["problems"]), got)
+
+    def test_a_count_that_disagrees_or_repeats_is_a_problem(self):
+        self.write(["t.a"])
+        got = self.backend.test_set(self.path, None, 3)
+        self.assertTrue(any("names 1 tests but unittest says 3" in p
+                            for p in got["problems"]), got)
+        self.write(["t.a", "t.a"])
+        got = self.backend.test_set(self.path, None, 2)
+        self.assertTrue(any("more than once" in p for p in got["problems"]), got)
+
+    def test_the_digest_does_not_depend_on_order(self):
+        self.write(["t.b", "t.a"])
+        one = self.backend.test_set(self.path, None, 2)["sha256"]
+        self.write(["t.a", "t.b"])
+        self.assertEqual(one, self.backend.test_set(self.path, None, 2)["sha256"])
+
+
+class CiSummary(Fixture):
+    """verify/ci-summary: the strict CI leg's attestation of one record,
+    run here against records real verify/backend runs wrote."""
+
+    def summarise(self, *args, env_extra=None):
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("GITHUB_", "BENCH_VERIFY"))}
+        env.update(env_extra or {})
+        out = self.base / "summary.md"
+        r = subprocess.run([sys.executable, str(VERIFY / "ci-summary"),
+                            str(self.artifacts), "--summary", str(out), *args],
+                           env=env, capture_output=True, text=True, timeout=60)
+        return r, (out.read_text() if out.exists() else "")
+
+    def head(self):
+        return subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def python(self):
+        return "{}.{}".format(*sys.version_info[:2])
+
+    def passing(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_one(self): pass
+        """)
+        self.commit()
+        r, _ = self.run_entry("backend", "--require-timing")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+
+    def test_a_complete_pass_of_the_expected_commit_and_python(self):
+        self.passing()
+        r, md = self.summarise("--expect-revision", self.head(),
+                               "--expect-python", self.python())
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("complete pass", md)
+        self.assertIn(self.head(), md)
+        self.assertIn("1 ids, sha256", md)
+
+    def test_another_commit_or_python_is_not_this_ones_pass(self):
+        self.passing()
+        r, md = self.summarise("--expect-revision", "0" * 40)
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("not the expected", md)
+        r, md = self.summarise("--expect-python", "2.7")
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("not 2.7", md)
+
+    def test_a_failed_suite_reads_failed_and_is_still_summarised(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_bad(self): self.assertEqual(1, 2)
+        """)
+        self.commit()
+        self.run_entry("backend", "--require-timing")
+        r, md = self.summarise("--expect-revision", self.head())
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("FAILED", md)
+        self.assertIn("the suite failed", md)
+
+    def test_skips_and_zero_discovery_are_not_a_complete_pass(self):
+        self.commit()
+        self.run_entry("backend", "--require-timing")
+        r, md = self.summarise()
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("NOT a complete pass", md)
+        self.assertIn("zero tests", md)
+
+    def test_a_plain_untimed_pass_is_not_a_complete_pass(self):
+        self.write_test("test_a.py", """
+            import unittest
+            class T(unittest.TestCase):
+                def test_one(self): pass
+        """)
+        self.commit()
+        r, _ = self.run_entry("backend", "--no-timing")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
+        r, md = self.summarise()
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("timing not collected", md)
+
+    def test_no_record_or_two_records_is_not_a_pass(self):
+        r, md = self.summarise()
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("does not exist", md)
+        self.artifacts.mkdir()
+        r, md = self.summarise()
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("no run record", md)
+        self.passing()
+        self.run_entry("backend", "--require-timing")
+        r, md = self.summarise()
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("2 run records", md)
+
+    def test_the_context_file_holds_only_allowlisted_identifiers(self):
+        self.passing()
+        r, _ = self.summarise("--write-context", env_extra={
+            "GITHUB_SHA": "f" * 40, "CANDIDATE_SHA": self.head(),
+            "PR_HEAD_SHA": self.head(), "PR_BASE_SHA": "e" * 40,
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_TOKEN": "ghs_secretvalue", "SOME_PASSWORD": "hunter2"})
+        self.assertEqual(0, r.returncode, r.stdout)
+        ctx = json.loads((self.artifacts / "ci-context.json").read_text())
+        # GitHub's merge commit and the PR head the run is about, side by
+        # side, so the artifact says which commit it attests
+        self.assertEqual("f" * 40, ctx["GITHUB_SHA"])
+        self.assertEqual(self.head(), ctx["CANDIDATE_SHA"])
+        self.assertEqual(self.head(), ctx["PR_HEAD_SHA"])
+        self.assertEqual("e" * 40, ctx["PR_BASE_SHA"])
+        self.assertEqual("42", ctx["GITHUB_RUN_ID"])
+        text = json.dumps(ctx)
+        self.assertNotIn("secretvalue", text)
+        self.assertNotIn("hunter2", text)
+
+
+class Workflow(unittest.TestCase):
+    """.github/workflows/tests.yml, read as text (no YAML parser in the
+    stdlib): one strict, timed leg whose outputs are kept on every path,
+    and the plain compatibility leg beside it."""
+
+    def setUp(self):
+        self.text = (REPO / ".github" / "workflows" / "tests.yml").read_text()
+
+    def test_both_supported_pythons_remain(self):
+        self.assertIn('python-version: ["3.11", "3.13"]', self.text)
+        self.assertIn('STRICT_PYTHON: "3.13"', self.text)
+        self.assertIn("python3 -m unittest discover -s tests -v", self.text)
+        self.assertIn("if: matrix.python-version != env.STRICT_PYTHON", self.text)
+
+    def test_the_strict_leg_prepares_then_runs_the_strict_wrapper(self):
+        order = ["actions/setup-node", "pip install -r site/requirements.txt",
+                 "verify/preflight backend", "verify/backend --require-timing",
+                 "verify/ci-summary", "actions/upload-artifact"]
+        at = [self.text.index(step) for step in order]
+        self.assertEqual(sorted(at), at)
+        self.assertIn('--expect-revision "$CANDIDATE_SHA"', self.text)
+        self.assertIn("--expect-python", self.text)
+
+    def test_a_pull_request_run_is_about_the_prs_head_commit(self):
+        # On a pull_request event $GITHUB_SHA is GitHub's merge commit,
+        # which nothing else names: the candidate is the PR head, checked
+        # out, expected, and naming the artifact.
+        self.assertIn("CANDIDATE_SHA: ${{ github.event.pull_request.head.sha "
+                      "|| github.sha }}", self.text)
+        checkout = self.text[self.text.index("actions/checkout"):]
+        self.assertIn("ref: ${{ env.CANDIDATE_SHA }}",
+                      checkout[:checkout.index("- uses:")])
+        self.assertNotIn('--expect-revision "$GITHUB_SHA"', self.text)
+        upload = self.text[self.text.index("- name: Keep timing"):]
+        self.assertIn("${{ env.CANDIDATE_SHA }}", upload)
+        self.assertNotIn("${{ github.sha }}", upload)
+        self.assertIn("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+                      self.text)
+        self.assertIn("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                      self.text)
+
+    def test_the_wrapper_ends_a_hung_suite_inside_the_job_limit(self):
+        # a run the runner kills writes no record; the wrapper's own
+        # timeout must come first so a hung suite still keeps one
+        job = int(self.text.split("timeout-minutes:")[1].split()[0])
+        step = self.text[self.text.index("verify/backend --require-timing"):]
+        wrapper = float(step.split("--timeout")[1].split()[0])
+        self.assertLess(wrapper, job * 60)
+
+    def test_outputs_are_kept_on_every_path_under_a_unique_name(self):
+        upload = self.text[self.text.index("- name: Keep timing"):]
+        self.assertIn("if: always()", upload)
+        for part in ("${{ matrix.python-version }}", "${{ env.CANDIDATE_SHA }}",
+                     "${{ github.run_id }}", "${{ github.run_attempt }}"):
+            self.assertIn(part, upload)
+        attest = self.text[self.text.index("- name: Attest"):]
+        self.assertIn("if: always()", attest[:attest.index("run:")])
+        # outputs go to the runner's temp, never into the checkout judged
+        self.assertIn('--artifacts "$RUNNER_TEMP/bench-ci/backend"', self.text)
+
+    def test_no_credential_reaches_the_checkout(self):
+        self.assertIn("persist-credentials: false", self.text)
+        self.assertIn("contents: read", self.text)
+        self.assertNotIn("secrets.", self.text)
 
 
 class UnderBench(Fixture):

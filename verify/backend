@@ -17,6 +17,13 @@ and module fixture, discovery and the whole run — summarised under
 `timing` in the record. `--no-timing` runs the plain command instead.
 verify/timing-report ranks one run and compares two sets of runs.
 
+`--require-timing` (task 180, the CI leg) makes the timing file part of
+the pass: it must have been written by this run, be readable, and name
+exactly as many distinct test ids as unittest says ran. Otherwise the run
+is a setup error, never a pass. Without it timing stays diagnostics only.
+Either way the record's `testSet` names the count and a digest of the
+sorted test ids, so two runs can be shown to have covered the same tests.
+
 `--select` (repeatable, at most 32) runs only the named modules, classes
 or tests — `tests.test_x`, `tests.test_x.Case`, `tests.test_x.Case.test_y`
 — as `python3 -m unittest -v <names>`. The selection is resolved first,
@@ -35,6 +42,7 @@ does not, because the suite's skips are all missing dependencies (node,
 markdown-it-py) or platform tools.
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -189,7 +197,39 @@ def record_timing(run: bv.Run) -> None:
         print(f"timing test: {x['seconds']:7.2f}s {x['id']}")
 
 
+def test_set(path: Path, since: float | None, ran: int | None) -> dict:
+    """The test ids a timings file names, and whether it can stand behind
+    a whole-suite pass: written by this run (`since` is when the run
+    started), readable, one entry per test, and as many as unittest said
+    ran. Returns {"count", "sha256", "problems"}; it never raises."""
+    problems: list[str] = []
+    if since is not None:
+        try:
+            bv.require_fresh([path], since)
+        except bv.SetupError as exc:
+            problems.append(str(exc))
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        ids = [t["id"] for t in doc.get("tests", [])]
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        problems.append(f"timings file not readable: {exc}")
+        return {"count": None, "sha256": None, "problems": problems}
+    if len(set(ids)) != len(ids):
+        problems.append("the timings file names some test ids more than once")
+    if ran is not None and len(ids) != ran:
+        problems.append(f"the timings file names {len(ids)} tests but unittest "
+                        f"says {ran} ran")
+    digest = hashlib.sha256("\n".join(sorted(ids)).encode("utf-8")).hexdigest()
+    return {"count": len(ids), "sha256": digest, "problems": problems}
+
+
 def body(run: bv.Run) -> str:
+    if run.args.require_timing and (run.args.select or run.args.no_timing):
+        raise bv.SetupError("--require-timing is for a timed whole-suite run; it cannot "
+                            "be combined with --select or --no-timing")
+    if run.args.require_timing and not COLLECTOR.is_file():
+        raise bv.SetupError(f"--require-timing, and there is no timing collector at "
+                            f"{COLLECTOR}")
     selection = bv.validate_selection(
         run.args.select, bv.BACKEND_SELECTOR, "backend",
         "tests.test_gitrepo or tests.test_gitrepo.Case.test_name")
@@ -224,6 +264,12 @@ def body(run: bv.Run) -> str:
         **{k.replace(" ", "_"): int(v) for k, v in counts.items()},
         "importFailures": unimportable}
     run.record["coverage"]["ran"] = run.record["tests"]["ran"]
+    timings = run.record.get("artifacts", {}).get("timings")
+    tset = (test_set(Path(timings), run.started, run.record["tests"]["ran"])
+            if timings else None)
+    if tset is not None:
+        run.record["testSet"] = {"count": tset["count"], "sha256": tset["sha256"],
+                                 "source": "timings.json"}
     if not run.record["coverage"]["discovered"]:
         run.record["coverage"]["discovered"] = run.record["tests"]["ran"]
     if not ran:
@@ -267,6 +313,13 @@ def body(run: bv.Run) -> str:
         raise bv.CheckFailed(f"{n} tests ran, unittest exit {code}: "
                              f"{summary.group(0).strip() if summary else 'no summary'}"
                              f"{named}")
+    if run.args.require_timing:
+        # last, so a failing or skipping run says that first; a pass
+        # whose timing evidence is missing, stale or about other tests is
+        # not a complete pass
+        problems = tset["problems"] if tset else ["no timings file was named"]
+        if problems:
+            raise bv.SetupError("--require-timing: " + "; ".join(problems)[:800])
     if selection:
         return (f"{n} tests ran: {summary.group(0).strip()} — focused on "
                 f"{', '.join(selection)[:400]}; not a whole-suite result")
@@ -280,6 +333,10 @@ if __name__ == "__main__":
         "--no-timing", action="store_true",
         help="run the plain `python -m unittest` command, without the timing "
              "collector (timings.json is then not written)")
+    runner.parser.add_argument(
+        "--require-timing", action="store_true",
+        help="a pass also needs a fresh, readable timings.json naming exactly the "
+             "tests that ran (the CI leg's contract); otherwise setup-error")
     runner.parser.add_argument(
         "--select", action="append", metavar="TEST",
         help="run only this module, class or test (tests.test_x[.Case[.test_y]]); "

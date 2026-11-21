@@ -218,7 +218,8 @@ class BrainReading(unittest.TestCase):
         # (task 159), the seven kind choices and the four classification
         # controls of the sidebar (task 183), then its entries
         b.key("Tab")
-        self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "new")
+        # New entry asks the Brain Agent first (task 175)
+        self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "ag-new")
         b.key("Tab")
         self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), "q")
         for _ in range(7):
@@ -253,7 +254,7 @@ class BrainReading(unittest.TestCase):
         self.assertIn("the first entry you save does", text)
         # the one control is the one that fills it (task 158); reading made nothing
         self.assertEqual(b.eval("[...document.querySelectorAll('#bshell button')]"
-                                ".map(x => x.dataset.bact)"), ["new"],
+                                ".map(x => x.dataset.bact)"), ["ag-new"],
                          "the empty Brain offers exactly one control: New entry")
         shot("brain-empty")
 

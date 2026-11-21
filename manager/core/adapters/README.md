@@ -80,6 +80,19 @@ side effects its prompt demands, and never a blanket allow-everything
   each pinned input as one `Read(//path)` rule. opencode renders no exact
   read for a file outside the checkout, so it does not list `reason`,
   names why under `refusedIntents`, and its `run` exits 64 on the mode.
+- `brain` — a Brain drafting run (task 175): the `reason` stance, its
+  work-root sources as pinned copies in `AGENT_CONTEXT` (exact reads),
+  started in the application checkout, which it reads with the vendor's
+  read-only tools. Two additions: no web retrieval, and read
+  **deny**-rules — every credential pattern the adapter knows, plus each
+  absolute path in `AGENT_PROFILE.readDeny` (the tool's private state and
+  secrets) as the path and everything under it. A `readDeny` entry the
+  adapter cannot put in a rule exactly refuses the launch (exit 65).
+  It prints one JSON object between `<<<BRAIN` and `BRAIN>>>`. Claude:
+  `--disallowedTools Edit Write NotebookEdit Bash WebFetch WebSearch`,
+  exact `Read(//path)` grants and `Read(…)` denies. opencode renders
+  neither, so it lists `brain` under `refusedIntents` and its `run` exits
+  64 on the mode.
 
 **An intent you do not recognise must be refused, not defaulted.** Both
 shipped `run` scripts exit 64 on an unknown `AGENT_MODE` before launching
@@ -283,7 +296,7 @@ understands: `enforced`, `prefix-allowlist` (a prefix match over the
 command line — narrowing, **not** a sandbox), `prompt-only`, `pending`.
 
     {"v": 1, "adapter": "claude", "version": "1",
-     "intents": ["work", "act-pr", "review", "refine", "reason"],
+     "intents": ["work", "act-pr", "review", "refine", "reason", "brain"],
      "capabilities": {"command-allowlist": "prefix-allowlist",
                       "command-denylist": "prefix-allowlist",
                       "read-only-tools": "enforced",
