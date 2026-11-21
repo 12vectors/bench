@@ -111,6 +111,33 @@ requires the bare name.
 > its bare name. Report each result with its evidence id, and never
 > describe a focused pass as the suite passing.
 
+The full section for bench's own operator — focused first, the bare name
+at the final committed head, reuse rather than `--again`, setup failures
+read as setup failures, and the independent review kept — is
+`develop/operator-local/prompts/focused-first.md`.
+`develop/operator-local/prompts/compose.py --out <dir>` appends it to
+the built-in `work.md` and `act-pr.md` after checking the board's
+template contract, and never replaces an override already there.
+
+### What activating the scopes costs
+
+Declaring a scope moves no dimension of a full run's result identity: a
+scope is coverage, asked for by name. So a full-run pass recorded with a
+result identity **keeps standing** when scopes are added, and Settings →
+Preview says `check-scopes-changed` rather than `check-changed`. What
+does cost one fresh run of each affected check is a change to its
+substance or a preparation step it runs — the browser check's
+`"report": "v1"`, or `--probe` on its `verify/preflight browser` step.
+Batch those into one policy change so the cost is paid once.
+
+`develop/operator-local/focused_policy.py` turns the Settings draft into
+that one batched, additive change (these scopes, the report contract and
+the probe) and names what it restales (`invalidates`) and what only
+gains scopes (`scopesOnly`). It writes nothing: the operator validates,
+previews and applies it with the draft's revision, and apply refuses if
+the document moved meanwhile. Runs already in flight keep the policy
+frozen at their launch.
+
 ## Layouts
 
 The entrypoints judge the candidate checkout bench gives a check

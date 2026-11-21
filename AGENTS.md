@@ -5665,7 +5665,12 @@ or moved by any of it.
    counting (changing a check's definition changes its identity, so every
    pass of it reads `stale` — it is not deleted and it is not re-run; an
    edit elsewhere in the document leaves a pass with a result identity
-   standing, and only legacy records read `policy-changed`), and
+   standing, and only legacy records read `policy-changed`). Each change
+   names the dimension it moves: `check-changed` for the check's own
+   substance (command, root, time limit, inputs, environment, report
+   contract) or a preparation step it runs, and `check-scopes-changed`
+   when only its declared scopes moved — a scope is coverage asked for by
+   name, so a full-run pass still stands (task 177). And it says
    which cards waiting in `review/` would change their merge decision.
    Writes nothing.
 4. **Apply** — armed, and refused rather than repaired. An invalid
