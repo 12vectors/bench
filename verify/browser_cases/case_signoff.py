@@ -218,6 +218,11 @@ class SignoffIsOptIn(unittest.TestCase):
         b = load()
         wait_for_word("signoff-needed")
         open_detail()
+        # The Overview leads with "The work", quoted from the card's text,
+        # which is read after the detail opens: when it lands it grows
+        # above the status block, and a click measured before that lands
+        # below the action. Read the card first, then click.
+        b.wait(f"!document.querySelector('{OVERVIEW} [aria-busy=\"true\"]')", 15)
         b.click(f"{OVERVIEW} .dstatus .dsacts [data-dslot]")
         if not b.wait("!!document.querySelector('#drawer.open #dsec-acceptance #accSignoff')"
                       " && document.querySelector('#drawer.open #dtab-acceptance')"

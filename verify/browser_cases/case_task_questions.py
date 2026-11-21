@@ -79,7 +79,11 @@ def visit(path, ready, width=1440, height=900):
 
 
 def double(b, selector):
-    """An armed control: the first click arms, the second fires."""
+    """An armed control: the first click arms, the second fires. The click
+    waits until nothing in the section is still being read: a reading that
+    lands between measuring the control and pressing it redraws what sits
+    above it, the control moves, and the press lands on something else."""
+    b.wait("!document.querySelector('#oshell [aria-busy=\"true\"]')", 15)
     b.click(selector)
     found = f"document.querySelector({json.dumps(selector)})"
     if not b.wait(f"{found} && {found}.classList.contains('armed')", 5):
