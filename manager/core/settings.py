@@ -77,6 +77,7 @@ import profiles
 import records
 import redact
 import required
+import resultidentity
 import state
 import sync
 import taskfiles
@@ -1865,6 +1866,7 @@ def preview(payload: dict) -> dict:
     after_checks = checks_of(after)
 
     changes: list[dict] = []
+    stale_scopes: dict[str, list[str]] = {}
     for name in sorted(set(before_checks) | set(after_checks)):
         was, now = before_checks.get(name), after_checks.get(name)
         if was and not now:
@@ -1884,13 +1886,24 @@ def preview(payload: dict) -> dict:
             elif was["checkId"] != now["checkId"]:
                 # Only its declared scopes (or nothing a result depends on)
                 # changed: a scope is coverage, asked for by name, so a
-                # full-run pass keeps its result identity (task 177).
+                # full-run pass keeps its result identity (task 177). A
+                # scope only added costs nothing; one whose arguments
+                # changed, or that was removed, stales its own passes.
+                added, altered, removed = _scope_moves(was, now)
+                if altered or removed:
+                    stale_scopes[name] = sorted(altered + removed)
+                if not (added or altered or removed):
+                    changes.append({
+                        "kind": "check-revision-changed", "what": name,
+                        "detail": "its definition changed in a way no "
+                                  "recorded pass depends on (a renamed "
+                                  "preparation step, say). Every recorded "
+                                  "pass still stands"})
+                    continue
                 changes.append({
                     "kind": "check-scopes-changed", "what": name,
-                    "detail": "its declared scopes changed. A full-run pass "
-                              "still stands; a pass of a scope whose "
-                              "arguments changed, or that was removed, reads "
-                              "stale (scope-changed)"})
+                    "added": added, "changed": altered, "removed": removed,
+                    "detail": _scope_detail(added, altered, removed)})
 
     for scope in sorted(profiles.GATE_SCOPES):
         was = _requirement_words(before_gate["scopes"].get(scope))
@@ -1913,6 +1926,30 @@ def preview(payload: dict) -> dict:
 
     invalidated = [c["what"] for c in changes
                    if c["kind"] in ("check-changed", "check-removed")]
+    whole = _evidence_count(invalidated)
+    # A check whose whole definition moved already counts its scoped passes.
+    stale_scopes = {n: v for n, v in stale_scopes.items()
+                    if n not in invalidated}
+    scoped = _evidence_count_scoped(stale_scopes)
+    if invalidated:
+        why = ("a check's identity is part of what binds its evidence. "
+               "Change the definition and every recorded pass of it "
+               "reads `stale` — it is not deleted, and it is not "
+               "re-run; the gate simply stops counting it")
+    elif stale_scopes:
+        named = "; ".join(f"{n}: {', '.join(v)}"
+                          for n, v in sorted(stale_scopes.items()))
+        why = ("recorded passes of a scope whose arguments changed, or "
+               "that was removed, read `stale` (scope-changed) — "
+               f"{named}. They are not deleted or re-run; full-run "
+               "passes still stand")
+    else:
+        why = "no recorded evidence changes meaning"
+    if stale_scopes and invalidated:
+        why += ("; and passes of the changed or removed scopes "
+                + "; ".join(f"{n}: {', '.join(v)}"
+                            for n, v in sorted(stale_scopes.items()))
+                + " read stale (scope-changed)")
     return {
         "ok": checked["ok"],
         "errors": checked["errors"],
@@ -1922,13 +1959,9 @@ def preview(payload: dict) -> dict:
         "unchanged": not changes,
         "evidence": {
             "invalidated": invalidated,
-            "count": _evidence_count(invalidated),
-            "why": ("a check's identity is part of what binds its evidence. "
-                    "Change the definition and every recorded pass of it "
-                    "reads `stale` — it is not deleted, and it is not "
-                    "re-run; the gate simply stops counting it"
-                    if invalidated else
-                    "no recorded evidence changes meaning"),
+            "scopes": stale_scopes,
+            "count": whole + scoped,
+            "why": why,
         },
         "pending": _pending_acceptance(after_gate),
         "appliesAt": "next-launch",
@@ -1960,20 +1993,46 @@ IDENTITY_MOVED = {
 }
 
 
-def _step_words(step: dict) -> tuple:
-    return (step.get("name"), step.get("run"), step.get("required"),
-            step.get("network"))
-
-
 def _identity_moved(was: dict, now: dict) -> str | None:
     """Which dimension of a check's result identity a policy edit moves,
-    or None when a recorded full-run pass keeps it."""
+    or None when a recorded full-run pass keeps it. Preparation is
+    compared as the identity binds it (`resultidentity.prepare_definition`),
+    so a renamed step that runs the same thing moves nothing."""
     if was.get("checkSubstance") != now.get("checkSubstance"):
         return "check"
-    if [_step_words(s) for s in was.get("prepare") or []] != \
-            [_step_words(s) for s in now.get("prepare") or []]:
+    if resultidentity.prepare_definition(was.get("prepare") or []) != \
+            resultidentity.prepare_definition(now.get("prepare") or []):
         return "prepare"
     return None
+
+
+def _scope_moves(was: dict, now: dict) -> tuple[list, list, list]:
+    """A check's declared scopes before and after: added, changed (other
+    arguments) and removed, each sorted by name."""
+    before = was.get("scopes") or {}
+    after = now.get("scopes") or {}
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    altered = sorted(n for n in set(before) & set(after)
+                     if list(before[n]) != list(after[n]))
+    return added, altered, removed
+
+
+def _scope_detail(added: list, altered: list, removed: list) -> str:
+    parts = []
+    if added:
+        parts.append("adds " + ", ".join(added))
+    if altered:
+        parts.append("changes the arguments of " + ", ".join(altered))
+    if removed:
+        parts.append("removes " + ", ".join(removed))
+    said = "its declared scopes changed: " + "; ".join(parts) if parts \
+        else "its declared scopes changed"
+    if altered or removed:
+        return (f"{said}. A full-run pass still stands; recorded passes of "
+                f"{', '.join(sorted(altered + removed))} read stale "
+                f"(scope-changed)")
+    return f"{said}. Every recorded pass still stands"
 
 
 def checks_of(doc: dict) -> dict:
@@ -2024,6 +2083,24 @@ def _evidence_count(names: list[str]) -> int:
         for task in group.get("tasks", []):
             for record in evidence.for_task(task["file"]):
                 if record.get("check") in names \
+                        and record.get("outcome") == "passed":
+                    total += 1
+    return total
+
+
+def _evidence_count_scoped(scopes: dict[str, list[str]]) -> int:
+    """How many recorded passes ran one of the named scopes of a check."""
+    if not scopes:
+        return 0
+    total = 0
+    try:
+        collected = taskfiles.collect()
+    except (OSError, ValueError):
+        return 0
+    for group in collected.get("stages", []):
+        for task in group.get("tasks", []):
+            for record in evidence.for_task(task["file"]):
+                if record.get("scope") in scopes.get(record.get("check"), ()) \
                         and record.get("outcome") == "passed":
                     total += 1
     return total

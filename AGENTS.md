@@ -5668,9 +5668,13 @@ or moved by any of it.
    standing, and only legacy records read `policy-changed`). Each change
    names the dimension it moves: `check-changed` for the check's own
    substance (command, root, time limit, inputs, environment, report
-   contract) or a preparation step it runs, and `check-scopes-changed`
-   when only its declared scopes moved — a scope is coverage asked for by
-   name, so a full-run pass still stands (task 177). And it says
+   contract) or what a preparation step it runs does, and
+   `check-scopes-changed` when only its declared scopes moved — a scope
+   is coverage asked for by name, so a full-run pass still stands, while
+   the passes of a scope whose arguments changed, or that was removed,
+   read `stale` (`scope-changed`) and are named; a scope only added
+   costs nothing. A change no recorded pass depends on, such as renaming
+   a preparation step, is `check-revision-changed` (task 177). And it says
    which cards waiting in `review/` would change their merge decision.
    Writes nothing.
 4. **Apply** — armed, and refused rather than repaired. An invalid

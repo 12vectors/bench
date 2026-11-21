@@ -313,6 +313,10 @@ class ThroughSettings(unittest.TestCase):
             ("a scope", lambda d: d["checks"][0].update(
                 scopes={"fast": ["-k", "fast"]}),
              {("check-scopes-changed", "unit")}, []),
+            ("a renamed preparation step", lambda d: (
+                d["prepare"][0].update(name="deps2"),
+                d["checks"][0].update(prepare=["deps2"])),
+             {("check-revision-changed", "unit")}, []),
             ("a preparation step", lambda d: d["prepare"][0].update(
                 run="python3 -m pip --version --verbose"),
              {("check-changed", "unit")}, ["unit"]),
@@ -331,6 +335,48 @@ class ThroughSettings(unittest.TestCase):
                 self.assertEqual(kinds, {(c["kind"], c["what"])
                                          for c in found["changes"]})
                 self.assertEqual(invalidated, found["evidence"]["invalidated"])
+
+    def test_preview_names_a_changed_or_removed_scope_as_stale(self):
+        """Adding a scope is free; changing a scope's arguments or removing
+        it stales that scope's passes (staleness reads scope-changed), and
+        preview must say so rather than 'no recorded evidence changes'."""
+        doc = {"v": 1,
+               "checks": [{"name": "unit", "run": "python3 -m unittest",
+                           "root": "source",
+                           "scopes": {"fast": ["-k", "fast"],
+                                      "slow": ["-k", "slow"]}}],
+               "profiles": {"work": {"verify": ["unit"]}}}
+        cases = (
+            ("added", lambda s: s.update(new=["-k", "new"]),
+             {"added": ["new"], "changed": [], "removed": []}, {}),
+            ("changed", lambda s: s.update(fast=["-k", "quick"]),
+             {"added": [], "changed": ["fast"], "removed": []},
+             {"unit": ["fast"]}),
+            ("removed", lambda s: s.pop("slow"),
+             {"added": [], "changed": [], "removed": ["slow"]},
+             {"unit": ["slow"]}),
+        )
+        for label, mutate, moves, stale in cases:
+            with self.subTest(label):
+                fx = Fixture(self, doc=doc)
+                draft = copy.deepcopy(doc)
+                mutate(draft["checks"][0]["scopes"])
+                found = fx.run(
+                    f"R = settings.preview({{'document': json.loads("
+                    f"{json.dumps(json.dumps(draft))})}})")
+                self.assertTrue(found["ok"], found["errors"])
+                [change] = found["changes"]
+                self.assertEqual("check-scopes-changed", change["kind"])
+                self.assertEqual(moves, {k: change[k] for k in moves})
+                self.assertEqual([], found["evidence"]["invalidated"],
+                                 "a full-run pass still stands")
+                self.assertEqual(stale, found["evidence"]["scopes"])
+                if stale:
+                    self.assertIn("scope-changed", found["evidence"]["why"])
+                    self.assertIn("scope-changed", change["detail"])
+                else:
+                    self.assertEqual("no recorded evidence changes meaning",
+                                     found["evidence"]["why"])
 
     def test_a_plan_from_an_older_reading_cannot_overwrite_a_newer_save(self):
         fx = Fixture(self, doc=live_shaped())

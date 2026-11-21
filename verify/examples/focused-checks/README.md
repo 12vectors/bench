@@ -124,7 +124,10 @@ template contract, and never replaces an override already there.
 Declaring a scope moves no dimension of a full run's result identity: a
 scope is coverage, asked for by name. So a full-run pass recorded with a
 result identity **keeps standing** when scopes are added, and Settings →
-Preview says `check-scopes-changed` rather than `check-changed`. What
+Preview says `check-scopes-changed` rather than `check-changed`. Changing
+an existing scope's arguments, or removing a scope, is different: that
+scope's own passes read `stale` (`scope-changed`), and Preview names
+them under `evidence.scopes`. What
 does cost one fresh run of each affected check is a change to its
 substance or a preparation step it runs — the browser check's
 `"report": "v1"`, or `--probe` on its `verify/preflight browser` step.
