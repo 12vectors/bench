@@ -993,13 +993,24 @@ def run(board: dict, request=None, start=None, stop=None,
         # the run recovered on its own, or ended: nothing more to do —
         # an ending is the scheduler's to observe (and a failure is an
         # incident of its own)
-        if item["type"] == "stalled" and item["status"] in ("open", "diagnosing"):
+        # A restart still waiting before its stop was asked — behind a
+        # question in flight, say (task 181) — has stopped nothing yet, so a
+        # worker that became active again in the meantime is left to work:
+        # the same reading as before a diagnosis. Its ending is not read
+        # here: the restart a diagnosis chose carries on for a dead worker.
+        remedy = item.get("remediation") or {}
+        pre_stop = (item["status"] == "remediating" and not remedy.get("stopAsked")
+                    and not remedy.get("operation"))
+        if item["type"] == "stalled" and (
+                item["status"] in ("open", "diagnosing") or pre_stop):
             with state.LOCK:
                 worker = dict(state.AGENTS.get(item.get("run") or "") or {})
             verdict = (assess(signals(item["run"], worker, now),
                               _ceiling(reading, item["scope"], "runAgeMinutes"),
                               now) if worker else {"state": "ended"})
-            if verdict["state"] in ("active", "quiet-active", "ended"):
+            settles = ("active", "quiet-active") if pre_stop else (
+                "active", "quiet-active", "ended")
+            if verdict["state"] in settles:
                 _settle_attempts(item)
                 why = ("observed: the run ended by itself"
                        if verdict["state"] == "ended" else

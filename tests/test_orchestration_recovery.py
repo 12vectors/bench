@@ -590,6 +590,26 @@ class UnsafeRecoveryIsRefused(RecoveryCase):
         self.assertEqual(2, len(self.launch.calls))
         self.assertEqual("remediating", self.incidents()[0]["status"])
 
+    def test_a_worker_active_again_behind_a_question_is_not_stopped(self):
+        # task 181, review of 40e51b1: the restart waits behind a question
+        # before any stop is asked; a worker that comes back meanwhile is
+        # read as before a diagnosis — resolved, never stopped
+        run = self.diagnosed()
+        state.AGENTS["question"] = {"task": "1-card.md", "mode": "reason",
+                                    "status": "running", "started": time.time()}
+        self.tick()
+        self.assertEqual("reasoning-in-flight", self.incidents()[0]["code"])
+        state.AGENTS[run]["session"] = "s-1"
+        state.SESSIONS["s-1"] = {"id": "s-1", "last": time.time()}
+        self.tick()
+        [item] = self.incidents()
+        self.assertEqual("resolved", item["status"])
+        self.assertIn("active again", item["reason"])
+        state.AGENTS["question"]["status"] = "done"
+        self.tick()
+        self.assertEqual([], self.stops)
+        self.assertEqual(1, len(self.launch.calls))
+
     def test_a_restart_waits_for_an_observed_stop(self):
         run = self.diagnosed()
         self.tick()
