@@ -15,6 +15,11 @@ const S = {
   // stem), and whether the next paint should bring its lane into view
   phaseSel: null,
   phaseScroll: false,
+  // file -> true (a person opened a lane that closed itself because every
+  // member is merged in) or false (they closed it again). The page
+  // session's memory only (task 161): a lane that stops being complete
+  // forgets it, so its next completion closes it again.
+  laneOpen: {},
   disc: {},              // file -> {data, stamp, error}: the card's discussion
   commentDraft: {},      // file -> unsent comment text, kept across redraws
   refineKey: {},         // file -> the request key for that text's refinement
@@ -23,6 +28,7 @@ const S = {
   acc: {},               // file -> {data, stamp, error}: acceptance, findings, reports
   inputs: {},            // file -> {data, key, error}: the card's Inputs and required tools (task 132)
   result: {},            // file -> {data, key, error}: the card's Show the result reading (task 133)
+  timing: {},            // file -> {data, key, error}: the card's cycle time (task 165)
   // file -> {data, key, error, loading}: the card's text, read on opening
   // it (task 129) — the board list carries every field but the text
   detail: {},

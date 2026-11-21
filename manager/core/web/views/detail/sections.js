@@ -9,7 +9,7 @@ import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
 import { cardId, formatRoute } from '../../lib/route.js';
 import { resource, staleWords } from '../../lib/resource.js';
-import { ago } from '../../lib/time.js';
+import { ago, duration } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
 import { stackBlock } from '../board.js';
 import { actLabel, wireAction } from '../card.js';
@@ -238,6 +238,7 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
     `<div class="ovdetail" role="group" aria-labelledby="ov-more-h">` +
     `<h3 class="ovh" id="ov-more-h">More about this card</h3>` +
     resultHtml(t) +
+    timingHtml(t) +
     stackBlock(t) + signals + members +
     (plan ? `<details class="rpt"${S.accOpen[t.file + ':plan'] ? ' open' : ''} data-keep="plan">` +
             `<summary>Branch and plan</summary><div style="padding:6px 10px">${plan}</div></details>` : '') +
@@ -326,6 +327,9 @@ function standsHtml(t, d, acc, failBlock) {
     ovFact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
     ovFact('Progress', esc(progressFact(t))) +
     ovFact('Last result', lastResultHtml(t, acc)) +
+    // the card's lead time and what is in flight (task 165), from the
+    // same reading as "Time on this card" further down
+    ovFact('Time', timingFact(t)) +
     // which scope holds it and what waits on you, with the link into the
     // Orchestrator at this card (task 145) — absent while nothing does
     ovFact('Orchestration', cardEntryHtml(t, S.state, cardId(t, S.state))) +
@@ -643,6 +647,175 @@ function loadResult(t, force) {
 
 function shortSha(s) { return s ? String(s).slice(0, 12) : 'unknown'; }
 
+/* ── Time on this card (task 165) ──────────────────────────────────────
+
+   The server's cycle-time reading (`cycletime.py`, GET /api/card/timing),
+   drawn and never recomputed: every duration on this block is a number
+   the reading carries. The categories overlap — a check runs inside a
+   run, which runs while the card sits in a stage — so they are listed as
+   separate measurements and the only whole is the lead time. An absent
+   number reads "none recorded", never 0s, and every unknown and clock
+   anomaly the server found is listed in its words. */
+const timingRes = resource({
+  store: S.timing,
+  url: (file, t) => `/api/card/timing?file=${encodeURIComponent(file)}` +
+    `&stage=${encodeURIComponent(t.stage)}`,
+  ask: (url) => fetch(url),
+});
+
+function timingStamp(t) {
+  // asked again when the card or its latest run changes — never on a
+  // clock, so a timer cannot redraw the drawer under a reader; the block
+  // says the time it was read, and a running interval is "so far" as of then
+  const p = (S.state.progress || {})[t.file];
+  const live = (S.state.agents || []).filter(a => a.task === t.file).map(a => a.id + a.status).join(',');
+  return `${t.stage}:${t.mtime}:${p ? p.agent + ':' + (p.lastReport || '') + ':' + p.active : '-'}:${live}`;
+}
+
+/* A reading that lands redraws its own block and its one-line fact in
+   place, and nothing else: a whole-drawer redraw here replaced the nodes a
+   reader was in the middle of using — a fold being toggled, a section
+   being opened. Clicks inside are delegated (wireTiming, drawer.js). */
+function patchTiming(t) {
+  if (!(S.selected && S.selected.file === t.file && !S.fileView)) return;
+  const sec = document.querySelector('#dsec-overview .cycletime');
+  if (sec) sec.outerHTML = timingHtml(t);
+  const fact = document.querySelector('#dsec-overview .ctfact');
+  if (fact) fact.outerHTML = timingFact(t);
+}
+
+function loadTiming(t, force) {
+  timingRes.read(t.file, timingStamp(t), { force, arg: t, done: () => patchTiming(t) });
+}
+
+const CT_STAGE = { ...STAGE_WORDS, archive: 'Archive' };
+const ctDur = (s) => duration(s) || 'none recorded';
+const ctAt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : 'time not recorded';
+
+function ctActiveHtml(d) {
+  if (!(d.active || []).length) return '';
+  return `<ul class="ctactive" role="status">` + d.active.map(a => {
+    if (a.kind === 'check') {
+      return `<li><b>Checking now:</b> ${esc(a.name)}${a.scope ? ` (${esc(a.scope)})` : ''}` +
+        ` · attempt ${esc(a.attempt)} · ${esc(a.phase || 'running')} · ${esc(ctDur(a.elapsed))} so far` +
+        ` · <button class="dlink" data-dview="evidence">${esc(a.next.label)}</button></li>`;
+    }
+    const rep = a.lastReport;
+    return `<li><b>${esc(a.name)} working</b> · ${esc(ctDur(a.elapsed))} so far` +
+      `<br><span class="ctsrc">Last progress report (agent-reported, not verified): ` +
+      (rep ? `${esc(ctDur(a.reportAge))} ago${rep.doing ? ' — ' + esc(rep.doing) : ''}` +
+             `${rep.blocked ? ' · Blocked: ' + esc(rep.blocked) : ''}` : 'none sent') +
+      `.</span><br><span class="ctsrc">Last tool activity (observed by Bench — activity, not progress): ` +
+      (a.activityAge != null ? `${esc(ctDur(a.activityAge))} ago` : 'none observed') +
+      ` · process ${esc(a.process || 'unknown')}.</span>` +
+      `<br><span class="ctsrc">Next: ${esc(a.next.label)} on the card — ${esc(a.next.why)}.</span></li>`;
+  }).join('') + `</ul>`;
+}
+
+function ctFold(t, key, summary, inner) {
+  return `<details class="rpt" data-keep="${key}"${S.accOpen[`${t.file}:${key}`] ? ' open' : ''}>` +
+    `<summary>${summary}</summary><div class="ctfold">${inner}</div></details>`;
+}
+
+function timingHtml(t) {
+  loadTiming(t);
+  const entry = S.timing[t.file] || {};
+  const d = entry.data && entry.data.timing;
+  const head = `<h3 id="ct-h">Time on this card</h3>`;
+  if (!d) {
+    return `<section class="cycletime" data-keep="timing" aria-labelledby="ct-h">${head}` +
+      (entry.error ? `<p class="dnote" role="alert">The timing could not be read: ${esc(entry.error)} ` +
+                     `<button id="ctRetry">Try again</button></p>`
+                   : `<p class="dnote" aria-busy="true">Reading the timing…</p>`) + `</section>`;
+  }
+  const lead = d.lead || {};
+  const leadWords = lead.seconds == null
+    ? `<span class="unknown">Lead time not known</span> — see what is not recorded below.`
+    : `<b id="ctLead">${esc(duration(lead.seconds))}</b> ` +
+      (lead.open ? `so far — still open, in ${esc(CT_STAGE[d.stage] || d.stage)}` : `from first record to Done`) +
+      `${lead.reopened ? ` · reopened ${esc(lead.reopened)}×` : ''}.` +
+      ` <span class="ctsrc">Started ${esc(ctAt((lead.start || {}).at))}` +
+      ` (${lead.start && lead.start.how === 'created' ? 'created' : 'first recorded move'}).</span>`;
+  const cats = (d.categories || []).map(c =>
+    `<li data-ct="${esc(c.key)}"${c.key === 'lead' ? ' class="ctlead"' : ''}>` +
+    `<span class="ctlabel">${esc(c.label)}</span>` +
+    `<span class="ctval${c.recorded ? '' : ' unknown'}">${esc(ctDur(c.seconds))}` +
+    `${c.open && c.recorded ? ' <span class="cbadge accent">running</span>' : ''}` +
+    `${c.summed != null && c.summed !== c.seconds ? ` <span class="ctsrc">(${esc(duration(c.summed))} summed across checks)</span>` : ''}</span>` +
+    `<span class="ctnote">${esc(c.note)}</span></li>`).join('');
+  const stages = (d.stages || []).length
+    ? `<ol class="ctline">` + d.stages.map(s =>
+      `<li><b>${esc(CT_STAGE[s.stage] || s.stage)}</b> · ${esc(ctAt(s.from))} → ` +
+      `${s.open ? 'now' : esc(ctAt(s.to))} · ${s.seconds == null ? '<span class="unknown">duration unknown</span>' : esc(duration(s.seconds))}` +
+      `${s.open ? ' <span class="cbadge accent">here now</span>' : ''}` +
+      ` <span class="ctsrc">${esc(s.how === 'created' ? 'created' : s.how === 'automated' ? 'moved by the board' : 'moved')}` +
+      `${s.commit ? ' · ' + esc(s.commit) : ''}${s.source === 'journal' ? ' · uncommitted move' : ''}</span></li>`).join('') + `</ol>`
+    : `<p class="dnote">No stage move of this card is on record.</p>`;
+  const runs = (d.runs || []).length
+    ? `<ul class="ctruns">` + d.runs.map(r =>
+      `<li><b>${esc(r.label)}</b> <span class="mono">${esc(r.agent)}</span> · ${esc(ctAt(r.opened))} · ` +
+      (r.ended === 'running' ? `${esc(ctDur(r.seconds))} so far <span class="cbadge accent">running</span>`
+       : r.ended === 'unobserved' ? `<span class="unknown">ending not observed — the board restarted</span>`
+       : `${esc(ctDur(r.seconds))} · ${esc(r.outcome || 'ended')}`) +
+      `<br><span class="ctsrc">${esc(r.checks.count)} check request${r.checks.count === 1 ? '' : 's'}` +
+      `${r.checks.seconds ? `, ${esc(duration(r.checks.seconds))} with a check in flight` : ''}` +
+      `${r.outsideChecks != null ? ` · ${esc(duration(r.outsideChecks))} outside checks (not measured coding time)` : ''}</span></li>`).join('') + `</ul>`
+    : `<p class="dnote">No work, repair or review run of this card is on record on this board.</p>`;
+  const v = d.verification || {};
+  const checks = (v.records || []).length
+    ? `<p class="ctsrc">${esc(ctDur(v.seconds))} with at least one check in flight (union); ` +
+      `${esc(ctDur(v.summed))} summed over every check, ${esc(ctDur(v.overlapped))} of it overlapping; ` +
+      `${esc(ctDur(v.execution))} in check processes, ${esc(ctDur(v.preparation))} preparing.` +
+      `${v.reused ? ` ${esc(v.reused)} request${v.reused === 1 ? ' was' : 's were'} answered by an existing record and ran nothing.` : ''}</p>` +
+      `<ul class="ctchecks">` + v.records.map(e =>
+        `<li><b>${esc(e.check)}</b>${e.scope ? ` (${esc(e.scope)})` : ''} · attempt ${esc(e.attempt)} · ` +
+        `${esc(e.live ? (e.phase || 'running') : (e.outcome || 'unknown'))} · ` +
+        (e.ranNothing ? 'ran nothing' : e.seconds == null ? '<span class="unknown">duration unknown</span>'
+          : `${esc(duration(e.seconds))}${e.execution != null ? ` (check ${esc(duration(e.execution))}` +
+            `${e.preparation ? `, preparing ${esc(duration(e.preparation))}` : ''})` : ''}`) +
+        `<br><span class="ctsrc">requested ${esc(ctAt(e.requested))}` +
+        `${e.commit ? ' · at ' + esc(e.commit) : ''}${e.agent ? ' · for ' + esc(e.agent) : e.actor ? ' · by ' + esc(e.actor) : ''}` +
+        ` · <button class="dlink mono" data-dview="evidence" title="Open the ◫ evidence sheet">${esc(e.id)}</button></span></li>`).join('') + `</ul>`
+    : `<p class="dnote">Bench has run no check for this card.</p>`;
+  const ig = d.integration;
+  const integration = ig
+    ? `<p class="ctsrc ctint">Phase #${esc(ig.phase)}: ` +
+      (ig.integratedAt ? `merged into the phase branch ${esc(ctAt(ig.integratedAt))} (phase log, to the minute)` : 'not yet merged into the phase branch') +
+      ` · ${ig.deliveredAt ? `delivered to the application base ${esc(ctAt(ig.deliveredAt))} (${esc(ig.deliveredHow)})` : 'not yet delivered to the application base'}. ` +
+      `${esc(ig.note)}</p>` : '';
+  const gaps = [...(d.unknown || []).map(u => `<li><b>Not recorded:</b> ${esc(u.what)} — ${esc(u.why)}</li>`),
+                ...(d.anomalies || []).map(a => `<li><b>Clock or order anomaly</b> (${esc(a.code)}): ${esc(a.detail)}</li>`)];
+  return `<section class="cycletime" data-keep="timing" aria-labelledby="ct-h">${head}` +
+    `<p class="ctheadline">Lead time: ${leadWords}</p>` +
+    ctActiveHtml(d) + integration +
+    `<p class="ctsrc">These measurements overlap — a check runs inside a run, a run inside a stage — so they are ` +
+    `not parts of one total. Only the lead time measures the whole ticket.</p>` +
+    `<ul class="ctcats" aria-label="Time by category">${cats}</ul>` +
+    (gaps.length ? `<ul class="ctgaps">${gaps.join('')}</ul>` : '') +
+    ctFold(t, 'ct-stages', `Stage timeline (${esc((d.stages || []).length)})`, stages) +
+    ctFold(t, 'ct-runs', `Runs (${esc((d.runs || []).length)})`, runs) +
+    ctFold(t, 'ct-checks', `Checks and attempts (${esc((v.records || []).length)})`, checks) +
+    `<p class="ctsrc">Read from this board's own records: stage moves (git and the move journal), each run's ` +
+    `opening and the ending the board observed, and Bench's evidence records, as of ` +
+    `${esc(ctAt(d.now))}. Local to this board; reading it ran and wrote nothing. ` +
+    `<button class="dlink" id="ctRefresh">Read again</button></p></section>`;
+}
+
+/* The one-line Time fact under "Where it stands": the lead time and
+   what is in flight, from the same reading as the block below. */
+function timingFact(t) {
+  const d = ((S.timing[t.file] || {}).data || {}).timing;
+  if (!d) return `<span class="ctfact unknown">reading…</span>`;
+  const lead = d.lead || {};
+  const now = (d.active || []).map(a => `${a.kind === 'check' ? 'checking ' + a.name : a.name}` +
+    ` ${duration(a.elapsed) || ''}`.trimEnd());
+  return `<span class="ctfact">` +
+    (lead.seconds == null ? '<span class="unknown">lead time not known</span>'
+    : `${esc(duration(lead.seconds))} lead time${lead.open ? ' so far' : ''}`) +
+    (now.length ? ` · now: ${esc(now.join('; '))}` : '') +
+    ` · <button class="dlink" data-ct-open="1">where the time went</button></span>`;
+}
+
 /* `where` names the list an output is drawn in ('top' for the curated
    selection and its pairs, 'all' for the fold of every output): one output
    may be drawn in both, and each drawing's ids and kept places are its own. */
@@ -874,6 +1047,25 @@ async function saveResult(t, d, fields) {
   loadResult(t, true);
   loadDetail(t, true);
   loadState();
+}
+
+/* Delegated on the Overview section, which a full redraw replaces (so
+   one listener per drawing) and an in-place patch does not (so a patched
+   block's buttons still work). */
+function wireTiming(t) {
+  const ov = document.querySelector('#dsec-overview');
+  if (!ov) return;
+  ov.addEventListener('click', (e) => {
+    const el = e.target.closest('#ctRetry, #ctRefresh, [data-ct-open]');
+    if (!el) return;
+    if (el.matches('[data-ct-open]')) {
+      const h = ov.querySelector('#ct-h');
+      if (h) h.scrollIntoView({ block: 'start' });
+      return;
+    }
+    loadTiming(t, true);
+    patchTiming(t);
+  });
 }
 
 function wireResult(t) {
@@ -1537,6 +1729,7 @@ function wireDetail(t) {
   const body = $('#drawerbody');
   wireInputs(t);
   wireResult(t);
+  wireTiming(t);
   const retry = body.querySelector('#dretry');
   if (retry) retry.addEventListener('click', () => { loadDetail(t, true); renderDrawer(); });
   const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];

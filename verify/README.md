@@ -7,7 +7,7 @@ checkout it is pointed at** and leaves a record of what it ran:
 
 | Entrypoint | What it runs | Needs |
 | --- | --- | --- |
-| `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it; **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
+| `verify/backend` | `python3 -m unittest discover -s tests -t . -v` — the whole suite, as CI runs it, timed per test and fixture (see "Where the backend suite's time goes"); **any skipped test is a setup error** | `node` on PATH and markdown-it-py, or their tests skip and the check refuses |
 | `verify/docs` | `site/build.py --out <artifacts>/site`, then requires a written file for every route in `site/pages.json` | markdown-it-py (`site/requirements.txt`) |
 | `verify/preflight` | `docs`: the docs interpreter imports markdown-it; `backend`: `node --version` runs on the check's PATH and markdown-it imports; `browser`: a Chromium starts with its sandbox. A profile's required `prepare` step | as the check it prepares |
 | `verify/browser` | the board UI in a sandboxed Chromium against a real disposable bench backend: stages and cards drawn, layout at 1440/1280/1024 px, the six views, keyboard reach and focus ring on the ⚕ Configuration check, its dialog inside the viewport at 1440×900, 1280×800, 1024×768 and 640×400, accessible names; the Configuration check (task 79) from the header and from Settings → Diagnostics — one specific result and one scope sentence, successful and untested rows folded apart and never read as passed, purposes switched with focus kept, paths one per left-aligned row with a working Copy, partial / unsupported / blocked / stale / not-completed / execution-failed states, controlled execution changing the scope sentence, no narrow columns or overflow at 390 px and at 200 % zoom; the card's launch check — Implementation, Review and the review card's default purpose, branch, PR target, harness and model from the resolvers, a stacked card showing its own branches at 1440, 390 and 200 %, a blocked launch with its fix and no button, and a sheet opened before the policy changed refused by the launch's own preflight with nothing started; and the Settings view — every section at 1440/1024/640×400/390 px, the empty, refused and configured states read from the backend's own resolution, the draft→validate→preview→apply round trip, Check configuration reporting `ran == ['inspect']`, and accessible names in all eight sections; Settings → Agents — the compact harness/model rows and their inheritance, a per-purpose override applied and read back from the backend, a prompt rendered, diffed, saved, reset and recoverable, a broken template refused with nothing written, a stale draft refused as a conflict, and keyboard reach at 1440 and 390 px; filed reports read as Markdown — a review round in both themes beside a rebuilt "before" at the same viewport, prose/code typefaces and contrast measured, hostile HTML and links inert, nothing posted or fetched off the board, wide code and tables scrolling in place at 390 px and real 200% zoom, the reading place kept across a live update; the setup guide's application preview — a disposable web app with a disposable fixture configured with an acknowledged call-out, prepared and started by armed clicks, its ready URL serving the fixture, shown stale after a later commit in the card's worktree, its log free of the secret it was given, Check readiness and Stop fired from the keyboard with no process of its group left behind, both themes and 390 px; one delivery status per card (task 99) — the card face, the Overview, the detail head and the merge dialog reading the backend's word and primary action for the #94 fixtures F1/F3/F7/F9/F13/F16/F18/F23/F30, the status before its action and the action full width at 390 px, Enter arming without firing and Escape returning focus, no alarm for a check that lies ahead on an in-progress card, nothing written by reading, and folds, scroll and a focused action kept across a live update; relevance reviews in Reviews (task 84) — a card-79-shaped card opened from Activity's link onto its exact review beside a PR-review empty state, in both themes beside a rebuilt "before", a comment saved against the review and kept across a reload, a draft and its focus kept while a new review arrives live, Update card from this review failing on the stub, retried, proposing a diff and applied with nothing else launched, then discarded, keyboard order and 390 px; the page's own writes (task 112) on loopback, through an isolated loopback proxy whose origin is the backend's one `BOARD_ALLOWED_ORIGINS` entry, and refused with nothing changed through one whose origin is not; reference files (task 113) — an HTML and an SVG file under `reference/` whose scripts would read `/api/state`, first proved to run in a same-origin frame against a recording sink, then opened at their `/files/` URLs where each still renders and the sink hears nothing, and Settings → Installation's "Who calls this board" panel in report mode; the Orchestrator (task 145) — every section read with no run, check, worktree or ledger entry made, an agreement drafted, previewed and applied through the page with a delegated ungated merge said to be unverified, a Bench pause reaching the phase scope and a phase pause not reaching the Bench scope, a refused phase adoption said in words, an answer refused on a stale basis by the server, not offered where the page may not answer, then recorded on the card and in the resolved history, a manual takeover and reclaim, one named run cancelled after a confirmation stating its effects, recovery exhaustion and an unknown outcome shown and settled, the board strip and a card's Overview reaching the exact section and card, untrusted text inert and a token masked, typed text and open folds kept across a repaint, both themes at 1440 and 390 px; screenshots required | a Chromium that can start its sandbox |
@@ -28,6 +28,55 @@ tests never ran. It now reads `setup-error` (and, with the
 `backend-deps` preparation, `prepare-failed`). The full local run with
 the interactive `python3` (1999 tests, no skips) remains valid; the
 service environment is not yet ready for full verification.
+
+## Focused runs: a fast loop, never the whole (task 162)
+
+`verify/backend --select tests.test_x[.Case[.test_y]]` and
+`verify/browser --case case_x[.Case[.test_y]]` (each repeatable, at most
+32) run only what they name. With neither flag both entrypoints behave
+exactly as above.
+
+- **Exactly the declaration.** A backend selection is resolved in the
+  candidate before anything runs (`selection.log`), every name must
+  resolve to at least one test, and what ran must equal what resolved. A
+  browser selection filters the cases `--cases` discovered; it is not a
+  second runner. A path, glob or pattern, a repeated or nested name, a
+  module that does not exist, a test that does not load and a selection
+  of zero tests are each a setup error before anything runs. Skips are
+  still refused, and a focused browser run still requires its declared
+  screenshots (only the full run must also record a measurement).
+- **Honest coverage.** The record carries `coverage` — `kind` (`full` or
+  `focused`), `selection`, `discovered`, `ran` and, for the browser,
+  `available` — beside the candidate's revision and source digest, the
+  logs and the artifacts. The verdict line reads `PASSED (FOCUSED — not a
+  whole-suite result)`, and the summary line carries `"coverage"`.
+- **Never a full pass inside bench.** Offer a selection as a *scope* of
+  the full check (`"scopes": {"contracts": ["--select", "tests.test_gitrepo"]}`),
+  never as its own name or inside `run`. A scope's arguments are the
+  evidence's coverage and identity, so a focused pass is not reused for a
+  full request, does not meet a merge rule that requires the bare name or
+  a declared equivalent of it, reads `stale / scope-changed` when its
+  selection is edited, and does not combine with an older full pass at
+  another commit (`tests/test_focused_verification.py` holds each).
+- **Nothing is inferred.** No selection is derived from changed files.
+
+**Browser cases use the shared transport API.** Before a browser starts,
+every selected case module is read for browser use outside what the local
+CDP browser and the remote Playwright adapter both provide (`goto`,
+`wait`, `click`, `press`, `release`, `hover`, `reveal`, `eval`,
+`viewport`, `zoom`, `key`, `screenshot`, `ax_nodes`, and `origin`,
+`console`, `csp`). A case calling `call` (raw CDP) or `request` (the
+adapter's wire op) is a setup error naming the file and line; at run time
+cases are handed only that API, so a call hidden from the source check is
+refused the same way. Of the state, only `origin` may be assigned (a case
+pointing the page at a proxy or a second backend); every other assignment
+is the harness's and is refused.
+
+`verify/examples/focused-checks/` holds the walk-through (early
+architecture checks, a changed browser case over `PW_WS`, the fast loop
+then the final full run), an **inactive** policy example adding scopes to
+`bench-backend` and `bench-browser` with no gates block, and optional
+agent guidance. Nothing there changes a live grant, gate or prompt.
 
 ## Which checkout is tested
 
@@ -58,7 +107,9 @@ the host's. A copy outside git (a release artifact) is likewise run with
 | 2 | `setup-error` | nothing trustworthy ran: not a bench checkout, a dependency missing, **zero tests discovered**, **a test module that could not be imported**, **any test skipped**, a browser that would not start (including no sandbox), **a required artifact absent or not written by this run**, **the candidate changed during the run**, a timeout |
 
 A setup error is never a pass and never a skip. A browser case that
-skips is counted as a setup error. In `verify/backend` an error *inside*
+skips is counted as a setup error, and so is a transport error (an
+adapter timeout, say) inside a case or one of its `subTest`s — named by
+the sub-test — while an assertion there is a named failure. In `verify/backend` an error *inside*
 a test (an exception the product raised) is still `failed`; only a module
 unittest could not import is `setup-error`, because none of its tests ran.
 
@@ -72,7 +123,26 @@ than a test failure is a required preparation step that did not complete
 dependency or a browser that cannot start its sandbox is caught there and
 recorded in the right word. Setup errors the preflight cannot foresee
 (an unimportable test module, a disposable backend that will not start,
-source drift) still read `failed` in bench's evidence.
+source drift, a page that crashes mid-run) still read `failed` in bench's
+evidence — **unless the check declares the verifier report contract**.
+
+**With `"report": "v1"` on the check (task 164)** bench hands the
+entrypoint `$BENCH_VERIFY_REPORT`, and `benchverify.Run` writes the
+report there: exit 0 `passed`, 1 `failed`, 2 `setup-failed`, a cancelled
+run `incomplete`, with one finding per browser case that did not pass.
+Bench then records a setup error as `prepare-failed` (`verifier-setup`)
+and an assertion as `failed`; a timeout, cancellation or launch error
+stays bench's own reading. Adding `"report": "v1"` to a registered check
+is the operator's decision in the policy document — nothing here changes
+a live policy — and it changes the check's identity, so its earlier
+passes read `check-changed` once.
+
+`verify/preflight browser --probe` goes further than "a Chromium starts":
+it starts a disposable backend, loads the board and switches a view by a
+click and back, recording `connection`, `navigation` and `interaction`
+separately with the logs and a screenshot. It is a health probe, never
+feature coverage (`featureCoverage: false`), and never proof that a full
+run will be stable.
 
 A timeout kills the child's whole process group (each child is started
 in a session of its own), so a forked backend or browser does not outlive
@@ -111,6 +181,51 @@ argv, cwd and exit status; the names (never the values) of the stripped
 environment variables and the directed ones; and every artifact path.
 The last lines of stdout repeat the outcome and identity, so bench's own
 evidence log carries them even if the work directory is removed.
+
+## Where the backend suite's time goes (task 163)
+
+`verify/backend` runs its discovery under `verify/unittesttiming.py` by
+default. That is unittest's own `main`, `TextTestRunner` and output with a
+stopwatch added — the verbose lines, the `Ran N tests` line, the
+`OK`/`FAILED (…)` summary, skips and the exit status are unittest's, which
+`tests/test_unittest_timing.py` holds against the plain command. Nothing
+about an outcome is decided by the collector. It writes `timings.json`
+into the artifacts directory (`artifacts.timings`) and the record carries a
+summary under `timing`. A focused run (`--select`) is the plain command and
+is not timed; its record's `timing` says so.
+
+| reading | what it covers |
+| --- | --- |
+| a test | `startTest` → `stopTest`: `setUp`, the method, `tearDown`, `addCleanup` callbacks |
+| a class fixture | `setUpClass`, `tearDownClass` and class cleanups, timed around unittest's suite hooks |
+| a module fixture | `setUpModule`, `tearDownModule` (a module's teardown is not also counted in the next module's setup) |
+| `discovery` | importing every test module, before the first test |
+| `run`, `elapsed` | the whole run; `elapsed` = discovery + run |
+| `unattributed` | `run` less every test and fixture: unittest's own bookkeeping and printing |
+
+All are wall-clock `perf_counter` seconds in the test process. Each file
+names the interpreter, platform, CPU count and argv it was taken under; the
+record beside it names the candidate revision and source digest, so a
+timing is always about a revision and a runtime. **Overhead is measured,
+not assumed**: `overhead.perTestSeconds` is the collector's own per-test
+work timed over 2000 repetitions in the same process (0.8µs per test in
+the task 163 baseline, against a mean test of about 330ms),
+and writing the file happens after the run's clock stops. If a future
+Python lacks the private suite hooks, `fixtureTiming` reads `unavailable`
+and fixture time shows up as unattributed rather than being guessed.
+`verify/backend --no-timing` runs the plain command and writes no file.
+
+    verify/timing-report <timings.json | result.json>        # rank one run
+    verify/timing-report --baseline A… --candidate B…        # compare sets
+
+Ranking lists the slowest modules, classes (tests + their class
+fixtures), fixtures and single tests. Comparing gives each side's mean,
+range and standard deviation of `elapsed`, and the classes that moved
+most; it **refuses** (exit 2) when the runs did not execute the same set
+of test ids or any run was not a full pass, because a faster run of fewer
+or failing tests is not an improvement. Measured numbers and hypotheses
+are kept apart in `develop/perf/163-backend-timing.md`, which records the
+baseline, the changes made and the comparison.
 
 ## What the child is given — and what that is not
 
@@ -211,7 +326,8 @@ both paths.
 
 `verify/examples/` holds two profile documents in the installed schema
 (`manager/core/profiles.example.json`). Neither is active anywhere until a
-person installs it. Beside them, `verify/examples/report-contract/` is a
+person installs it; nor is a third, `focused-checks/profiles.focused.example.json`,
+described under "Focused runs" above. Beside them, `verify/examples/report-contract/` is a
 worked example of the verifier report contract (task 135): a small
 report emitter around a disposable, Cicero-shaped wrapper that keeps its
 own safety checks. It is a project's example, not one of bench's checks,

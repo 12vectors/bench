@@ -308,6 +308,15 @@ class Backend(Fixture):
         log = Path(data["artifacts"]["log"])
         self.assertIn("test_two", log.read_text())
         self.assertEqual(str(self.root.resolve()), data["command"]["cwd"])
+        # the plain command it stands for, and the same discovery under the
+        # timing collector (task 163), which runs unittest's own runner
+        self.assertEqual(["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+                         data["plainCommand"][1:])
+        argv = data["command"]["argv"]
+        self.assertEqual(str(VERIFY / "unittesttiming.py"), argv[1])
+        self.assertEqual(["discover", "-s", "tests", "-t", ".", "-v"], argv[4:])
+        r, data = self.run_entry("backend", "--no-timing")
+        self.assertEqual(PASS, r.returncode, r.stdout + r.stderr)
         self.assertEqual(["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
                          data["command"]["argv"][1:])
 

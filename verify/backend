@@ -3,19 +3,39 @@
 
     verify/backend                     # the checkout you are standing in
     verify/backend --root <checkout>   # or one you name
+    verify/backend --select tests.test_gitrepo [--select …]   # focused
 
 It is `python3 -m unittest discover -s tests -t . -v` in the candidate
 root and nothing more — no third-party runner, so the plain command keeps
 working without this file — with the child environment built rather than
 inherited (see benchverify.py) and the whole log kept.
 
+Timing (task 163): by default the whole-suite discovery runs under
+verify/unittesttiming.py, which is unittest's own runner and output with a
+stopwatch, and writes `timings.json` beside the log — per test, per class
+and module fixture, discovery and the whole run — summarised under
+`timing` in the record. `--no-timing` runs the plain command instead.
+verify/timing-report ranks one run and compares two sets of runs.
+
+`--select` (repeatable, at most 32) runs only the named modules, classes
+or tests — `tests.test_x`, `tests.test_x.Case`, `tests.test_x.Case.test_y`
+— as `python3 -m unittest -v <names>`. The selection is resolved first,
+in the candidate, and every name must resolve to at least one test; what
+then ran must be exactly what resolved. The record's `coverage` says
+`focused` and lists the selection, and the verdict line says it is not a
+whole-suite result. Nothing infers a selection from changed files. A
+focused run is the plain command, untimed: timing is about the whole
+suite, and the record's `timing` says why it was not collected.
+
 Exit 0 when tests ran and all passed, 1 when any failed or errored, 2 when
 nothing trustworthy ran: not a bench checkout, zero tests discovered, a
-test module that would not import, or any test skipped. The plain command
-still reads skips as OK; this one does not, because the suite's skips are
-all missing dependencies (node, markdown-it-py) or platform tools.
+test module that would not import, a selection that names nothing, or
+any test skipped. The plain command still reads skips as OK; this one
+does not, because the suite's skips are all missing dependencies (node,
+markdown-it-py) or platform tools.
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -27,11 +47,165 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import benchverify as bv  # noqa: E402
 
 TIMEOUT = 3600
+RESOLVE_TIMEOUT = 300
+
+# Run in the candidate with the product's interpreter: loads each name and
+# prints the test ids it resolves to, or why it resolves to none. Nothing
+# is run. One JSON line, after a marker, so import-time output from a test
+# module cannot be mistaken for it.
+RESOLVE = r"""
+import json, sys, unittest
+def flat(s):
+    for t in s:
+        if isinstance(t, unittest.TestSuite):
+            yield from flat(t)
+        else:
+            yield t
+out = {}
+for name in sys.argv[1:]:
+    loader = unittest.TestLoader()
+    try:
+        suite = loader.loadTestsFromName(name)
+    except Exception as exc:
+        out[name] = {"ids": [], "error": f"{type(exc).__name__}: {exc}"}
+        continue
+    ids, errors = [], list(loader.errors)
+    for t in flat(suite):
+        if type(t).__module__ == "unittest.loader":
+            errors.append(str(getattr(t, "_exception", t)))
+        else:
+            ids.append(t.id())
+    out[name] = {"ids": ids, "error": " | ".join(
+        e.strip().splitlines()[-1] for e in errors if e.strip()) or None}
+print("\nBENCH-VERIFY-SELECTION " + json.dumps(out), flush=True)
+"""
+
+
+def resolve(run: bv.Run, selection: list[str]) -> list[str]:
+    """Every selector's test ids, or a setup error naming the selector
+    that resolved to none — before a single test runs."""
+    for sel in selection:
+        parts = sel.split(".")
+        if not any((run.root.joinpath(*parts[:i]).with_suffix(".py")).is_file()
+                   or (run.root.joinpath(*parts[:i]) / "__init__.py").is_file()
+                   for i in range(2, len(parts) + 1)):
+            raise bv.SetupError(f"selection {sel!r} names no test module under "
+                                f"tests/ in {run.root}: give a module that exists, "
+                                f"such as tests.test_gitrepo")
+    log = run.artifact("selectionLog", run.artifacts / "selection.log")
+    argv = [run.args.python, "-c", RESOLVE, *selection]
+    with open(log, "w", encoding="utf-8") as fh:
+        code, timed_out = bv.run_group(argv, run.root, run.env, fh, RESOLVE_TIMEOUT)
+    text = log.read_text(encoding="utf-8", errors="replace")
+    if timed_out:
+        raise bv.SetupError(f"resolving the selection did not finish within "
+                            f"{RESOLVE_TIMEOUT}s (log {log})")
+    line = [ln for ln in text.splitlines() if ln.startswith("BENCH-VERIFY-SELECTION ")]
+    if code != 0 or not line:
+        raise bv.SetupError(f"the selection could not be resolved (exit {code}): "
+                            f"{text.strip()[-600:]} (log {log})")
+    found = json.loads(line[-1].split(" ", 1)[1])
+    ids: list[str] = []
+    for sel in selection:
+        got = found.get(sel) or {}
+        if got.get("error"):
+            raise bv.SetupError(f"selection {sel!r} does not load: {got['error'][:600]} "
+                                f"— name a module, class or test that exists")
+        if not got.get("ids"):
+            raise bv.SetupError(f"selection {sel!r} resolves to zero tests — "
+                                f"nothing would be checked")
+        ids += got["ids"]
+    if len(set(ids)) != len(ids):
+        raise bv.SetupError("the selection names some tests twice; name each once")
+    return ids
+
+
+UNITTEST = ["discover", "-s", "tests", "-t", "."]
+COLLECTOR = Path(__file__).resolve().parent / "unittesttiming.py"
+
+
+def timed_argv(run: bv.Run) -> list[str]:
+    """The plain command, or the same discovery under the timing
+    collector (verify/unittesttiming.py), which runs unittest's own runner
+    and output and only adds a stopwatch. The collector lives beside this
+    runner, not in the candidate, so any candidate can be timed."""
+    plain = [run.args.python, "-m", "unittest", *UNITTEST, "-v"]
+    run.record["plainCommand"] = plain
+    if run.args.no_timing or not COLLECTOR.is_file():
+        run.record["timing"] = {"collected": False,
+                                "why": "--no-timing" if run.args.no_timing
+                                else f"no collector at {COLLECTOR}"}
+        return plain
+    path = run.artifact("timings", run.artifacts / "timings.json")
+    run.record["timing"] = {"collected": None, "collector": str(COLLECTOR),
+                            "collectorSha256": bv.sha256_file(COLLECTOR)}
+    return [run.args.python, str(COLLECTOR), "--timings", str(path), *UNITTEST, "-v"]
+
+
+def record_timing(run: bv.Run) -> None:
+    """A summary of the timings file in the record, beside the candidate
+    revision and interpreter it is about. Diagnostics only: a missing or
+    unreadable file is said, and never changes the outcome."""
+    t = run.record.get("timing", {})
+    if t.get("collected") is False:
+        return
+    path = Path(run.record["artifacts"]["timings"])
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        t.update(collected=False, why=f"timings file not readable: {exc}")
+        return
+    secs = {k: round(v, 3) for k, v in doc.get("seconds", {}).items()}
+    t.update(collected=True, schema=doc.get("schema"), seconds=secs,
+             fixtureTiming=doc.get("fixtureTiming"), counts=doc.get("counts"),
+             overhead=doc.get("overhead"), runtime=doc.get("runtime"),
+             slowestClasses=[{"class": c["class"], "tests": c["tests"],
+                              "seconds": round(c["seconds"], 2),
+                              "fixtureSeconds": round(c["fixtureSeconds"], 2)}
+                             for c in doc.get("classes", [])[:10]],
+             slowestTests=[{"id": x["id"], "seconds": round(x["seconds"], 2)}
+                           for x in sorted(doc.get("tests", []),
+                                           key=lambda x: -x["seconds"])[:25]],
+             slowestFixtures=[{"kind": f["kind"], "owner": f["owner"],
+                               "seconds": round(f["seconds"], 2)}
+                              for f in sorted(doc.get("fixtures", []),
+                                              key=lambda f: -f["seconds"])[:10]])
+    # The ranking is printed as well, bounded, because the check's output
+    # is what bench keeps in its own evidence log and returns to the run
+    # that asked — an artifacts directory may not be readable from there.
+    o = doc.get("overhead") or {}
+    print(f"timing: elapsed {secs.get('elapsed')}s = discovery {secs.get('discovery')}s + "
+          f"tests {secs.get('tests')}s + fixtures {secs.get('fixtures')}s + unattributed "
+          f"{secs.get('unattributed')}s; collector overhead "
+          f"{o.get('perTestSeconds', 0) * 1e6:.1f}µs/test (measured)")
+    for c in doc.get("classes", [])[:15]:
+        print(f"timing class: {c['seconds']:7.1f}s {c['tests']:4d} tests "
+              f"(fixtures {c['fixtureSeconds']:5.1f}s) {c['class']}")
+    for f in t["slowestFixtures"][:6]:
+        print(f"timing fixture: {f['seconds']:7.2f}s {f['kind']} {f['owner']}")
+    # 25, not 8: the baseline's eight slowest were all one-off waits, and
+    # the next tier is what the following improvement needs to see
+    for x in t["slowestTests"]:
+        print(f"timing test: {x['seconds']:7.2f}s {x['id']}")
 
 
 def body(run: bv.Run) -> str:
-    argv = [run.args.python, "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"]
+    selection = bv.validate_selection(
+        run.args.select, bv.BACKEND_SELECTOR, "backend",
+        "tests.test_gitrepo or tests.test_gitrepo.Case.test_name")
+    resolved = resolve(run, selection) if selection else None
+    if selection:
+        # a focused run is the plain command (task 162's contract); the
+        # timing collector is for whole-suite runs (task 163)
+        argv = [run.args.python, "-m", "unittest", "-v", *selection]
+        run.record["plainCommand"] = argv
+        run.record["timing"] = {"collected": False,
+                                "why": "a focused selection runs the plain command"}
+    else:
+        argv = timed_argv(run)
+    run.record["coverage"] = bv.coverage(selection, len(resolved) if resolved else None, None)
     code, out = run.run_logged(argv, "unittest.log", run.timeout(TIMEOUT))
+    record_timing(run)
     ran = re.search(r"^Ran (\d+) tests? in ", out, re.M)
     summary = re.search(r"^(OK|FAILED)( \((.*)\))?\s*$", out, re.M)
     counts = dict(re.findall(r"(failures|errors|skipped|expected failures|"
@@ -49,6 +223,9 @@ def body(run: bv.Run) -> str:
         "ran": int(ran.group(1)) if ran else None,
         **{k.replace(" ", "_"): int(v) for k, v in counts.items()},
         "importFailures": unimportable}
+    run.record["coverage"]["ran"] = run.record["tests"]["ran"]
+    if not run.record["coverage"]["discovered"]:
+        run.record["coverage"]["discovered"] = run.record["tests"]["ran"]
     if not ran:
         raise bv.SetupError(f"unittest printed no 'Ran N tests' line (exit {code}); "
                             f"the suite did not run — see {run.record['artifacts']['log']}")
@@ -62,6 +239,9 @@ def body(run: bv.Run) -> str:
             + (f" ({'; '.join(causes)[:600]})" if causes else "")
             + f" — install what they need, or fix the import; see "
               f"{run.record['artifacts']['log']}")
+    if resolved is not None and n != len(resolved):
+        raise bv.SetupError(f"the selection resolved to {len(resolved)} tests but "
+                            f"{n} ran; the record would not say what was covered")
     # Strict where the plain command is lenient: a skip is a test that
     # did not run, and in this suite every skip is a dependency or a
     # platform fact this machine lacks (node, markdown-it-py, lsof).
@@ -87,9 +267,22 @@ def body(run: bv.Run) -> str:
         raise bv.CheckFailed(f"{n} tests ran, unittest exit {code}: "
                              f"{summary.group(0).strip() if summary else 'no summary'}"
                              f"{named}")
+    if selection:
+        return (f"{n} tests ran: {summary.group(0).strip()} — focused on "
+                f"{', '.join(selection)[:400]}; not a whole-suite result")
     return f"{n} tests ran: {summary.group(0).strip()}"
 
 
 if __name__ == "__main__":
-    sys.exit(bv.Run("backend", __doc__.splitlines()[0],
-                    ["manager/core/board.py", "tests"]).main(body))
+    runner = bv.Run("backend", __doc__.splitlines()[0],
+                    ["manager/core/board.py", "tests"])
+    runner.parser.add_argument(
+        "--no-timing", action="store_true",
+        help="run the plain `python -m unittest` command, without the timing "
+             "collector (timings.json is then not written)")
+    runner.parser.add_argument(
+        "--select", action="append", metavar="TEST",
+        help="run only this module, class or test (tests.test_x[.Case[.test_y]]); "
+             "repeatable. The record says the run was focused. A focused run "
+             "is not timed")
+    sys.exit(runner.main(body))

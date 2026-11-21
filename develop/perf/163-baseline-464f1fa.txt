@@ -1,0 +1,36 @@
+bench-backend at 464f1fada42f — evidence ev:verification@1ec92f011698
+(bench's own runner, source root, 2026-11-20 20:05 UTC; the check took 1573.0s)
+Retained verbatim from the check output bench keeps (`bench-verify --details`);
+the whole log and timings.json are under that evidence's artifacts.
+
+timing: elapsed 1568.494s = discovery 1.27s + tests 1531.203s + fixtures 35.856s + unattributed 0.166s; collector overhead 0.8µs/test (measured)
+timing class:   121.8s    5 tests (fixtures   0.0s) tests.test_required_checks.OnlyMissingRequired
+timing class:   119.2s    8 tests (fixtures   0.0s) tests.test_gate_compare.AgainstAFixtureBoard
+timing class:   101.6s    9 tests (fixtures   0.0s) tests.test_orchestration_journey.Vendored
+timing class:    98.3s    9 tests (fixtures   0.0s) tests.test_orchestration_journey.SourceHosted
+timing class:    92.5s    5 tests (fixtures   0.0s) tests.test_gate_invalid_wording.InvalidIsNotUngated
+timing class:    87.9s    9 tests (fixtures   0.0s) tests.test_orchestration_journey.External
+timing class:    51.5s   11 tests (fixtures   0.0s) tests.test_orchestration_journey.FailureWindows
+timing class:    33.0s   19 tests (fixtures   0.0s) tests.test_architecture.ScratchCopyCatchesViolations
+timing class:    25.8s   19 tests (fixtures   0.0s) tests.test_verify_entrypoints.RemotePlaywright
+timing class:    15.7s   20 tests (fixtures   0.0s) tests.test_failed_move_commit.Vendored
+timing class:    15.6s   20 tests (fixtures   0.0s) tests.test_failed_move_commit.External
+timing class:    15.1s   20 tests (fixtures   0.0s) tests.test_failed_move_commit.SourceHosted
+timing class:    12.7s   10 tests (fixtures   0.0s) tests.test_setup_cards.PreviewAndCreate
+timing class:    11.9s    1 tests (fixtures   0.0s) tests.test_setup_preservation.DecisionsIntegrity
+timing class:    11.8s    5 tests (fixtures   0.0s) tests.test_application_previews.HonestEndings
+timing fixture:    1.99s setUpClass tests.test_execution_doctor.NothingElseIsTouched
+timing fixture:    1.80s setUpClass tests.test_architecture.TreeIsGoverned
+timing fixture:    1.65s setUpClass tests.test_execution_doctor.AdapterConformance
+timing fixture:    1.15s setUpClass tests.test_stale_page.AfterARestartIntoAnotherBuild
+timing fixture:    1.02s setUpClass tests.test_caller_identity.ARealBoardEnforcingRunIdentity
+timing fixture:    0.94s setUpClass tests.test_caller_identity.ARealBoardEnforcingTheHostBehindAProxy
+timing test:   86.64s tests.test_gate_compare.AgainstAFixtureBoard.test_the_same_resolver_twice_changes_nothing_and_exits_zero
+timing test:   70.90s tests.test_gate_invalid_wording.InvalidIsNotUngated.test_the_sheet_never_says_absent_about_an_invalid_policy
+timing test:   60.41s tests.test_required_checks.OnlyMissingRequired.test_unavailable_check_names_the_configuration_remedy
+timing test:   60.38s tests.test_required_checks.OnlyMissingRequired.test_requests_are_a_persons_work_reading
+timing test:   20.67s tests.test_gate_invalid_wording.InvalidIsNotUngated.test_the_panel_draws_the_policy_refusal_as_the_requirement
+timing test:   19.45s tests.test_orchestration_journey.Vendored.test_a_move_whose_commit_failed_is_recorded_by_the_cards_next_edit
+timing test:   17.87s tests.test_orchestration_journey.Vendored.test_a_move_staged_before_its_commit_failed_is_recorded_by_the_next_edit
+timing test:   17.51s tests.test_orchestration_journey.Vendored.test_a_move_whose_commit_failed_does_not_stop_the_merges
+bench-verify backend: PASSED — 4657 tests ran: OK

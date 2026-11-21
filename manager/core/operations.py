@@ -62,6 +62,9 @@ CONSUMING = frozenset({"intent", "launched", "ended", "unobserved", "unknown"})
 OPEN = frozenset({"intent", "launched", "unobserved", "unknown"})
 # What stands in for a launch nothing ran — another attempt may follow.
 NOTHING_RAN = frozenset({"refused", "retry", "abandoned"})
+# the most checks one bounded setup retry (task 164) names; delivery holds
+# rather than ask about more than the ledger would keep
+RETRY_MAX = 32
 
 KEY_RE = re.compile(r"^op-[0-9a-f]{20}$")
 TEXT_CAP = 400
@@ -143,10 +146,13 @@ def for_card(card: str, action: str | None = None,
 
 def begin(key: str, *, action: str, card: str, number: str | None,
           scope: str, pool: str, basis: str, attempt: int,
-          note: str | None = None) -> dict:
+          note: str | None = None, retry: dict | None = None) -> dict:
     """Record the intent, durably, before the side effect. Refused with
     `Exists` when the key is already on record — the receiver's dedupe:
-    a second caller learns what the first did instead of doing it again."""
+    a second caller learns what the first did instead of doing it again.
+    `retry` marks a bounded setup retry (task 164): which checks it asks
+    again and the evidence each answers, so the ceiling is counted from
+    the ledger and a restart resets nothing."""
     with _LOCK:
         path = _path(key)
         current = records.read_json(path, expect=dict)
@@ -157,6 +163,9 @@ def begin(key: str, *, action: str, card: str, number: str | None,
               "basis": basis, "attempt": attempt, "status": "intent",
               "intentAt": now_iso(), "intentEpoch": time.time(),
               "day": today(), "note": _clip(note), "history": []}
+        if retry:
+            op["retry"] = {"checks": [_clip(c) for c in retry.get("checks") or []][:RETRY_MAX],
+                           "of": [_clip(e) for e in retry.get("of") or []][:RETRY_MAX]}
         records.write_json(path, op, durable=True)
     return op
 

@@ -977,6 +977,23 @@
   .lhalt .lglyph{color:var(--alarm);font-family:var(--mono);font-size:12px;flex:none}
   .lhalt .lwhy{flex:1;min-width:0;color:var(--muted);overflow-wrap:anywhere}
   .lhalt .lwhy b{color:var(--alarm);font-weight:500}
+  /* a lane whose every card is merged in (task 161): closed, it is its
+     head, anything still waiting on a person (a halt, the gate) and one
+     summary line; the columns and the log are kept, hidden */
+  .lane.closed{gap:8px;padding:10px 14px}
+  .lane.closed > .lstages,.lane.closed > .plog,.lane > [hidden]{display:none}
+  .lhead .ltoggle{gap:5px}
+  .lsum{
+    display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:12.5px;
+    color:var(--muted);padding:7px 11px;background:var(--sunken);
+    border-left:2px solid var(--calm);border-radius:0 7px 7px 0;overflow-wrap:anywhere;
+  }
+  .lsum b{color:var(--text);font-weight:500}
+  .lsum.done{border-left-color:var(--idle)}
+  .lsum.bad{border-left-color:var(--alarm)}
+  .lsum .lstate{font-family:var(--mono);font-size:11.5px;color:var(--text)}
+  .lsum .lsacts{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+  @media (pointer:coarse){.lhead .ltoggle,.lsum .lsacts .chip2{min-height:44px;padding:0 14px}}
   .lstages{display:flex;gap:var(--gap);align-items:flex-start;overflow-x:auto}
   .lcol{flex:1 1 0;min-width:var(--col-min);display:flex;flex-direction:column;gap:8px}
   .lcol > h3{
@@ -1611,6 +1628,30 @@
   @media (max-width:520px){
     .resgallery{grid-template-columns:1fr}
     .showresult{padding:8px}
+  }
+
+  /* Time on this card (task 165): overlapping measurements, listed apart */
+  .cycletime{margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    min-width:0;overflow-wrap:anywhere}
+  .cycletime h3{margin-top:0}
+  .cycletime .unknown{color:var(--dim);font-style:italic}
+  .ctheadline{margin:0 0 6px}
+  .ctsrc{color:var(--dim);font-size:12.5px}
+  .ctactive{list-style:none;margin:6px 0;padding:6px 10px;border-left:3px solid var(--accent);line-height:1.5}
+  .ctactive li + li{margin-top:6px}
+  .ctcats{list-style:none;margin:6px 0 8px;padding:0}
+  .ctcats li{display:grid;grid-template-columns:minmax(0,14em) minmax(0,1fr);column-gap:12px;
+    padding:4px 0;border-top:1px solid var(--border)}
+  .ctcats li.ctlead{font-weight:600}
+  .ctcats .ctnote{grid-column:1 / -1;color:var(--dim);font-size:12px;font-weight:400}
+  .ctcats .ctval{font-family:var(--mono);font-size:13px}
+  .ctgaps{margin:6px 0;padding-left:18px;font-size:12.5px}
+  .ctfold{padding:6px 10px}
+  .ctline,.ctruns,.ctchecks{margin:0;padding-left:18px;line-height:1.5}
+  .ctline li + li,.ctruns li + li,.ctchecks li + li{margin-top:4px}
+  @media (max-width:520px){
+    .cycletime{padding:8px}
+    .ctcats li{grid-template-columns:minmax(0,1fr)}
   }
 
   /* announced, not drawn (task 125): the live regions beside the toast */

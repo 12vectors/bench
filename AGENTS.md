@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -296,6 +296,12 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   bench ran, acceptance counts and what is known of merged, installed and
   deployed; the prompt paragraph a run is given, and the one hold — an
   agreed Required whose output is missing, at the move into review
+- `cycletime.py` — a card's **Time on this card** (task 165): its lead
+  time, stage timeline, each run's span, the checks' union and sum, a
+  phase member's integration and delivery waits, what is in flight, and
+  every unknown and clock anomaly — read from the move history, the runs'
+  progress records, the evidence and the phase log, with nothing written
+  (see "Time on this card: cycle time without a second collector")
 - `agentsettings.py` — Settings → Agents: the harness and model each
   purpose rides and the local prompt overrides, read from the one
   launch-time resolver and written only as the agent keys of
@@ -1427,8 +1433,10 @@ menu, labelled once — and then the open section's text.
   findings**: the findings and the last review round explained against
   its revision and what has happened since, and the brief's own
   relevance review. Then, under **More about this card**, Show the
-  result (one line and a fold while nothing is asked for or kept), the
-  stack, the **Signals**
+  result (one line and a fold while nothing is asked for or kept),
+  **Time on this card** (see "Time on this card: cycle time without a
+  second collector"; its lead time is also one **Time** line under
+  *Where it stands*), the stack, the **Signals**
   block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
   2 (see ◫).`), external CI, review and the merge requirements as
   separate rows, each in its own words — with the branch plan folded
@@ -1889,6 +1897,97 @@ headless run: with no `BOARD_EMIT` to name the canonical bridge, both
 copies report, and the events that carry no vendor tool-use id —
 session start and stop — get a fresh id per copy, so those two can still
 appear twice. Tool events are de-duplicated there as everywhere else.
+
+### Time on this card: cycle time without a second collector
+
+A run's progress says what it is doing. It does not say where a ticket's
+ninety minutes went — how long it queued, how long agents ran, how much of
+that a check was in flight, how long it waited for review or for its
+phase. The card Overview's **Time on this card** answers that (task 165),
+and `GET /api/card/timing?file=&stage=` returns the same reading
+(`cycletime.py`). It is computed from records bench already keeps, and
+nothing new is collected:
+
+| measured from | what it gives |
+| --- | --- |
+| the card's stage moves (`movements.history`: committed `board:` moves and the move journal) | the stage timeline, every visit, and the lead time |
+| each run's progress record (`progress`, task 73) | when a work, act-on-PR or review run opened and the ending the board observed |
+| bench's evidence records | each check's request, start and end, its preparation steps, its attempt number, and requests answered by reuse |
+| the phase card's log (`<n> merged into …`) and the delivered record | a phase member's merge into the phase branch, and its phase's delivery |
+| the run registry and its session | what is running now and its last tool event |
+
+**The categories overlap, and none is a part of a total.** A check runs
+inside a run, which runs while the card sits in In progress. So each row
+is a separate measurement over the same clock, and the only whole is the
+**lead time**: from the card's first recorded move (its creation, where
+that is on record) to its newest arrival in Done, or to now while it is
+open. Adding the rows would count the same minutes several times, and
+nothing on the page or in the reply does it.
+
+| row | what it measures |
+| --- | --- |
+| Lead time | first record → Done; the ticket, not a run |
+| Queued | Backlog and To do, every visit summed |
+| In progress, In review (stage) | time the card sat in that stage, worked or waiting |
+| Implementation, Review, Repair runs | the union of that kind of run's spans — a run, not the ticket |
+| Verification | the **union** of every check's window (request to ending), so checks running side by side count their shared minutes once; the plain sum across checks is shown beside it, with how much of it overlapped, the time inside check processes and the time preparing |
+| Agent time outside checks | implementation and repair runs' union, less the time a check was in flight. **Not measured coding time**: bench sees a run's span, not what the agent did inside it |
+| Waiting for integration, Waiting for delivery to main | a phase member only: from its last arrival in Review to its merge into the phase branch, and from there to its phase's delivery. In the phase branch is not delivered |
+
+**Per-run time is not ticket time.** Each run is listed with its own
+span, its checks and its time outside them; a ticket that was queued for
+a day and ran for an hour has a lead time of a day.
+
+**What is in flight** is listed with its elapsed time: a check by name,
+attempt and phase (preparing, or running the check), with the evidence
+sheet as its next step; a run with its **last progress report**
+(agent-reported, not verified) beside its **last tool activity** (observed
+by bench — activity, not progress) and its process, with **‖ hold** as
+the person's action. No percentage is computed and nothing is inferred
+from either.
+
+**Unknown is said, never filled.** Each of these is listed in its words,
+and its time is in no total:
+
+- a run whose ending was not observed (the board restarted while it ran)
+  and a check its record says the board stopped during;
+- a move made by hand with no record (the card is not where its last
+  recorded move put it), a card whose creation is older than the history
+  bench reads, or a work state in no repository;
+- a phase member that arrived in Review inside the minute the phase log
+  dates its merge: the merge could be either side of that arrival, so
+  its wait for integration (under a minute) is unknown;
+- **clock and order anomalies**: a move, run, check, merge into the
+  phase branch or phase delivery dated after the reading, ending before
+  it started, or committed out of order (a replayed or rebased board
+  commit carries the replay's date); a merge the phase log dates before
+  the card ever reached Review; a delivery dated before the merge. That
+  interval is given no duration rather than a negative or invented one.
+
+A row with nothing recorded reads *none recorded*, never `0s`. A phase
+log line is written to the minute in this board's local time, truncated,
+and its precision is said with it: the wait for integration is measured
+from the last arrival in Review at or before the logged minute.
+
+The route answers about the card where it is: naming a `stage` the card
+has left is `409` with `moved` and the stage it is in now, and the page,
+which asks again whenever the card's stage changes, reads that instead.
+
+**Provenance.** Every run is named by its agent id and every check by its
+evidence id, attempt, commit and who asked, each linking to the ◫
+evidence sheet. Every input is machine-local, so the reading is this
+board's: a replica that synced the card has its moves and none of its
+runs or checks, and shows exactly that.
+
+**Reading is free.** Opening the card, the Overview and the route read
+files, the registries and the memoised move history; they launch,
+fetch, cancel and write nothing, and they grant no authority — there is
+no auto-cancellation and no new orchestration step behind any of it. The
+fixtures in `tests/test_cycletime.py` hold every row to exact totals
+(nested and overlapping checks, retries, concurrent runs, a reopened
+card, a phase member, missing data, anomalies and running intervals),
+and `verify/browser_cases/case_cycle_time.py` holds the drawn values to
+the reply at 1440 and 390 pixels in both themes.
 
 ## Execution plans
 
@@ -3895,6 +3994,36 @@ failure — and reports failing totals as findings with a cited diff. Its
 README is the step-by-step. Outside bench the same wrapper writes
 nothing and exits as it always did.
 
+**Bench's own wrappers speak it (task 164).** Every `verify/` entrypoint
+(`backend`, `docs`, `browser`, `preflight`) is built on
+`verify/benchverify.py`, which now writes a v1 report whenever bench
+hands it `$BENCH_VERIFY_REPORT`: exit 0 is `passed`, exit 1 `failed`,
+exit 2 `setup-failed`, and a cancelled run `incomplete`, with one
+bounded finding per browser case that did not pass. Without the opt-in
+nothing changes: bench hands a check no report path unless its policy
+says `"report": "v1"`, and the exit status means what it always did —
+which is why, in #158, the browser verifier's setup errors (Playwright
+timeouts, page crashes) read `failed`. Declaring `"report": "v1"` on the
+browser check in the policy document is the operator's separate act; this
+change applies nothing to a live policy. Once declared, a setup error is
+recorded `prepare-failed` (`verifier-setup`), an assertion failure
+`failed` (`report-failed`), and a timeout, a cancellation or a launch
+error stays bench's own reading whatever the wrapper wrote.
+
+**A browser health probe (task 164).** `verify/preflight browser` proves
+the browser starts, sandboxed, and answers; it never proved a page would
+load and respond. `verify/preflight browser --probe` also starts a
+disposable backend, loads the candidate's board and switches a view by a
+click and back, under the same sandbox rules as the cases (no
+`--no-sandbox`; the remote adapter requests `chromiumSandbox: true`,
+which only the server can honour, as the cases' record already says). It
+records which of `connection`, `navigation` and `interaction` it reached,
+keeps the browser and backend logs and a screenshot, and fails as a
+setup error naming the step. It is a health probe, never feature coverage
+or proof that a full run will be stable, and its record says
+`featureCoverage: false`. Using it as the browser check's `prepare` step
+is again the operator's choice.
+
 **What it is not.** Not an isolated runner, a sandbox, a dependency or
 service framework, or a way to prove a verifier honest. It contains no
 hostile code, gives no run a new permission, applies no fix a finding
@@ -5893,7 +6022,9 @@ the same toggles. The D7 defaults are written into every new draft:
 recovery then take implementation slots — counted, never free),
 20 launches a day, 6 launches per card, 2 repair rounds, 2 transient
 retries, a 120-minute run-age threshold (a warning, never a kill) and
-2 recovery attempts per incident (`recoveryAttempts`, task 144).
+2 recovery attempts per incident (`recoveryAttempts`, task 144) and
+0 setup retries (`setupRetries`, task 164: off until an operator sets
+it, and an agreement written before it reads 0).
 
 **Only narrowing, only two levels.** A phase's authority is the
 intersection with the Bench scope's, every word carrying the scope that
@@ -6695,12 +6826,49 @@ on), and every step's intent and receipt are `action` records:
 | `repair-exhausted` | the card has spent its `repairRounds`; an `attempt` record says *exhausted* |
 | `repair-no-change` | a repair ended without a new commit |
 | `check-not-granted` | a required check a person's work reading may not ask for — the permission is not widened |
-| `verification-setup-failed` | a required check could not reach a verdict (preparation failed, refused, no verdict): not repaired |
+| `verification-setup-failed` | a required check could not reach a verdict (preparation failed, refused, no verdict): not repaired. The reason says what failed, the setup retries used against `setupRetries`, why it is held, and the way through (fix the setup, then ↻ in the card's ◫ sheet) |
+| `retry-setup` | the newest answer of every unmet required check at this head is a setup failure (preparation failed), and `setupRetries` is not spent: the same checks are asked again at the same head (see "Bounded setup retries") |
 | `checks-unanswered` | checks asked at this head ended without answering; asking again is yours |
 | `authority-revoked` | the agreement, a pause, an exclusion or another person's move withdrew the step between the decision and the act |
 | `review-not-independent` | as above |
 | `step-refused` | a check batch, review or repair launch was refused at this head (its preflight said no); it is not asked again until the head moves or a person releases the operation |
 | `requirements-unmet`, `merge-refused`, `not-published`, `partial` | the merge rules, `complete_task` or publication said no |
+
+**Bounded setup retries (task 164).** A required check whose newest
+answer at the head is *preparation failed* — a required step that would
+not complete, or a verifier's own report that its setup failed — is a
+fact about the environment, not the code, so it is never repaired. With
+`setupRetries` set above 0 in the operating agreement (Orchestrator →
+Operating agreement → Ceilings; a phase may only lower it), delivery asks
+for exactly those checks again, at the same head, through the same
+**Run required checks** batch. The operation and each batch item record
+the evidence id the retry answers (`retryOf`); `verify.request` itself
+is asked exactly as a click asks. Every retry is a `verify` operation in
+the ledger marked `retry`, counted per card and head from the ledger
+itself — so a
+restart, a pause or an agreement edit resets nothing, an intent that
+provably ran nothing (`abandoned`) is not counted, an `unknown` outcome
+holds the card before anything is asked again, and two callers with one
+decision run it once. Nothing else is asked again: an assertion failure
+goes to repair as before, and a denial, a timeout, a verifier's refusal
+and a missing or broken report hold the card at once. A retry whose
+batch ended without a newer answer is not repeated, and neither is one
+the batch refused about the same failure — most often a check a person's
+work reading may not ask for (one only the review profile is offered):
+the card is held after that one refused operation, naming the work
+profile's `verify` list as the remedy. More than 32 setup failures at
+once are held rather than retried, since the ledger records at most 32
+per retry. When the ceiling is
+spent the card is held with an `attempt` record marked *exhausted* and a
+blocker naming the check, the reason, `n of m` retries and the way
+through. A retry takes no slot and spends no launch; it widens no grant,
+starts no service, stops no worker and changes no merge rule.
+
+What is *not* established, and stays unresolved: whether concurrent
+browser runs on one host contend for a shared resource. #158's crashes
+were never reproduced under controlled concurrency, so bench imposes no
+installation-wide serialization of checks; a retry runs exactly as any
+other request does.
 
 **Uncertain merges reconcile, never repeat.** A merge's intent is written
 before it. An intent found without a receipt is settled from the
@@ -8256,6 +8424,26 @@ A lane is a head, five stage columns and the phase's log:
   itself. It is the only thing that can tell "the phase has not reached
   this card" from "it started it and it ended badly", and until this view
   it had nowhere to be shown.
+
+**A lane whose every card is merged in closes itself** (task 161). Once
+every number the phase lists resolves to a card on this board and is in
+`Merged in` — the very placement the columns and the head's count read —
+the lane is drawn as its head, any halt or gate line, and one summary:
+*All N cards merged into the phase branch — the phase itself is not
+delivered*, with the phase's own status (its delivery word), its PR and
+**Open the phase card**, where its next step is; a phase in `done/` reads
+*Delivered*. That happens on first load and on the live update that
+brings the last card in. The columns and the log are kept, hidden, behind
+a **Show cards** / **Hide cards** toggle on the head (a button with
+`aria-expanded`, by pointer or keyboard). A person's choice stands for the
+page session, across redraws and reconnects, while the lane stays
+complete; a card that goes back to unfinished work, or a newly listed one
+that is not merged, opens the lane and forgets the choice, so the next
+completion closes it again. A phase that lists nothing, names a number no
+card on this board has (an archived member included), or wears any other
+`phase drift` is never read as complete, and a halted lane is not closed
+for you. Closing is presentation only: it moves, merges, archives and
+launches nothing, and is remembered nowhere but the page.
 
 **A halted lane says so at the top of itself**: the reason, the card it
 stopped on, and **▸ run again** beneath them. That action lives here and
