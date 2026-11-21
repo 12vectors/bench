@@ -38,6 +38,7 @@ import completion
 import config
 import cycletime
 import decisions
+import decisiontrace
 import delivery
 import doctor
 import drive
@@ -48,6 +49,7 @@ import gatepolicy
 import gates
 import changes
 import inputs
+import operations
 import orchestrator
 import phases
 import phasescope
@@ -1557,6 +1559,59 @@ def get_orchestration_reasoning(req) -> None:
                         "readiness": reasoning.readiness()})
 
 
+def _trace_links(entry: dict) -> dict:
+    """What each decision in a trace entry links to *now*: the operation
+    its result names (its current status in the ledger) and the recovery
+    incident with its reasoning attempts. Read beside the record, never
+    folded into it — the record says what the pass saw."""
+    ops, incidents = {}, {}
+    by_id = {i.get("id"): i for i in recovery.all_incidents()}
+    for d in entry.get("decisions") or []:
+        result = d.get("result") or {}
+        key = result.get("key") or result.get("operation")
+        if key and key not in ops and operations.KEY_RE.match(str(key)):
+            op = operations.read(key)
+            ops[key] = operations.public(op) if op else None
+        inc = result.get("incident")
+        if inc and inc not in incidents:
+            found = by_id.get(inc)
+            incidents[inc] = recovery.public(found) if found else None
+    return {"operations": ops, "incidents": incidents}
+
+
+def get_orchestration_trace(req) -> None:
+    # The decision trace (task 184): every scheduling pass, newest first,
+    # filtered and paged by a seq cursor. A read of this installation's own
+    # files: it launches, reserves, writes and fetches nothing.
+    before = _q(req, "before")
+    try:
+        found = decisiontrace.page(
+            card=_q(req, "card") or None, scope=_q(req, "scope") or None,
+            outcome=_q(req, "outcome") or None, action=_q(req, "action") or None,
+            since=_q(req, "since") or None, until=_q(req, "until") or None,
+            before=int(before) if before else None,
+            limit=int(_q(req, "limit") or 25))
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc)})
+        return
+    req.reply(200, {"trace": found})
+
+
+def get_orchestration_trace_entry(req) -> None:
+    try:
+        found = decisiontrace.entry(_q(req, "id"))
+    except ValueError as exc:
+        req.reply(400, {"error": str(exc)})
+        return
+    if found is None:
+        req.reply(404, {"error": "no trace entry with that id on this "
+                                 "installation — it may have been pruned by "
+                                 "retention, or recorded by another board"})
+        return
+    req.reply(200, {"entry": found, "links": _trace_links(found),
+                    "meta": decisiontrace.meta()})
+
+
 def _orchestration_refused(req, exc) -> None:
     extra = dict(exc.extra)
     if isinstance(exc, execowner.Refused):
@@ -2231,6 +2286,9 @@ ROUTES = (
     Route("GET", "/api/settings", "read", get_settings),
     Route("GET", "/api/orchestration", "read", get_orchestration),
     Route("GET", "/api/orchestration/reasoning", "read", get_orchestration_reasoning),
+    Route("GET", "/api/orchestration/trace", "read", get_orchestration_trace),
+    Route("GET", "/api/orchestration/trace/entry", "read",
+          get_orchestration_trace_entry),
     Route("GET", "/api/setup", "read", get_setup),
     Route("GET", "/api/setup/verification", "read", get_setup_verification),
     Route("GET", "/api/preview", "read", get_preview),

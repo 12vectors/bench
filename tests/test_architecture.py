@@ -846,6 +846,9 @@ ROUTES: dict[str, str] = {
     # reasoning jobs and their validated responses (task 139): a read
     # that launches no reasoning run
     "GET /api/orchestration/reasoning": "read",
+    # the decision trace (task 184): every pass, paged; reads only
+    "GET /api/orchestration/trace": "read",
+    "GET /api/orchestration/trace/entry": "read",
     "GET /api/setup": "read",
     "GET /api/setup/verification": "read",
     "GET /api/state": "read",
