@@ -236,7 +236,7 @@ substitute for the other or for bench's own checks.
 | leg | Python | what runs | what it proves |
 | --- | --- | --- | --- |
 | `tests (3.11)` | oldest supported | `python3 -m unittest discover -s tests -v`, nothing installed | the suite imports and passes with the standard library alone. Skips are allowed and read as OK, so it is **not** full coverage |
-| `tests (3.13)` | newest supported | node 22 and `site/requirements.txt` prepared, then `verify/preflight backend`, then `verify/backend --require-timing`, then `verify/ci-summary` | the whole suite ran at this commit with nothing skipped, and how long it took on a clean machine |
+| `tests (3.13)` | newest supported | node 22 and `site/requirements.txt` prepared, then `verify/preflight backend`, then `verify/backend --require-timing`, then `verify/ci-summary` | the whole suite ran at this commit (on a pull request, the PR's head commit) with nothing skipped, and how long it took on a clean machine |
 
 The strict leg is held to the same contract as `bench-backend`: zero
 tests discovered, a module that will not import, any skipped test or a
@@ -251,20 +251,39 @@ are added for CI:
   can be shown to have covered the same tests.
 - `verify/ci-summary <base>` reads the one record under the directory
   given to `--artifacts` and checks it against what the job expected:
-  the revision is `$GITHUB_SHA` and the checkout clean, the suite's own
+  the revision is the candidate commit (`$CANDIDATE_SHA`, below) and the
+  checkout clean, the suite's own
   interpreter (the timing file's runtime) is the matrix Python, the
   outcome `passed`, coverage `full`, no skips, timing collected and the
   test set counting what ran. It exits 0, 1 (the suite failed) or 2 (no
   record, two records, mismatched provenance, or anything less than a
   complete pass), and on every path appends a markdown summary to the
   job's step summary. `--write-context` adds `ci-context.json` holding an
-  allowlist of the run's own identifiers (commit, ref, run id and
-  attempt, workflow, job, runner image) and no other variable.
+  allowlist of the run's own identifiers (the candidate commit, a pull
+  request's head and base commits, GitHub's own `GITHUB_SHA`, the ref,
+  run id and attempt, workflow, job, runner image) and no other variable.
+
+**Which commit a run is about.** On a pull request, GitHub's default
+checkout and `$GITHUB_SHA` are a merge commit it makes for the run
+(`refs/pull/<n>/merge`), which nothing else names. So the workflow sets
+`CANDIDATE_SHA` to the PR's head commit (the pushed commit on a push),
+checks that commit out, expects it in the record and names the artifact
+after it. A PR artifact is therefore about the same commit as the card,
+Bench's evidence and a dev-box run. The cost is that CI does not test the
+PR merged into its base. `ci-context.json` keeps the head and base
+commits and GitHub's merge commit side by side, so the artifact also says
+which base the head was proposed against at the time.
 
 **What is kept.** The attestation and the upload run with `if: always()`,
-so a failing, skipping or timed-out run keeps its outputs too. Everything
+so a failing or skipping run keeps its outputs too. A hung suite is
+stopped by `verify/backend --timeout 3600` (60 minutes), inside the job's
+90-minute limit, so it ends as a setup error with its record and log
+written and kept. A run the runner kills itself (the job limit reached
+during preparation, a cancelled workflow, a lost runner) writes no
+`result.json`, and `ci-summary` says so rather than reading anything
+else as its record. Everything
 under `$RUNNER_TEMP/bench-ci/` is uploaded as
-`bench-backend-strict-py<version>-<sha>-<run id>-<attempt>`, kept 30 days:
+`bench-backend-strict-py<version>-<candidate sha>-<run id>-<attempt>`, kept 30 days:
 the preflight record, the backend's `result.json`, `unittest.log` and
 `timings.json`, and `ci-context.json`. Each run writes into a fresh
 directory on a fresh runner, and `ci-summary` refuses a base holding more

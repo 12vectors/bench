@@ -31,8 +31,10 @@ $GITHUB_STEP_SUMMARY when that is set, on every path — including the
 failing ones, which is when it is read.
 
 `--write-context` writes `ci-context.json` beside the run directories:
-an allowlist of the CI run's own non-secret identifiers (commit, ref, run
-id and attempt, workflow, job, runner OS and image). No other environment
+an allowlist of the CI run's own non-secret identifiers: the candidate
+commit the run is about (CANDIDATE_SHA) and, on a pull request, its head
+and base commits beside GitHub's merge commit in GITHUB_SHA; the ref, run
+id and attempt, workflow, job, runner OS and image. No other environment
 variable is read into it.
 """
 
@@ -45,7 +47,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-CONTEXT_KEYS = ("GITHUB_SHA", "GITHUB_REF", "GITHUB_HEAD_REF", "GITHUB_BASE_REF",
+CONTEXT_KEYS = ("CANDIDATE_SHA", "PR_HEAD_SHA", "PR_BASE_SHA", "GITHUB_SHA", "GITHUB_REF", "GITHUB_HEAD_REF", "GITHUB_BASE_REF",
                 "GITHUB_EVENT_NAME", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW",
                 "GITHUB_JOB", "GITHUB_RUN_ID", "GITHUB_RUN_NUMBER",
                 "GITHUB_RUN_ATTEMPT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS",

@@ -918,11 +918,18 @@ class CiSummary(Fixture):
     def test_the_context_file_holds_only_allowlisted_identifiers(self):
         self.passing()
         r, _ = self.summarise("--write-context", env_extra={
-            "GITHUB_SHA": self.head(), "GITHUB_RUN_ID": "42",
+            "GITHUB_SHA": "f" * 40, "CANDIDATE_SHA": self.head(),
+            "PR_HEAD_SHA": self.head(), "PR_BASE_SHA": "e" * 40,
+            "GITHUB_RUN_ID": "42",
             "GITHUB_TOKEN": "ghs_secretvalue", "SOME_PASSWORD": "hunter2"})
         self.assertEqual(0, r.returncode, r.stdout)
         ctx = json.loads((self.artifacts / "ci-context.json").read_text())
-        self.assertEqual(self.head(), ctx["GITHUB_SHA"])
+        # GitHub's merge commit and the PR head the run is about, side by
+        # side, so the artifact says which commit it attests
+        self.assertEqual("f" * 40, ctx["GITHUB_SHA"])
+        self.assertEqual(self.head(), ctx["CANDIDATE_SHA"])
+        self.assertEqual(self.head(), ctx["PR_HEAD_SHA"])
+        self.assertEqual("e" * 40, ctx["PR_BASE_SHA"])
         self.assertEqual("42", ctx["GITHUB_RUN_ID"])
         text = json.dumps(ctx)
         self.assertNotIn("secretvalue", text)
@@ -949,13 +956,39 @@ class Workflow(unittest.TestCase):
                  "verify/ci-summary", "actions/upload-artifact"]
         at = [self.text.index(step) for step in order]
         self.assertEqual(sorted(at), at)
-        self.assertIn('--expect-revision "$GITHUB_SHA"', self.text)
+        self.assertIn('--expect-revision "$CANDIDATE_SHA"', self.text)
         self.assertIn("--expect-python", self.text)
+
+    def test_a_pull_request_run_is_about_the_prs_head_commit(self):
+        # On a pull_request event $GITHUB_SHA is GitHub's merge commit,
+        # which nothing else names: the candidate is the PR head, checked
+        # out, expected, and naming the artifact.
+        self.assertIn("CANDIDATE_SHA: ${{ github.event.pull_request.head.sha "
+                      "|| github.sha }}", self.text)
+        checkout = self.text[self.text.index("actions/checkout"):]
+        self.assertIn("ref: ${{ env.CANDIDATE_SHA }}",
+                      checkout[:checkout.index("- uses:")])
+        self.assertNotIn('--expect-revision "$GITHUB_SHA"', self.text)
+        upload = self.text[self.text.index("- name: Keep timing"):]
+        self.assertIn("${{ env.CANDIDATE_SHA }}", upload)
+        self.assertNotIn("${{ github.sha }}", upload)
+        self.assertIn("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+                      self.text)
+        self.assertIn("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                      self.text)
+
+    def test_the_wrapper_ends_a_hung_suite_inside_the_job_limit(self):
+        # a run the runner kills writes no record; the wrapper's own
+        # timeout must come first so a hung suite still keeps one
+        job = int(self.text.split("timeout-minutes:")[1].split()[0])
+        step = self.text[self.text.index("verify/backend --require-timing"):]
+        wrapper = float(step.split("--timeout")[1].split()[0])
+        self.assertLess(wrapper, job * 60)
 
     def test_outputs_are_kept_on_every_path_under_a_unique_name(self):
         upload = self.text[self.text.index("- name: Keep timing"):]
         self.assertIn("if: always()", upload)
-        for part in ("${{ matrix.python-version }}", "${{ github.sha }}",
+        for part in ("${{ matrix.python-version }}", "${{ env.CANDIDATE_SHA }}",
                      "${{ github.run_id }}", "${{ github.run_attempt }}"):
             self.assertIn(part, upload)
         attest = self.text[self.text.index("- name: Attest"):]

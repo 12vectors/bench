@@ -14,6 +14,15 @@ env:
   # Chosen by version rather than by a second matrix key, so the check
   # names stay `tests (3.11)` and `tests (3.13)`.
   STRICT_PYTHON: "3.13"
+  # The commit this run is about. On a pull request GitHub's default
+  # checkout and $GITHUB_SHA are its throwaway merge commit
+  # (refs/pull/<n>/merge), which no card, Bench evidence or dev-box timing
+  # names; so the PR's own head commit is checked out, expected and named
+  # instead. On a push it is the pushed commit.
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  # Recorded in ci-context.json beside it (empty on a push).
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
 jobs:
   tests:
@@ -37,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -66,21 +76,27 @@ jobs:
         run: python3 verify/preflight backend --artifacts "$RUNNER_TEMP/bench-ci/preflight"
       - name: Strict, timed full suite — verify/backend --require-timing
         if: matrix.python-version == env.STRICT_PYTHON
-        run: python3 verify/backend --require-timing --artifacts "$RUNNER_TEMP/bench-ci/backend"
+        # --timeout 3600 (60 min) ends the suite inside the job's 90-minute
+        # limit, so a hung run is stopped by the wrapper and still writes
+        # its record, rather than being killed by the runner with none.
+        run: >-
+          python3 verify/backend --require-timing --timeout 3600
+          --artifacts "$RUNNER_TEMP/bench-ci/backend"
       - name: Attest the record (commit, Python, test set, no skips)
         if: always() && matrix.python-version == env.STRICT_PYTHON
         run: >-
           python3 verify/ci-summary "$RUNNER_TEMP/bench-ci/backend"
-          --expect-revision "$GITHUB_SHA"
+          --expect-revision "$CANDIDATE_SHA"
           --expect-python "${{ matrix.python-version }}"
           --write-context
       - name: Keep timing, logs and records
         if: always() && matrix.python-version == env.STRICT_PYTHON
         uses: actions/upload-artifact@v4
         with:
-          # unique per interpreter, commit, run and attempt: a rerun never
-          # overwrites or reads an earlier run's outputs
-          name: bench-backend-strict-py${{ matrix.python-version }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # unique per interpreter, candidate commit (the PR head on a pull
+          # request), run and attempt: a rerun never overwrites or reads an
+          # earlier run's outputs
+          name: bench-backend-strict-py${{ matrix.python-version }}-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/bench-ci/
           if-no-files-found: warn
           retention-days: 30
