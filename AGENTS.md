@@ -296,6 +296,12 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   bench ran, acceptance counts and what is known of merged, installed and
   deployed; the prompt paragraph a run is given, and the one hold — an
   agreed Required whose output is missing, at the move into review
+- `cycletime.py` — a card's **Time on this card** (task 165): its lead
+  time, stage timeline, each run's span, the checks' union and sum, a
+  phase member's integration and delivery waits, what is in flight, and
+  every unknown and clock anomaly — read from the move history, the runs'
+  progress records, the evidence and the phase log, with nothing written
+  (see "Time on this card: cycle time without a second collector")
 - `agentsettings.py` — Settings → Agents: the harness and model each
   purpose rides and the local prompt overrides, read from the one
   launch-time resolver and written only as the agent keys of
@@ -1427,8 +1433,10 @@ menu, labelled once — and then the open section's text.
   findings**: the findings and the last review round explained against
   its revision and what has happened since, and the brief's own
   relevance review. Then, under **More about this card**, Show the
-  result (one line and a fold while nothing is asked for or kept), the
-  stack, the **Signals**
+  result (one line and a fold while nothing is asked for or kept),
+  **Time on this card** (see "Time on this card: cycle time without a
+  second collector"; its lead time is also one **Time** line under
+  *Where it stands*), the stack, the **Signals**
   block — Bench checks (`Required: 1 of 1 passed on <commit>. Optional:
   2 (see ◫).`), external CI, review and the merge requirements as
   separate rows, each in its own words — with the branch plan folded
@@ -1889,6 +1897,87 @@ headless run: with no `BOARD_EMIT` to name the canonical bridge, both
 copies report, and the events that carry no vendor tool-use id —
 session start and stop — get a fresh id per copy, so those two can still
 appear twice. Tool events are de-duplicated there as everywhere else.
+
+### Time on this card: cycle time without a second collector
+
+A run's progress says what it is doing. It does not say where a ticket's
+ninety minutes went — how long it queued, how long agents ran, how much of
+that a check was in flight, how long it waited for review or for its
+phase. The card Overview's **Time on this card** answers that (task 165),
+and `GET /api/card/timing?file=&stage=` returns the same reading
+(`cycletime.py`). It is computed from records bench already keeps, and
+nothing new is collected:
+
+| measured from | what it gives |
+| --- | --- |
+| the card's stage moves (`movements.history`: committed `board:` moves and the move journal) | the stage timeline, every visit, and the lead time |
+| each run's progress record (`progress`, task 73) | when a work, act-on-PR or review run opened and the ending the board observed |
+| bench's evidence records | each check's request, start and end, its preparation steps, its attempt number, and requests answered by reuse |
+| the phase card's log (`<n> merged into …`) and the delivered record | a phase member's merge into the phase branch, and its phase's delivery |
+| the run registry and its session | what is running now and its last tool event |
+
+**The categories overlap, and none is a part of a total.** A check runs
+inside a run, which runs while the card sits in In progress. So each row
+is a separate measurement over the same clock, and the only whole is the
+**lead time**: from the card's first recorded move (its creation, where
+that is on record) to its newest arrival in Done, or to now while it is
+open. Adding the rows would count the same minutes several times, and
+nothing on the page or in the reply does it.
+
+| row | what it measures |
+| --- | --- |
+| Lead time | first record → Done; the ticket, not a run |
+| Queued | Backlog and To do, every visit summed |
+| In progress, In review (stage) | time the card sat in that stage, worked or waiting |
+| Implementation, Review, Repair runs | the union of that kind of run's spans — a run, not the ticket |
+| Verification | the **union** of every check's window (request to ending), so checks running side by side count their shared minutes once; the plain sum across checks is shown beside it, with how much of it overlapped, the time inside check processes and the time preparing |
+| Agent time outside checks | implementation and repair runs' union, less the time a check was in flight. **Not measured coding time**: bench sees a run's span, not what the agent did inside it |
+| Waiting for integration, Waiting for delivery to main | a phase member only: from its last arrival in Review to its merge into the phase branch, and from there to its phase's delivery. In the phase branch is not delivered |
+
+**Per-run time is not ticket time.** Each run is listed with its own
+span, its checks and its time outside them; a ticket that was queued for
+a day and ran for an hour has a lead time of a day.
+
+**What is in flight** is listed with its elapsed time: a check by name,
+attempt and phase (preparing, or running the check), with the evidence
+sheet as its next step; a run with its **last progress report**
+(agent-reported, not verified) beside its **last tool activity** (observed
+by bench — activity, not progress) and its process, with **‖ hold** as
+the person's action. No percentage is computed and nothing is inferred
+from either.
+
+**Unknown is said, never filled.** Each of these is listed in its words,
+and its time is in no total:
+
+- a run whose ending was not observed (the board restarted while it ran)
+  and a check its record says the board stopped during;
+- a move made by hand with no record (the card is not where its last
+  recorded move put it), a card whose creation is older than the history
+  bench reads, or a work state in no repository;
+- **clock and order anomalies**: a move, run or check dated after the
+  reading, ending before it started, or committed out of order (a
+  replayed or rebased board commit carries the replay's date). That
+  interval is given no duration rather than a negative or invented one.
+
+A row with nothing recorded reads *none recorded*, never `0s`. A phase
+log line is written to the minute in this board's local time, and its
+precision is said with it.
+
+**Provenance.** Every run is named by its agent id and every check by its
+evidence id, attempt, commit and who asked, each linking to the ◫
+evidence sheet. Every input is machine-local, so the reading is this
+board's: a replica that synced the card has its moves and none of its
+runs or checks, and shows exactly that.
+
+**Reading is free.** Opening the card, the Overview and the route read
+files, the registries and the memoised move history; they launch,
+fetch, cancel and write nothing, and they grant no authority — there is
+no auto-cancellation and no new orchestration step behind any of it. The
+fixtures in `tests/test_cycletime.py` hold every row to exact totals
+(nested and overlapping checks, retries, concurrent runs, a reopened
+card, a phase member, missing data, anomalies and running intervals),
+and `verify/browser_cases/case_cycle_time.py` holds the drawn values to
+the reply at 1440 and 390 pixels in both themes.
 
 ## Execution plans
 
