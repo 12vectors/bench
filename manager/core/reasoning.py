@@ -218,6 +218,7 @@ def recover() -> int:
     restart, and never re-run by itself — the scheduler asks again when
     the need is still there, under the same fingerprint, deliberately."""
     closed = 0
+    asked = []
     with LOCK:
         _load()
         for job in JOBS.values():
@@ -228,6 +229,12 @@ def recover() -> int:
                                      "lost; nothing was acted on"})
                 _save(job)
                 closed += 1
+                if job.get("need") == "ask":
+                    asked.append(dict(job))
+    # a person's question says so in its conversation (task 181), so the
+    # page offers Retry rather than waiting on a run that is gone
+    for job in asked:
+        on_card(job)
     return closed
 
 

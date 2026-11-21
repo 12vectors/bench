@@ -420,6 +420,26 @@ class CardQuestions(Board):
         self.assertEqual([c["id"] for c in listed], [result["conversation"]])
         self.assertEqual(listed[0]["where"]["card"], "51")
 
+    def test_a_restart_mid_question_says_so_and_offers_retry(self):
+        self.scenario("slow")
+        result = ask.submit({"kind": "card", "card": "51"}, "Slow question?",
+                            request=self.request_id())
+        operation = result["job"]["id"]
+        self.assertTrue(wait_for(lambda: reasoning.JOBS[operation]["status"] == "running"))
+        agent = reasoning.JOBS[operation]["agent"]
+        reasoning.reset()               # the board's memory is gone
+        self.assertEqual(reasoning.recover(), 1)
+        exchange = ask.thread(result["conversation"])["conversation"]["exchanges"][0]
+        self.assertEqual(exchange["replies"][0]["status"], "failed")
+        self.assertIn("restarted", exchange["replies"][0]["summary"])
+        self.assertTrue(exchange["canRetry"])
+        # this test's process is still the one that launched it: stop the
+        # stub and let its reaper finish before the board is torn down
+        import agents
+        agents.stop_agent(agent)
+        self.assertTrue(wait_for(lambda: reasoning.JOBS[operation]["status"] == "cancelled"
+                                 and "cardRecord" in reasoning.JOBS[operation]))
+
     def test_nothing_private_is_published(self):
         result = self.ask("Why is card 51 still in To Do?")
         text = self.card.read_text(encoding="utf-8")
