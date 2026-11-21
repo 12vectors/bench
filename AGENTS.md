@@ -4014,8 +4014,9 @@ a verdict:
 
 - **Queue, preparation and execution.** The evidence record already
   holds the request time, the slot wait (`queued`, kept over a second),
-  each preparation step and the check process. `verify/contention-report
-  <evidence dir>` prints them as separate columns, with *unknown* where a
+  each preparation step and the check process. `python3
+  verify/contention-report <evidence dir>` prints them as separate
+  columns, with *unknown* where a
   record cannot say (an older record has no slot wait over a second to
   report), never zero.
 - **Overlap**, computed from the records' execution windows, old records

@@ -119,7 +119,7 @@ Take one card needing a full backend (B ≈ 1500–1570 s) and a full browser
    running when the result is the acceptance run of record. This is a
    person's or orchestrator's sequencing choice, not a new scheduler.
 4. **Decide parallel 1 versus 2 from the sidecars.** After at least three
-   comparable full runs per side per check, run `verify/contention-report`.
+   comparable full runs per side per check, run `python3 verify/contention-report`.
    If overlapped browser runs' median execution is above 1.25× quiet,
    **or** overlapped runs fail with transport or setup timeouts that quiet
    runs do not show at a rate above about 1 in 4, then propose an

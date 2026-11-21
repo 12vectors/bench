@@ -227,7 +227,7 @@ def _open(eid: str, run: dict, reading: dict, hostinfo: dict) -> dict:
         "complete": False, "why": WHY,
     }
     return {"doc": doc, "_prev": reading["at"], "_written": 0.0,
-            "_sum": 0.0, "_peers": {}, "_omitted": set()}
+            "_sum": 0.0, "_peers": {}, "_omitted": set(), "_phases": {}}
 
 
 def _fold(obs: dict, reading: dict, runs: dict, me: str, *, step: float) -> None:
@@ -248,7 +248,12 @@ def _fold(obs: dict, reading: dict, runs: dict, me: str, *, step: float) -> None
     most["executing"] = max(most["executing"], executing)
     most["live"] = max(most["live"], len(runs))
     most["agents"] = max(most["agents"], reading.get("agents") or 0)
-    mine_exec = phase in ("preparing", "running")
+    # An interval is credited to the phases read at its START: a check
+    # that began executing somewhere inside it is not counted as executing
+    # for the whole of it. That makes "executing together" a lower bound
+    # (by at most one interval per phase change), never an over-count.
+    prev_phases = obs["_phases"]
+    mine_exec = prev_phases.get(me) in ("preparing", "running")
     for eid, run in runs.items():
         if eid == me:
             continue
@@ -262,8 +267,10 @@ def _fold(obs: dict, reading: dict, runs: dict, me: str, *, step: float) -> None
                                   "together": 0.0, "executing": 0.0}
             continue
         peer["together"] += step
-        if mine_exec and run["phase"] != "waiting":
+        if mine_exec and prev_phases.get(eid) in ("preparing", "running"):
             peer["executing"] += step
+    obs["_phases"] = {eid: run["phase"] for eid, run in runs.items()
+                      if eid == me or eid in obs["_peers"]}
     obs["_prev"] = reading["at"]
 
 

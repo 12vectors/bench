@@ -278,7 +278,13 @@ slot limit, how many agent runs the board tracked, and the host's load
 average, CPU count and available memory, as a first, last and end
 reading plus the mean and maximum 1-minute load; and up to 16 other checks
 seen beside it, each with the seconds observed together and executing
-together (more are counted). The report prints those beside the run.
+together (more are counted). An interval between two readings is
+credited to the phases read at its start, so *executing together* is a
+lower bound, short by at most one interval per phase change, never an
+over-count. The report prints those beside the run. Sidecars are not
+pruned: like the evidence records beside them, they accumulate, one small
+file per verification, and may be deleted by hand at no cost to any
+verdict.
 
 What it does not claim, said plainly: readings are within one interval of
 the real start and end, a check shorter than an interval may not be seen,

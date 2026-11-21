@@ -96,10 +96,14 @@ def phases(record: dict) -> dict:
         "commit": ((record.get("source") or {}).get("commit") or "")[:12] or None,
         "requested": requested, "start": first, "end": ended,
         "beforeStart": _round(before), "slotWait": _round(queued),
-        "prepare": _round(prepare) if prep else 0.0,
+        # no steps on record: 0 for a run that started (it had none to
+        # prepare), unknown for one that never ran (a denial, say)
+        "prepare": (_round(prepare) if prep
+                    else 0.0 if started is not None else None),
         "checkProcess": _round(check) if check is not None else None,
         "execution": _round(execution), "unknown": unknown,
         "checkName": record.get("check"),
+        "doctor": bool(record.get("doctor")),
     }
 
 
@@ -133,10 +137,14 @@ def analyse(records: list[dict], sidecars: dict[str, dict] | None = None, *,
     """Rows for every run asked about, each with its intervals, the runs
     it overlapped, and its observed load where a sidecar exists."""
     sidecars = sidecars or {}
-    rows = [phases(r) for r in records if not r.get("doctor")]
+    # A diagnosis's runs are not listed, but they still ran on this host:
+    # they take part in overlap, so a run beside one never reads as quiet.
+    rows = [phases(r) for r in records]
     lapped = overlaps(rows)
     picked = []
     for row in rows:
+        if row["doctor"]:
+            continue
         if check and row["checkName"] != check:
             continue
         if row["scope"] and not include_scoped:

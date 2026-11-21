@@ -105,9 +105,11 @@ class TheSidecar(Base):
         peer, = doc["peers"]
         self.assertEqual((peer["evidence"], peer["check"]), (B, "bench-browser"))
         # B was seen at 105, 110, 115: 10 s together after its first reading,
-        # executing together only once A held a slot (110→115)
+        # executing together only once A held a slot (110→115). The
+        # interval 105→110, in which A moved from waiting to preparing, is
+        # credited to A's phase at its start (waiting), so it is not counted
         self.assertEqual(peer["together"], 10.0)
-        self.assertEqual(peer["executing"], 10.0)
+        self.assertEqual(peer["executing"], 5.0)
         self.assertEqual(doc["most"], {"executing": 2, "live": 2, "agents": 3})
         self.assertEqual(doc["load1"], {"samples": 4, "mean": 3.5, "max": 3.5})
         self.assertEqual(doc["last"]["others"], {"waiting": 0, "preparing": 0,
@@ -119,6 +121,15 @@ class TheSidecar(Base):
         checkload.sample(10.0, runs(), HOST)
         peer, = self.side(A)["peers"]
         self.assertEqual((peer["together"], peer["executing"]), (5.0, 0.0))
+
+    def test_a_peer_that_starts_executing_mid_interval_is_not_credited_for_it(self):
+        checkload.sample(0.0, runs(**{A: ("x", "running"), B: ("y", "waiting")}), HOST)
+        checkload.sample(5.0, runs(**{A: ("x", "running"), B: ("y", "running")}), HOST)
+        checkload.sample(10.0, runs(**{A: ("x", "running"), B: ("y", "running")}), HOST)
+        checkload.sample(15.0, runs(), HOST)
+        peer, = self.side(A)["peers"]
+        # 0→5 began with B waiting; only 5→10 began with both executing
+        self.assertEqual((peer["together"], peer["executing"]), (10.0, 5.0))
 
     def test_a_gap_the_beat_did_not_see_is_not_counted(self):
         checkload.sample(0.0, runs(**{A: ("x", "running"), B: ("y", "running")}), HOST)
@@ -259,6 +270,10 @@ class TheReport(unittest.TestCase):
                                     "requested": 1.0})
         self.assertIsNone(denied["execution"])
         self.assertIsNone(denied["beforeStart"])
+        # nothing ran, so how long it prepared is unknown, not zero
+        self.assertIsNone(denied["prepare"])
+        # a run that started with no steps on record had none: zero
+        self.assertEqual(row["prepare"], 0.0)
 
     def test_overlap_is_computed_from_the_records(self):
         recs = [record("ev:v@1", "backend", 0, 0, 100),
@@ -276,6 +291,14 @@ class TheReport(unittest.TestCase):
                 record("ev:v@3", "b", 0, 0, 10)]
         self.assertEqual([r["id"] for r in contention.analyse(recs)["runs"]], ["ev:v@3"])
         self.assertEqual(len(contention.analyse(recs, include_scoped=True)["runs"]), 2)
+
+    def test_a_run_beside_a_diagnosis_is_not_quiet(self):
+        recs = [record("ev:v@1", "b", 0, 0, 100),
+                record("ev:v@2", "x", 40, 40, 60, doctor=True)]
+        row, = contention.analyse(recs)["runs"]
+        self.assertEqual(row["id"], "ev:v@1")       # the diagnosis is not listed
+        self.assertEqual(row["overlapSeconds"], 20.0)
+        self.assertEqual(row["overlapped"][0]["evidence"], "ev:v@2")
 
     def test_a_small_sample_is_said_to_be_too_small(self):
         recs = [record("ev:v@1", "browser", 0, 0, 400),
