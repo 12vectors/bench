@@ -29,6 +29,55 @@ tests never ran. It now reads `setup-error` (and, with the
 the interactive `python3` (1999 tests, no skips) remains valid; the
 service environment is not yet ready for full verification.
 
+## Focused runs: a fast loop, never the whole (task 162)
+
+`verify/backend --select tests.test_x[.Case[.test_y]]` and
+`verify/browser --case case_x[.Case[.test_y]]` (each repeatable, at most
+32) run only what they name. With neither flag both entrypoints behave
+exactly as above.
+
+- **Exactly the declaration.** A backend selection is resolved in the
+  candidate before anything runs (`selection.log`), every name must
+  resolve to at least one test, and what ran must equal what resolved. A
+  browser selection filters the cases `--cases` discovered; it is not a
+  second runner. A path, glob or pattern, a repeated or nested name, a
+  module that does not exist, a test that does not load and a selection
+  of zero tests are each a setup error before anything runs. Skips are
+  still refused, and a focused browser run still requires its declared
+  screenshots (only the full run must also record a measurement).
+- **Honest coverage.** The record carries `coverage` — `kind` (`full` or
+  `focused`), `selection`, `discovered`, `ran` and, for the browser,
+  `available` — beside the candidate's revision and source digest, the
+  logs and the artifacts. The verdict line reads `PASSED (FOCUSED — not a
+  whole-suite result)`, and the summary line carries `"coverage"`.
+- **Never a full pass inside bench.** Offer a selection as a *scope* of
+  the full check (`"scopes": {"contracts": ["--select", "tests.test_gitrepo"]}`),
+  never as its own name or inside `run`. A scope's arguments are the
+  evidence's coverage and identity, so a focused pass is not reused for a
+  full request, does not meet a merge rule that requires the bare name or
+  a declared equivalent of it, reads `stale / scope-changed` when its
+  selection is edited, and does not combine with an older full pass at
+  another commit (`tests/test_focused_verification.py` holds each).
+- **Nothing is inferred.** No selection is derived from changed files.
+
+**Browser cases use the shared transport API.** Before a browser starts,
+every selected case module is read for browser use outside what the local
+CDP browser and the remote Playwright adapter both provide (`goto`,
+`wait`, `click`, `press`, `release`, `hover`, `reveal`, `eval`,
+`viewport`, `zoom`, `key`, `screenshot`, `ax_nodes`, and `origin`,
+`console`, `csp`). A case calling `call` (raw CDP) or `request` (the
+adapter's wire op) is a setup error naming the file and line; at run time
+cases are handed only that API, so a call hidden from the source check is
+refused the same way. Of the state, only `origin` may be assigned (a case
+pointing the page at a proxy or a second backend); every other assignment
+is the harness's and is refused.
+
+`verify/examples/focused-checks/` holds the walk-through (early
+architecture checks, a changed browser case over `PW_WS`, the fast loop
+then the final full run), an **inactive** policy example adding scopes to
+`bench-backend` and `bench-browser` with no gates block, and optional
+agent guidance. Nothing there changes a live grant, gate or prompt.
+
 ## Which checkout is tested
 
 `--root`, else `BENCH_VERIFY_ROOT`, else the **working directory** — never
@@ -58,7 +107,9 @@ the host's. A copy outside git (a release artifact) is likewise run with
 | 2 | `setup-error` | nothing trustworthy ran: not a bench checkout, a dependency missing, **zero tests discovered**, **a test module that could not be imported**, **any test skipped**, a browser that would not start (including no sandbox), **a required artifact absent or not written by this run**, **the candidate changed during the run**, a timeout |
 
 A setup error is never a pass and never a skip. A browser case that
-skips is counted as a setup error. In `verify/backend` an error *inside*
+skips is counted as a setup error, and so is a transport error (an
+adapter timeout, say) inside a case or one of its `subTest`s — named by
+the sub-test — while an assertion there is a named failure. In `verify/backend` an error *inside*
 a test (an exception the product raised) is still `failed`; only a module
 unittest could not import is `setup-error`, because none of its tests ran.
 
@@ -211,7 +262,8 @@ both paths.
 
 `verify/examples/` holds two profile documents in the installed schema
 (`manager/core/profiles.example.json`). Neither is active anywhere until a
-person installs it. Beside them, `verify/examples/report-contract/` is a
+person installs it; nor is a third, `focused-checks/profiles.focused.example.json`,
+described under "Focused runs" above. Beside them, `verify/examples/report-contract/` is a
 worked example of the verifier report contract (task 135): a small
 report emitter around a disposable, Cicero-shaped wrapper that keeps its
 own safety checks. It is a project's example, not one of bench's checks,

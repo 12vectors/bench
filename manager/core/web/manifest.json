@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 6951,
-   "sha256": "63ff94b00c550ed3ee59a30c4f6e2a83c0b441c9b18ceda51cdcf68705ef0dca",
+   "bytes": 7239,
+   "sha256": "a49df36dfa4cf840f2821c9a73e3d62440068219958b659b1a6786929b7f00a8",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 130160,
-   "sha256": "7c636a56912f1d796229034f4cb98c068ef7088e9f6bce43fb0da71955485a3d",
+   "bytes": 131138,
+   "sha256": "55d5ac5cf5474fdb17fed4314dfd1d78fc34ffae851ad3cce6f5a94a73c6bac4",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -331,8 +331,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {
-   "bytes": 23575,
-   "sha256": "4d286a60fb4bc007ac7747f301b211d33b1ebc15d3591f7a55db23776cde626c",
+   "bytes": 28958,
+   "sha256": "3e0c25d3c2680b3c39ef71c91a0b6638c40b0abeab52724e16689b2d058325e1",
    "type": "text/javascript; charset=utf-8"
   },
   "views/profile.js": {

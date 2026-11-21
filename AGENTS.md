@@ -8532,6 +8532,26 @@ A lane is a head, five stage columns and the phase's log:
   this card" from "it started it and it ended badly", and until this view
   it had nowhere to be shown.
 
+**A lane whose every card is merged in closes itself** (task 161). Once
+every number the phase lists resolves to a card on this board and is in
+`Merged in` — the very placement the columns and the head's count read —
+the lane is drawn as its head, any halt or gate line, and one summary:
+*All N cards merged into the phase branch — the phase itself is not
+delivered*, with the phase's own status (its delivery word), its PR and
+**Open the phase card**, where its next step is; a phase in `done/` reads
+*Delivered*. That happens on first load and on the live update that
+brings the last card in. The columns and the log are kept, hidden, behind
+a **Show cards** / **Hide cards** toggle on the head (a button with
+`aria-expanded`, by pointer or keyboard). A person's choice stands for the
+page session, across redraws and reconnects, while the lane stays
+complete; a card that goes back to unfinished work, or a newly listed one
+that is not merged, opens the lane and forgets the choice, so the next
+completion closes it again. A phase that lists nothing, names a number no
+card on this board has (an archived member included), or wears any other
+`phase drift` is never read as complete, and a halted lane is not closed
+for you. Closing is presentation only: it moves, merges, archives and
+launches nothing, and is remembered nowhere but the page.
+
 **A halted lane says so at the top of itself**: the reason, the card it
 stopped on, and **▸ run again** beneath them. That action lives here and
 not on the Board, because clearing a halt should mean having read what
