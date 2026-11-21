@@ -70,6 +70,7 @@ import config
 import coordinate  # noqa: F401
 import cycletime  # noqa: F401
 import decisions  # noqa: F401
+import decisiontrace  # noqa: F401
 import delivery  # noqa: F401
 import doctor
 import drive

@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -241,6 +241,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   before it and updated with the observed receipt after; which statuses
   reserve a slot and which spent a start, so a restart, a pause or a lost
   reply resets no budget. Imports `config` and `records` only
+- `decisiontrace.py` — the orchestrator's decision trace (task 184): one
+  versioned, bounded, installation-local record per scheduling pass —
+  what each candidate was read as, the rule and reason, what was
+  selected and what became of it — with identical idle passes compacted
+  losslessly, segment retention and its boundary named, and recording
+  failures counted rather than raised. Imports `config`, `records` and
+  `redact`; reading it writes and launches nothing (see "The decision
+  trace: why it acted, and why it did not")
 - `movements.py` — who last moved a card, and whether that makes it this
   board's to orchestrate (task 138, D1): each move's provenance read back
   from the `Bench-Move` trailers `taskfiles` writes on a move's commit and

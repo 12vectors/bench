@@ -40,7 +40,7 @@ composition.
 ```architecture current
 L0  gitproc records redact
 L1  config
-L2  githost assets agreements operations
+L2  githost assets agreements operations decisiontrace
 L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions brain
@@ -362,7 +362,7 @@ be checked against it when they land. Not enforced.
 ```architecture proposed
 L0  gitproc records redact
 L1  config
-L2  state reports templates gitrepo assets verifierreport agreements operations workbase
+L2  state reports templates gitrepo assets verifierreport agreements operations workbase decisiontrace
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions brain

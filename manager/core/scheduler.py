@@ -57,6 +57,7 @@ one is held for a person.
 
 from __future__ import annotations
 
+import copy
 import os
 import threading
 import time
@@ -68,6 +69,7 @@ import basechoice
 import config
 import coordinate
 import decisions
+import decisiontrace
 import execowner
 import operations
 import orchestrator
@@ -894,74 +896,359 @@ def run_pass(board: dict | None = None, start=None) -> dict:
     """One bounded pass. Off, it reads the agreement and returns; not the
     owner, it returns before observing anything. Holds one lock, so two
     passes never interleave in this process; the OS execution lock keeps
-    a second process out."""
+    a second process out.
+
+    Every pass the scheduler evaluates is written to the decision trace
+    (`decisiontrace`, task 184) once it has decided and acted — a skipped
+    pass (an agreement off or invalid, a replica, a busy lock) as what it
+    is, an error as a partial pass. Recording never raises and changes
+    nothing the pass decided."""
     if not _enabled():
+        _trace_skipped(_off_reason())
         return {"ran": False, "why": "off"}
     owner = execowner.reading()
     if owner["role"] == "designated-here" and not owner["lockHeld"]:
         execowner.acquire_lock()
     allowed = execowner.authorizes()
     if not allowed["allowed"]:
+        _trace_skipped(allowed["code"], allowed.get("reason"))
         return {"ran": False, "why": allowed["code"]}
     if not _PASS_LOCK.acquire(blocking=False):
+        _trace_skipped("busy", "another pass was still running in this process")
         return {"ran": False, "why": "busy"}
+    ctx: dict = {"observed": [], "reconciled": [], "items": [], "results": []}
     try:
-        started = time.time()
-        observed = observe() + coordinate.observe()
-        # stacked decisions whose prerequisite moved, landed, went back or
-        # vanished: reassessed visibly, on the card (task 150)
-        observed += basechoice.observe(taskfiles.collect()
-                                       if board is None else board)
-        reconciled = reconcile() + coordinate.reconcile() + phasescope.reconcile()
-        given = board
-        # a phase scope's own steps first (task 143): its card put
-        # in-progress, its branch cut, main merged in, a phase whose
-        # members are all integrated finished — so the members planned
-        # below start from a branch that is there
-        prepared = phasescope.run(taskfiles.collect() if given is None else given)
-        board = taskfiles.collect() if board is None else board
-        # the cards already in review/: their next delivery step (task
-        # 142). Their reviews and repairs wait in the same first-come,
-        # first-served queue as implementation work (task 182), so the
-        # plan reads both before anything is admitted
-        delivery = coordinate.plan(board)
-        found = plan(board, delivery, sync=True)
-        results = list(prepared)
-        # a blocked work-base decision goes onto its card, with its remedy
-        # as an open blocker — not only into the schedule (task 150)
-        results.extend(record_base_blocks(found, board))
-        tripped = recovery.breaker()
-        if tripped["open"]:
-            results.append({"outcome": "breaker-open",
-                            "until": tripped["until"]})
-        else:
-            # every launch in the order it became ready, whatever its kind
-            for task, _item in found.get("_chosen", []):
-                if (_item.get("action") or ACTION) == ACTION:
-                    results.append(execute(task, _item, None, start))
-                else:
-                    results.append(coordinate.execute(_item, task, board))
-            # then delivery's steps that launch no agent — checks, merge,
-            # integration — on the reading taken above
-            results.extend(coordinate.run(board, delivery, launches=False))
-        # last, work that is not moving (task 144): incidents opened only
-        # on justified evidence, a bounded diagnosis each, a coordinated
-        # restart where one was proposed — and with the breaker open,
-        # observation only
-        results.extend(recovery.run(
-            taskfiles.collect() if given is None else given, start=start))
-        summary = {"at": operations.now_iso(), "seconds": round(time.time() - started, 3),
-                   "observed": len(observed), "reconciled": len(reconciled),
-                   "chosen": found.get("chosen", []),
-                   "results": [{k: v for k, v in r.items() if k != "reason"}
-                               | ({"reason": str(r["reason"])[:200]}
-                                  if r.get("reason") else {}) for r in results]}
-        LAST["pass"] = summary
-        if results:
-            state.broadcast({"type": "board"})
-        return {"ran": True, **summary}
+        out = _run_pass(board, start, ctx)
+    except BaseException as exc:
+        _trace_pass(ctx, error=exc)
+        raise
     finally:
         _PASS_LOCK.release()
+    _trace_pass(ctx)
+    return out
+
+
+def _run_pass(board: dict | None, start, ctx: dict) -> dict:
+    """The body of one pass, under `run_pass`'s lock. `ctx` collects what
+    the pass read and did, for the decision trace; nothing here reads it."""
+    started = time.time()
+    ctx["started"] = started
+    observed = observe() + coordinate.observe()
+    ctx["observed"] = observed
+    # stacked decisions whose prerequisite moved, landed, went back or
+    # vanished: reassessed visibly, on the card (task 150)
+    observed += basechoice.observe(taskfiles.collect()
+                                   if board is None else board)
+    reconciled = reconcile() + coordinate.reconcile() + phasescope.reconcile()
+    ctx["reconciled"] = reconciled
+    given = board
+    # a phase scope's own steps first (task 143): its card put
+    # in-progress, its branch cut, main merged in, a phase whose
+    # members are all integrated finished — so the members planned
+    # below start from a branch that is there
+    prepared = phasescope.run(taskfiles.collect() if given is None else given)
+    board = taskfiles.collect() if board is None else board
+    # the cards already in review/: their next delivery step (task
+    # 142). Their reviews and repairs wait in the same first-come,
+    # first-served queue as implementation work (task 182), so the
+    # plan reads both before anything is admitted
+    delivery = coordinate.plan(board)
+    found = plan(board, delivery, sync=True)
+    results = list(prepared)
+    # what the pass read, as it read it, copied before anything acts: the
+    # trace is written from this, never from the board after the pass
+    ctx.update(board=board, results=results,
+               found={"status": found.get("status"),
+                      "items": copy.deepcopy(found.get("items") or [])},
+               delivery={"status": delivery.get("status"),
+                         "items": copy.deepcopy(delivery.get("items") or [])},
+               usage=_usage_snapshot(board))
+    # a blocked work-base decision goes onto its card, with its remedy
+    # as an open blocker — not only into the schedule (task 150)
+    results.extend(record_base_blocks(found, board))
+    tripped = recovery.breaker()
+    if tripped["open"]:
+        results.append({"outcome": "breaker-open",
+                        "until": tripped["until"]})
+    else:
+        # every launch in the order it became ready, whatever its kind
+        for task, _item in found.get("_chosen", []):
+            if (_item.get("action") or ACTION) == ACTION:
+                results.append(execute(task, _item, None, start))
+            else:
+                results.append(coordinate.execute(_item, task, board))
+        # then delivery's steps that launch no agent — checks, merge,
+        # integration — on the reading taken above
+        results.extend(coordinate.run(board, delivery, launches=False))
+    # last, work that is not moving (task 144): incidents opened only
+    # on justified evidence, a bounded diagnosis each, a coordinated
+    # restart where one was proposed — and with the breaker open,
+    # observation only
+    results.extend(recovery.run(
+        taskfiles.collect() if given is None else given, start=start))
+    summary = {"at": operations.now_iso(), "seconds": round(time.time() - started, 3),
+               "observed": len(observed), "reconciled": len(reconciled),
+               "chosen": found.get("chosen", []),
+               "results": [{k: v for k, v in r.items() if k != "reason"}
+                           | ({"reason": str(r["reason"])[:200]}
+                              if r.get("reason") else {}) for r in results]}
+    LAST["pass"] = summary
+    if results:
+        state.broadcast({"type": "board"})
+    return {"ran": True, **summary}
+
+
+# ── the decision trace (task 184) ─────────────────────────────────────
+#
+# Written from what the pass itself read and decided — the plan's items,
+# delivery's items, the results of each side effect — so a later edit of
+# a card, the agreement or a dependency cannot change what a pass is
+# recorded as having seen. Bounding, redaction and compaction are
+# `decisiontrace`'s. Nothing here decides, reserves or launches.
+
+# the plan's fields that are the decision itself, kept at the top level
+_TOP = ("card", "number", "scope", "stage", "action", "state", "code",
+        "reason", "admitted")
+# a launch is "selected" when the plan chose it; these are what the
+# side effect then came to
+_RESULT_WORDS = {"launched": "launched", "started": "started",
+                 "refused": "refused", "not-authorized": "refused",
+                 "base-blocked": "refused", "base-unrecorded": "refused",
+                 "base-stale": "refused", "unknown": "unknown",
+                 "duplicate": "duplicate", "retry": "retry",
+                 "base-blocked-recorded": "recorded"}
+_STATE_WORDS = {"waiting": "waiting", "held": "held", "blocked": "blocked",
+                "working": "working", "running": "working",
+                "unmanaged": "not-managed", "not-ours": "not-managed"}
+
+
+def _off_reason() -> str | None:
+    """Why a pass is off, or None when no agreement exists at all — a
+    board that never configured orchestration records nothing."""
+    try:
+        reading = agreements.effective()
+    except Exception:  # noqa: BLE001
+        return "agreement-unreadable"
+    if not reading["configured"]:
+        return None
+    if not reading["valid"]:
+        return "agreement-invalid"
+    return "bench-disabled"
+
+
+_SKIP_WORDS = {
+    "agreement-invalid": "the operating agreement does not validate, so every "
+                         "scope is off and nothing was evaluated",
+    "agreement-unreadable": "the operating agreement could not be read",
+    "bench-disabled": "the Bench scope is not enabled in the agreement in "
+                      "force, so nothing was evaluated",
+    "busy": "another pass was still running in this process",
+}
+
+
+def _agreement_facts() -> dict:
+    try:
+        reading = agreements.effective()
+    except Exception:  # noqa: BLE001
+        return {"readable": False}
+    return {"revision": reading.get("revision"),
+            "configured": reading.get("configured"),
+            "valid": reading.get("valid"),
+            "capacityModel": reading.get("capacityModel"),
+            "scopes": [{"id": s.get("id"), "enabled": s.get("enabled"),
+                        "paused": s.get("paused"), "pausedBy": s.get("pausedBy")}
+                       for s in (reading.get("scopes") or [])][:20]}
+
+
+def _owner_facts() -> dict:
+    try:
+        owner = execowner.reading()
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"installation": owner.get("installation"),
+            "role": owner.get("role")}
+
+
+def _usage_snapshot(board: dict) -> dict:
+    try:
+        reading = agreements.effective()
+        used = orchestrator.usage(reading, _tasks(board))
+        bench = agreements.scope(reading, agreements.BENCH) or {}
+        totals = {k: (v or {}).get("total") for k, v in
+                  (bench.get("capacity") or {}).items() if isinstance(v, dict)}
+    except Exception:  # noqa: BLE001 — a fact we could not read is absent
+        return {}
+    return {"inUse": used.get("totals"), "startsToday": used.get("startsToday"),
+            "startsTodayTotal": used.get("startsTodayTotal"), "limits": totals}
+
+
+def _trace_skipped(why: str | None, reason: str | None = None) -> None:
+    if why is None:
+        return
+    record = {"status": "skipped", "why": why, "boot": state.BOOT,
+              "reason": reason or _SKIP_WORDS.get(why) or why,
+              "headline": "Not evaluated: " + (reason or _SKIP_WORDS.get(why) or why),
+              "agreement": _agreement_facts(), "owner": _owner_facts(),
+              "breaker": _breaker_facts(), "decisions": []}
+    decisiontrace.append(record, idle=True)
+
+
+def _breaker_facts() -> dict:
+    try:
+        b = recovery.breaker()
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"open": b.get("open"), "until": b.get("until")}
+
+
+def _op_facts(op: dict) -> dict:
+    return {k: op.get(k) for k in ("key", "file", "card", "action", "status",
+                                   "outcome", "code") if op.get(k) is not None}
+
+
+def _facts(item: dict, task: dict | None) -> dict:
+    """What a candidate was read as, beyond the decision itself: every
+    plain field the plan or delivery put on it, plus the card's declared
+    order (its dependencies) and title as they were at this pass."""
+    facts = {}
+    for k, v in item.items():
+        if k in _TOP or k.startswith("_"):
+            continue
+        if v is None or isinstance(v, (str, int, float, bool)) or \
+                (isinstance(v, (list, dict)) and len(v) <= 20):
+            facts[k] = v
+    if task is not None:
+        facts.setdefault("title", task.get("title"))
+        if task.get("dependsOn"):
+            facts.setdefault("dependsOn", task.get("dependsOn"))
+        if task.get("priority"):
+            facts.setdefault("priority", task.get("priority"))
+    return facts
+
+
+def _decision(item: dict, kind: str, task: dict | None,
+              result: dict | None) -> dict:
+    action = item.get("action") or ACTION
+    state_word = item.get("state")
+    selected = state_word == "chosen" or bool(item.get("admitted")) or \
+        (kind == "delivery" and result is not None)
+    d = {"kind": kind, "card": item.get("card"), "number": item.get("number"),
+         "scope": item.get("scope"), "stage": item.get("stage"),
+         "action": action, "pool": orchestrator.LAUNCHES.get(action),
+         "state": state_word, "code": item.get("code"),
+         "reason": item.get("reason"), "selected": selected,
+         "facts": _facts(item, task)}
+    if result is not None:
+        word = str(result.get("outcome") or "")
+        d["result"] = {k: result.get(k) for k in (
+            "outcome", "code", "reason", "key", "agent", "operation",
+            "incident", "status") if result.get(k) is not None}
+        d["outcome"] = _RESULT_WORDS.get(word, word or "recorded")
+    elif selected and state_word == "chosen":
+        d["outcome"] = "no-action"
+        d["result"] = None
+    else:
+        d["outcome"] = _STATE_WORDS.get(state_word or "", "no-action")
+    return d
+
+
+def _headline(decisions: list[dict], status: str) -> str:
+    acted = [d for d in decisions if d.get("result")]
+    if status == "error":
+        return "The pass stopped with an error; what it did before is below"
+    if acted:
+        words = []
+        for d in acted[:3]:
+            who = f"#{d['number']}" if d.get("number") else (d.get("card") or "")
+            words.append(f"{d.get('action')} {who}: {d.get('outcome')}".strip())
+        more = f" and {len(acted) - 3} more" if len(acted) > 3 else ""
+        return "; ".join(words) + more
+    if not decisions:
+        return ("Wait / No action: no card in To Do, In Progress or Review "
+                "is under an orchestrator scope")
+    counts: dict = {}
+    for d in decisions:
+        counts[d.get("outcome")] = counts.get(d.get("outcome"), 0) + 1
+    parts = ", ".join(f"{n} {w}" for w, n in sorted(counts.items(),
+                                                     key=lambda kv: -kv[1]))
+    return f"Wait / No action: {parts}"
+
+
+def _trace_pass(ctx: dict, error: BaseException | None = None) -> None:
+    """Build and write the pass's record. Never raises."""
+    try:
+        board = ctx.get("board") or {}
+        tasks = {t["file"]: t for t in _tasks(board)} if board else {}
+        found = ctx.get("found") or {}
+        delivery = ctx.get("delivery") or {}
+        results = list(ctx.get("results") or [])
+        by_card: dict = {}
+        loose = []
+        for r in results:
+            if r.get("card"):
+                by_card.setdefault((r["card"], r.get("action") or ACTION), []).append(r)
+            else:
+                loose.append(r)
+        decisions = []
+        for item in found.get("items") or []:
+            hit = by_card.pop((item["card"], ACTION), None)
+            decisions.append(_decision(item, "implement", tasks.get(item["card"]),
+                                       hit[-1] if hit else None))
+        for item in delivery.get("items") or []:
+            hit = by_card.pop((item["card"], item.get("action") or ""), None)
+            decisions.append(_decision(item, "delivery", tasks.get(item["card"]),
+                                       hit[-1] if hit else None))
+        # side effects no plan item stands for: a phase scope's own steps
+        for (card, action), hits in by_card.items():
+            task = tasks.get(card) or {}
+            item = {"card": card, "number": _number(task) if task else None,
+                    "stage": task.get("stage"), "action": action,
+                    "state": "acted", "scope": None,
+                    "reason": hits[-1].get("reason") or hits[-1].get("summary")}
+            decisions.append(_decision(item, "step", task or None, hits[-1]))
+        for r in loose:
+            if r.get("incident"):
+                decisions.append({
+                    "kind": "recovery", "card": None, "action": "recover",
+                    "state": r.get("status"), "code": r.get("code"),
+                    "reason": f"recovery incident {r['incident']} is "
+                              f"{r.get('status')}", "selected": False,
+                    "outcome": "recorded", "result": {
+                        "incident": r["incident"], "status": r.get("status"),
+                        "code": r.get("code")}, "facts": {}})
+        breaker_open = any(r.get("outcome") == "breaker-open" for r in loose)
+        if breaker_open:
+            for d in decisions:
+                if d.get("selected") and not d.get("result"):
+                    d["outcome"] = "held"
+                    d["heldBy"] = "breaker-open"
+        status ="error" if error is not None else "evaluated"
+        record = {
+            "status": status, "boot": state.BOOT,
+            "seconds": round(time.time() - ctx.get("started", time.time()), 3),
+            "planStatus": found.get("status"),
+            "agreement": _agreement_facts(), "owner": _owner_facts(),
+            "capacity": ctx.get("usage") or {},
+            "breaker": _breaker_facts() if not breaker_open else
+            {"open": True, "until": next((r.get("until") for r in loose
+                                          if r.get("outcome") == "breaker-open"), None)},
+            "observed": [_op_facts(o) for o in ctx.get("observed") or []
+                         if isinstance(o, dict)][:40],
+            "reconciled": [_op_facts(o) for o in ctx.get("reconciled") or []
+                           if isinstance(o, dict)][:40],
+            "decisions": decisions,
+            "headline": _headline(decisions, status),
+        }
+        if error is not None:
+            record["error"] = f"{type(error).__name__}: {str(error)[:200]}"
+        idle = error is None and not record["observed"] and \
+            not record["reconciled"] and not any(d.get("result") for d in decisions)
+        decisiontrace.append(record, idle=idle)
+    except Exception:  # noqa: BLE001 — the trace never changes a pass
+        decisiontrace.HEALTH["failures"] = decisiontrace.HEALTH.get("failures", 0) + 1
+        decisiontrace.HEALTH["since"] = decisiontrace.HEALTH.get("since") or \
+            decisiontrace.now_iso()
+        decisiontrace.HEALTH["lastError"] = "the pass's record could not be built"
 
 
 def beat(interval: float | None = None) -> None:
