@@ -672,11 +672,20 @@ function timingStamp(t) {
   return `${t.stage}:${t.mtime}:${p ? p.agent + ':' + (p.lastReport || '') + ':' + p.active : '-'}:${live}`;
 }
 
+/* A reading that lands redraws its own block and its one-line fact in
+   place, and nothing else: a whole-drawer redraw here replaced the nodes a
+   reader was in the middle of using — a fold being toggled, a section
+   being opened. Clicks inside are delegated (wireTiming, drawer.js). */
+function patchTiming(t) {
+  if (!(S.selected && S.selected.file === t.file && !S.fileView)) return;
+  const sec = document.querySelector('#dsec-overview .cycletime');
+  if (sec) sec.outerHTML = timingHtml(t);
+  const fact = document.querySelector('#dsec-overview .ctfact');
+  if (fact) fact.outerHTML = timingFact(t);
+}
+
 function loadTiming(t, force) {
-  timingRes.read(t.file, timingStamp(t), {
-    force, arg: t,
-    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
-  });
+  timingRes.read(t.file, timingStamp(t), { force, arg: t, done: () => patchTiming(t) });
 }
 
 const CT_STAGE = { ...STAGE_WORDS, archive: 'Archive' };
@@ -796,14 +805,15 @@ function timingHtml(t) {
    what is in flight, from the same reading as the block below. */
 function timingFact(t) {
   const d = ((S.timing[t.file] || {}).data || {}).timing;
-  if (!d) return '';
+  if (!d) return `<span class="ctfact unknown">reading…</span>`;
   const lead = d.lead || {};
   const now = (d.active || []).map(a => `${a.kind === 'check' ? 'checking ' + a.name : a.name}` +
     ` ${duration(a.elapsed) || ''}`.trimEnd());
-  return (lead.seconds == null ? '<span class="unknown">lead time not known</span>'
+  return `<span class="ctfact">` +
+    (lead.seconds == null ? '<span class="unknown">lead time not known</span>'
     : `${esc(duration(lead.seconds))} lead time${lead.open ? ' so far' : ''}`) +
     (now.length ? ` · now: ${esc(now.join('; '))}` : '') +
-    ` · <button class="dlink" data-ct-open="1">where the time went</button>`;
+    ` · <button class="dlink" data-ct-open="1">where the time went</button></span>`;
 }
 
 /* `where` names the list an output is drawn in ('top' for the curated
@@ -1039,16 +1049,23 @@ async function saveResult(t, d, fields) {
   loadState();
 }
 
+/* Delegated on the Overview section, which a full redraw replaces (so
+   one listener per drawing) and an in-place patch does not (so a patched
+   block's buttons still work). */
 function wireTiming(t) {
-  const body = $('#drawerbody');
-  const retry = body.querySelector('#ctRetry');
-  if (retry) retry.addEventListener('click', () => { loadTiming(t, true); renderDrawer(); });
-  const again = body.querySelector('#ctRefresh');
-  if (again) again.addEventListener('click', () => loadTiming(t, true));
-  body.querySelectorAll('[data-ct-open]').forEach(b => b.addEventListener('click', () => {
-    const h = body.querySelector('#ct-h');
-    if (h) h.scrollIntoView({ block: 'start' });
-  }));
+  const ov = document.querySelector('#dsec-overview');
+  if (!ov) return;
+  ov.addEventListener('click', (e) => {
+    const el = e.target.closest('#ctRetry, #ctRefresh, [data-ct-open]');
+    if (!el) return;
+    if (el.matches('[data-ct-open]')) {
+      const h = ov.querySelector('#ct-h');
+      if (h) h.scrollIntoView({ block: 'start' });
+      return;
+    }
+    loadTiming(t, true);
+    patchTiming(t);
+  });
 }
 
 function wireResult(t) {

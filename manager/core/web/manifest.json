@@ -276,13 +276,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/drawer.js": {
-   "bytes": 17311,
-   "sha256": "326a99b25c532e99435f83a38f8107b2c8ea6070645fb565ebb4c6a1cbd9fbba",
+   "bytes": 17432,
+   "sha256": "91ffa6cc5e32fa9c86ba9ab5fce6d038d121b514691ceab974486ff3c9746090",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 113140,
-   "sha256": "81fcee0e22f8deae37d6ea080559ba8b37cb7261f96b79f32bd04346d3be9d98",
+   "bytes": 113865,
+   "sha256": "1b7916ea0dfda2fd991b7a0c0aeed6069d89960bec402d1fc6168bcd18ca577e",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
