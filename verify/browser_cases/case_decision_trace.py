@@ -259,10 +259,14 @@ class DecisionTrace(unittest.TestCase):
         # the waiting card: why not, and what happens next
         self.assertIn("Next (automatic)", b.eval(body))
         # revalidation keeps both halves: selected, then refused
+        # read the entry itself: the outcome filter's options carry the
+        # same words, so the whole view's text would already match
         b.click(entry_sel(2) + " > summary")
-        if not b.wait(text_has("Refused at execution"), 10):
-            raise bv.CheckFailed("the refused repair did not say so")
-        self.assertIn("revalidated at execution", b.eval(TEXT))
+        refused = f"document.querySelector('{entry_sel(2)}').innerText"
+        if not b.wait(f"{refused}.includes('Refused at execution') && "
+                      f"{refused}.includes('revalidated at execution')", 10):
+            raise bv.CheckFailed("the refused repair did not say it was refused when "
+                                 "revalidated at execution: " + str(b.eval(refused))[:400])
         shot("decision-trace-entry-1440-dark")
         # keyboard: a folded idle entry opens from its summary
         b.eval(f"document.querySelector('{entry_sel(3)} > summary').focus()")

@@ -1296,10 +1296,12 @@ function entryBody(e, cached) {
     `</div>`;
 }
 
-function traceEntryHtml(e) {
+// `linked`: drawn as the entry an address names, which may be one of its
+// folded repeats' ids — so it is open whatever id brought it here
+function traceEntryHtml(e, linked = false) {
   const t = traceState();
   const okey = `tr-${e.id}`;
-  const open = orch().open[okey] || S.orchEntry === e.id;
+  const open = orch().open[okey] || linked || S.orchEntry === e.id;
   if (open) loadTraceEntry(e.id);
   return `<li class="o-trace-item"><details class="o-tentry" data-okeep="${esc(okey)}" data-o="${esc(okey)}"${open ? ' open' : ''}>` +
     `<summary>${entrySummary(e)}</summary>${open ? entryBody(e, t.entry[e.id]) : ''}</details></li>`;
@@ -1371,7 +1373,7 @@ function traceHtml() {
   if (S.orchEntry) {
     const e = linked && linked.data;
     linkedHtml = `<article class="o-panel" aria-labelledby="o-tlinked"><h3 id="o-tlinked">Linked entry</h3>` +
-      (e ? `<ul class="o-trace">${traceEntryHtml(e)}</ul>`
+      (e ? `<ul class="o-trace">${traceEntryHtml(e, true)}</ul>`
         : linked && linked.missing ? `<p role="alert">No entry <code>${esc(S.orchEntry)}</code> on this installation — it may have been pruned by retention, or recorded by another board.</p>`
           : linked && linked.error ? `<p role="alert">The entry could not be read: ${esc(linked.error)}.</p>`
             : `<p class="o-dim" aria-busy="true">Reading the entry…</p>`) +
@@ -1389,7 +1391,7 @@ function traceHtml() {
       : started ? 'No pass is recorded.'
         : 'No pass has been recorded on this installation yet. The trace starts when the scheduler first evaluates a pass with an operating agreement in force; nothing earlier is invented.'}</p>`;
   } else {
-    list = `<ol class="o-trace" aria-label="Scheduling passes, newest first">${t.entries.map(traceEntryHtml).join('')}</ol>` +
+    list = `<ol class="o-trace" aria-label="Scheduling passes, newest first">${t.entries.map(e => traceEntryHtml(e)).join('')}</ol>` +
       (t.next ? `<p><button type="button" class="o-btn" data-oact="trace-older" data-o="trace-older"${t.fetching ? ' disabled' : ''}>Show older passes</button></p>`
         : `<p class="o-dim">That is every recorded pass${t.meta && t.meta.boundary ? ' still kept' : ''}.</p>`);
     if (t.error) list = `<p class="o-dim" role="alert">The newest reading failed (${esc(t.error)}); these are from the last one.</p>` + list;

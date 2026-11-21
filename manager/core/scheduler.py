@@ -1198,18 +1198,45 @@ def _trace_pass(ctx: dict, error: BaseException | None = None) -> None:
             hit = by_card.pop((item["card"], item.get("action") or ""), None)
             decisions.append(_decision(item, "delivery", tasks.get(item["card"]),
                                        hit[-1] if hit else None))
+        # the scope a card was read under on this pass, for a decision no
+        # plan item names one for — so the scope and card filters find it
+        effective = []
+
+        def scope_for(task: dict | None):
+            if not task:
+                return None
+            try:
+                if not effective:
+                    effective.append(agreements.effective())
+                return orchestrator.scope_of(task, effective[0])[0]
+            except Exception:   # noqa: BLE001 — a record never fails a pass
+                return None
+
         # side effects no plan item stands for: a phase scope's own steps
         for (card, action), hits in by_card.items():
             task = tasks.get(card) or {}
             item = {"card": card, "number": _number(task) if task else None,
                     "stage": task.get("stage"), "action": action,
-                    "state": "acted", "scope": None,
+                    "state": "acted",
+                    "scope": hits[-1].get("scope") or scope_for(task or None),
                     "reason": hits[-1].get("reason") or hits[-1].get("summary")}
             decisions.append(_decision(item, "step", task or None, hits[-1]))
+        incidents = {}
+        if any(r.get("incident") for r in loose):
+            try:
+                incidents = {i.get("id"): i for i in recovery.all_incidents()}
+            except Exception:   # noqa: BLE001 — a record never fails a pass
+                incidents = {}
         for r in loose:
             if r.get("incident"):
+                inc = incidents.get(r["incident"]) or {}
+                task = tasks.get(inc.get("file") or "")
                 decisions.append({
-                    "kind": "recovery", "card": None, "action": "recover",
+                    "kind": "recovery", "card": inc.get("file"),
+                    "number": _number(task) if task else None,
+                    "scope": inc.get("scope") or scope_for(task),
+                    "stage": task.get("stage") if task else None,
+                    "action": "recover",
                     "state": r.get("status"), "code": r.get("code"),
                     "reason": f"recovery incident {r['incident']} is "
                               f"{r.get('status')}", "selected": False,

@@ -102,6 +102,24 @@ class SelectionsAreLinkedToWhatHappened(TraceSandbox):
         self.assertEqual([(op["key"], "ended", "done")],
                          [(o["key"], o["status"], o["outcome"]) for o in observed])
 
+    def test_a_recovery_decision_names_its_card_and_scope(self):
+        # so the card and scope filters find it (review finding at 1bae03c)
+        self.enable()
+        self.board.add("4", stage="in-progress")
+        incident = {"id": "in-0123456789ab", "file": "4-card.md",
+                    "scope": "bench", "status": "diagnosing"}
+        with mock.patch.object(scheduler.recovery, "run",
+                               lambda *a, **k: [{"incident": incident["id"],
+                                                 "status": "diagnosing",
+                                                 "code": None}]), \
+                mock.patch.object(scheduler.recovery, "all_incidents",
+                                  lambda: [incident]):
+            self.tick()
+        d = next(d for d in self.newest()["decisions"] if d["kind"] == "recovery")
+        self.assertEqual(("4-card.md", "4", "bench"), (d["card"], d["number"], d["scope"]))
+        self.assertEqual(1, len(self.entries(card="4", action="recover")))
+        self.assertEqual(1, len(self.entries(scope="bench", action="recover")))
+
     def test_review_and_repair_selections_are_traced(self):
         self.enable(capacity={"review": 1})
         self.board.add("5", stage="review")
@@ -521,6 +539,19 @@ class ReadingIsPassiveAndBounded(TraceSandbox):
                              decisiontrace.TEXT_CAP)
         raw = max(p.stat().st_size for p in decisiontrace.trace_dir().glob("seg-*"))
         self.assertLess(raw, decisiontrace.RECORD_CAP * 2)
+
+    def test_an_oversized_record_counts_every_decision_it_leaves_out(self):
+        decisions = [{"card": f"{n}-c.md", "reason": "y" * 1500,
+                      "facts": {f"k{i}": "z" * 400 for i in range(8)}}
+                     for n in range(200)]
+        decisiontrace.append({"status": "evaluated", "decisions": decisions})
+        entry = self.newest()
+        kept = len(entry["decisions"])
+        self.assertLess(kept, decisiontrace.MAX_DECISIONS)
+        self.assertGreater(kept, 0)
+        self.assertEqual(200 - kept, entry["truncated"]["decisions"])
+        raw = max(p.stat().st_size for p in decisiontrace.trace_dir().glob("seg-*"))
+        self.assertLessEqual(raw, decisiontrace.RECORD_CAP + 1)
 
     def test_idle_passes_add_no_card_history(self):
         self.enable()

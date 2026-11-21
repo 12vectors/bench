@@ -261,10 +261,18 @@ def _append(record: dict, idle: bool) -> dict:
         full["idle"] = bool(idle)
         text = json.dumps(full, sort_keys=True, default=str)
         if len(text) > RECORD_CAP:
-            dropped = len(full.get("decisions") or [])
-            full["decisions"] = (full.get("decisions") or [])[:10]
+            # halve until it fits, and count every decision left out —
+            # the ones over MAX_DECISIONS included
+            kept = list(full.get("decisions") or [])
+            size = len(text)
+            while kept and len(text) > RECORD_CAP:
+                kept = kept[:len(kept) // 2]
+                text = json.dumps({**full, "decisions": kept}, sort_keys=True,
+                                  default=str)
+            full["decisions"] = kept
             full["truncated"] = {**(full.get("truncated") or {}),
-                                 "decisions": dropped - 10, "bytes": len(text)}
+                                 "decisions": len(decisions) - len(kept),
+                                 "bytes": size}
         line = full
     if rotate:
         segment = where / f"seg-{seq:012d}.jsonl"
