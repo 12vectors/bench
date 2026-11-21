@@ -64,6 +64,7 @@ async function load(k) {
   inflight.add(k);
   const url = k === 'index' ? '/api/brain'
     : '/api/brain/entry?id=' + encodeURIComponent(k.slice(2));
+  const started = Date.now();
   let slot;
   try {
     const res = await fetch(url);
@@ -78,7 +79,31 @@ async function load(k) {
   const old = k === 'index' ? cache.index : cache.entries[k];
   if (!slot.data && old && old.data) slot = { ...old, error: slot.error, at: slot.at };
   if (k === 'index') cache.index = slot; else cache.entries[k] = slot;
+  if (ed && ed.rereading && ed.id && k === 'e:' + ed.id) {
+    // "Use the current version": the base is what a reading asked after
+    // the click says is on disk, never a revision guessed earlier
+    if (started < ed.rereading) { load(k); return; }
+    settleReread(slot);
+    // forced: the person is likely in a field, which holds a live repaint
+    if (S.view === 'brain' && key() === k) renderBrain(true);
+    return;
+  }
   if (S.view === 'brain' && key() === k) renderBrain();
+}
+
+/* The reading asked for by "Use the current version" has landed: the
+   draft stays, the base becomes the revision now on disk, and Save is
+   offered again. A reading that failed says so, rather than leaving a
+   base nobody has seen. */
+function settleReread(slot) {
+  const e = slot.data;
+  ed.rereading = 0;
+  if (!slot.error && e && (e.state === 'entry' || e.state === 'tombstone')) {
+    ed.base = e.revision;
+  } else {
+    ed.error = 'the current version could not be read' +
+      (slot.error ? ` (${slot.error})` : '') + '; use the current version again';
+  }
 }
 
 async function loadRevisions(id) {
@@ -315,7 +340,7 @@ function draftOf(mode, e) {
 function startWrite(mode, e) {
   ed = { mode, id: e ? e.id : null, base: e ? e.revision : null, draft: draftOf(mode, e),
          request: newRequest(), preview: false, error: null, conflict: null, busy: false,
-         lostReply: false, title: e ? e.title : null };
+         lostReply: false, rereading: 0, title: e ? e.title : null };
   armed.disarm('retire');
 }
 
@@ -367,7 +392,7 @@ function conflictHtml() {
   const mine = ed.mode === 'edit'
     ? `<pre class="b-diffpane">${esc(ed.draft.title)}\n\n${esc(ed.draft.body)}</pre>`
     : `<pre class="b-diffpane">${esc(JSON.stringify(ed.draft, null, 1))}</pre>`;
-  return '<div class="b-panel b-bad b-conflict" role="alert"><h2>Not saved: the entry changed</h2>' +
+  return '<div class="b-panel b-bad b-conflict" role="alert" tabindex="-1"><h2>Not saved: the entry changed</h2>' +
     `<p>${esc(c.error)}</p><p>Your draft is kept below. Read the current version, bring your change ` +
     'across, then save again. Nothing is retried for you.</p>' +
     '<div class="b-compare"><div><h3>What you tried to save</h3>' + mine + '</div>' +
@@ -426,21 +451,30 @@ function formHtml(e) {
       field('replacedBy', 'Replaced by (optional)', `<select id="bf-replacedBy" data-bf="replacedBy">` +
         entryOptions(e.id, d.replacedBy) + '</select>');
     return `<section class="b-panel b-form" aria-labelledby="bform-h"><h2 id="bform-h">${labels.retire}</h2>` +
-      conflictHtml() + body + errorHtml() +
+      rereadHtml() + conflictHtml() + body + errorHtml() +
       '<div class="b-actions">' + button('save', ph === 'armed' ? 'Confirm: retire this entry'
         : ed.busy ? 'Retiring…' : 'Retire', { alarm: true, armed: ph === 'armed', busy: ed.busy,
-        disabled: ed.busy }) +
+        disabled: ed.busy || !!ed.rereading }) +
       button('cancel', 'Cancel', { disabled: ed.busy }) +
       (ph === 'armed' ? '<span class="b-note" role="status">Click again to retire. It is kept as a tombstone.</span>' : '') +
       '</div></section>';
   }
   return `<section class="b-panel b-form" aria-labelledby="bform-h"><h2 id="bform-h">${labels[ed.mode]}</h2>` +
-    (ed.mode !== 'create' && e && e.revision !== ed.base && !ed.conflict
+    // while the current version is being read, the reading on screen is
+    // the old one: its revision says nothing about the base, so no warning
+    (ed.rereading ? rereadHtml()
+      : ed.mode !== 'create' && e && e.revision !== ed.base && !ed.conflict
       ? '<p class="b-warn" role="status">The entry changed on disk since you started. Saving will be ' +
         'refused; use the current version and keep your draft.' + button('reread', 'Use current version') + '</p>' : '') +
     conflictHtml() + body + errorHtml() +
-    '<div class="b-actions">' + button('save', ed.busy ? 'Saving…' : 'Save', { primary: true, busy: ed.busy, disabled: ed.busy }) +
+    '<div class="b-actions">' + button('save', ed.busy ? 'Saving…' : 'Save', { primary: true, busy: ed.busy,
+      disabled: ed.busy || !!ed.rereading }) +
     button('cancel', 'Cancel', { disabled: ed.busy }) + '</div></section>';
+}
+
+function rereadHtml() {
+  return ed.rereading ? '<p class="b-note b-rereading" role="status" aria-busy="true">Reading the current ' +
+    'version… Your draft is kept; Save is offered once it has been read.</p>' : '';
 }
 
 function errorHtml() {
@@ -605,7 +639,7 @@ function payloadOf() {
 }
 
 async function save() {
-  if (!ed || ed.busy) return;
+  if (!ed || ed.busy || ed.rereading) return;
   if (ed.mode === 'retire') {
     const said = armed.click('retire', undefined, () => renderBrain(true));
     if (said === 'armed') { renderBrain(true); return; }
@@ -699,22 +733,26 @@ function act(name, arg) {
   else if (name === 'preview' && ed) ed.preview = true;
   else if (name === 'save') { save(); return; }
   else if (name === 'reread' && ed) {
-    // the current version becomes the base; the person's draft stays
-    const fresh = ed.conflict && ed.conflict.current;
-    ed.base = fresh && fresh.revision ? fresh.revision : (e ? e.revision : ed.base);
+    // the current version becomes the base once a reading asked now has
+    // landed (load() settles it); the person's draft stays. Meanwhile the
+    // form stays drawn — blanking the page into "Reading…" took the Save
+    // button away — with Save held and a neutral note, never the stale
+    // "Saving will be refused" warning the old reading would raise
     ed.conflict = null;
     ed.error = null;
-    // read again, keeping the form drawn meanwhile: blanking the page into
-    // "Reading…" took the Save button away from the person about to press it
+    ed.rereading = Date.now();
     const slot = cache.entries[key()];
     if (slot) slot.at = 0;
+    load(key());
   } else if (name === 'retry-commit') { retryOp('commit', arg); return; }
   else if (name === 'retry-push') { retryOp('push', arg); return; }
   // a person's own action paints at once, wherever focus is: only a live
   // reading waits for the person to stop typing
   renderBrain(true);
   const target = $('#bshell .b-form input, #bshell .b-form textarea, #bshell .b-form select');
-  if (ed && ['new', 'edit', 'classify', 'override', 'retire'].includes(name) && target) target.focus();
+  // the pressed "Use the current version" left with the conflict panel:
+  // focus goes to the draft's first field, which outlives the reading
+  if (ed && ['new', 'edit', 'classify', 'override', 'retire', 'reread'].includes(name) && target) target.focus();
   if (!ed && name === 'cancel') $('#bshell .b-title')?.focus();
 }
 
@@ -840,10 +878,14 @@ function renderBrain(force) {
     // a live repaint keeps the reader's place: replaced only when the
     // reading changed, and focus is put back where it was
     const active = document.activeElement;
-    const caret = active && active.dataset && active.dataset.bfind === 'q'
+    // the caret is kept in the search box and in a draft's text fields (a
+    // forced repaint — the current version read in — lands while typing)
+    const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
+      (active.dataset.bf && (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
-      ? (active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
+      ? (active.classList.contains('b-conflict') ? '.b-conflict'
+        : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]`
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +

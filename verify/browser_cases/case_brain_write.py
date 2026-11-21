@@ -54,6 +54,25 @@ OLD = ("# Old routing notes\n\n**Brain:** 1\n**Id:** e-old-notes\n**Kind:** Guid
        "**Classification:** Current\n**Summary:** Early notes.\n\nThe first notes.\n")
 
 
+# The page's GETs of one Brain entry, held until the case releases them:
+# each is still answered by the real backend, only later. Nothing else the
+# page asks is touched.
+GATE_ENTRY_READS = """(() => {
+  const real = window.fetch.bind(window);
+  const gate = { held: [], hold: true };
+  gate.release = () => { gate.hold = false; gate.held.splice(0).forEach(go => go()); };
+  gate.restore = () => { gate.release(); window.fetch = real; };
+  window.__brainGate = gate;
+  window.fetch = (url, opts) => {
+    if (gate.hold && String(url).startsWith('/api/brain/entry')) {
+      return new Promise(resolve => gate.held.push(() => resolve(real(url, opts))));
+    }
+    return real(url, opts);
+  };
+  return true;
+})()"""
+
+
 def tree(root):
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(root.rglob("*")) if p.is_file() and ".git" not in p.parts}
@@ -198,10 +217,50 @@ class BrainWriting(unittest.TestCase):
                          "My careful rewrite.", "the draft is kept")
         self.assertIn("A teammate says", path.read_text(), "nothing was overwritten")
         shot("brain-write-conflict-night")
-        b.click('#bshell [data-bact="reread"]')
-        b.wait("!document.querySelector('#bshell .b-conflict')", 5)
+        # Hold the page's re-read of the entry, so the moment between "Use
+        # the current version" and the reading landing is observable rather
+        # than a race: the board answers for real, the page just gets the
+        # answer when the case releases it.
+        b.eval(GATE_ENTRY_READS)
+        # by keyboard: save() put focus on the conflict panel; Tab reaches
+        # its first control, Enter presses it
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.matches('#bshell .b-conflict')", 5),
+                        "the refused save focused the conflict panel")
+        b.key("Tab")
+        self.assertEqual(b.eval("document.activeElement.dataset.bact"), "reread",
+                         "Tab from the conflict reaches 'Use the current version'")
+        b.key("Enter")
+        if not b.wait("!document.querySelector('#bshell .b-conflict')"
+                      " && window.__brainGate.held.length > 0", 5):
+            raise bv.CheckFailed("'Use the current version' asked for no fresh reading: " + self.text(b)[:800])
+        # while the reading is outstanding: the draft, a usable focus, a
+        # neutral note, Save held — and never the stale refusal warning
+        during = self.text(b)
+        self.assertNotIn("Saving will be refused", during,
+                         "the old reading's revision raised the stale-entry warning")
+        self.assertIn("Reading the current version", during)
+        self.assertTrue(b.eval("document.querySelector('#bshell [data-bact=\"save\"]').disabled"),
+                        "Save is offered before the current revision is known")
+        self.assertEqual(b.eval("document.activeElement && document.activeElement.dataset.bf"), "title",
+                         "focus fell out of the form when its button went away")
+        self.assertEqual(b.eval("document.querySelector('#bshell [data-bf=\"body\"]').value"),
+                         "My careful rewrite.", "the draft is kept while re-reading")
+        shot("brain-write-conflict-rereading-night")
+        b.eval("window.__brainGate.release(); true")
+        if not b.wait("!document.querySelector('#bshell .b-rereading')"
+                      " && !document.querySelector('#bshell [data-bact=\"save\"]').disabled", 10):
+            raise bv.CheckFailed("the current version never settled: " + self.text(b)[:800])
+        after = self.text(b)
+        self.assertNotIn("Saving will be refused", after, "the settled base still disagrees with disk")
+        self.assertNotIn("Not saved", after)
+        self.assertEqual(b.eval("document.activeElement && document.activeElement.dataset.bf"), "title",
+                         "the reading landing took focus away")
+        self.assertEqual(b.eval("document.querySelector('#bshell [data-bf=\"body\"]').value"),
+                         "My careful rewrite.", "the draft survived the reading")
+        b.eval("window.__brainGate.restore(); true")
         b.click('#bshell [data-bact="save"]')
         self.wait_text(b, ["My careful rewrite.", "edited"])
+        self.assertIn("My careful rewrite.", path.read_text(), "the save after re-reading landed")
 
     def test_4_classify_refuses_then_records_a_reason(self):
         b = self.open("/brain/e/e-old-notes")
