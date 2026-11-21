@@ -99,6 +99,11 @@ IMPLEMENTING = ("work", "act-pr")
 # A required check that could not reach a verdict: a repair cannot fix a
 # dependency that would not install or a request that was refused.
 SETUP_REASONS = ("prepare-failed", "denied", "error")
+# Of those, the only one delivery may ask again for, and only up to the
+# agreement's `setupRetries` (task 164): preparation failed — a required
+# step, or a verifier's own report that its setup failed. A denial, a
+# timeout, a refusal and a broken report are not asked again.
+SETUP_RETRYABLE = ("prepare-failed",)
 NO_CHECKS = "No checks required by your policy"
 # An authorization refusal that still leaves the card the scope's: the
 # word for this particular step is not delegated. Every other refusal
@@ -120,6 +125,9 @@ CODES = {
     "checks-running": "waiting",
     "requirements-pending": "waiting",
     "verify": "ready",
+    # task 164: the verify step again, for a setup failure, within the
+    # agreement's setupRetries
+    "retry-setup": "ready",
     "review": "ready",
     "repair": "ready",
     "merge": "ready",
@@ -451,7 +459,11 @@ def assess(task: dict, reading: dict, ops: list[dict],
     for op in mine:
         if op["status"] == "refused" and op.get("basis") == head \
                 and op["action"] != "merge" \
-                and op.get("code") not in ANSWERED_AFRESH:
+                and op.get("code") not in ANSWERED_AFRESH \
+                and not (op.get("retry") and op.get("code") == "nothing-needed"):
+            # (task 164: a setup retry refused because something newer
+            # already answered the failure it was about is not a hold —
+            # the gate's reading of that newer answer decides)
             return _set(item, "step-refused", f"the {op['action']} step was "
                         f"refused at {head[:12]}: {op.get('reason')} — change "
                         f"what it names, or release it", operation=op["key"])
@@ -478,13 +490,7 @@ def assess(task: dict, reading: dict, ops: list[dict],
     unmet = [r for r in rows if r["state"] == "unmet"]
     setup = [r for r in unmet if r.get("reason") in SETUP_REASONS]
     if setup:
-        first = setup[0]
-        return _set(item, "verification-setup-failed",
-                    f"{first.get('name')} could not reach a verdict at "
-                    f"{head[:12]} ({first.get('reason')}): "
-                    f"{first.get('why') or gates.plain(first.get('reason'), head)}"
-                    " — a repair cannot fix the check's own setup",
-                    evidence=[r.get("evidence") for r in setup if r.get("evidence")])
+        return _setup_failed(item, here, head, setup, mine)
     failed = [r for r in unmet if r.get("reason") == "failed"]
     needed = [r for r in unmet if r not in failed
               and gates.severity(r.get("reason") or "") == "needed"]
@@ -589,6 +595,91 @@ def _public_independence(found: dict) -> dict:
             "implementers": [{k: o.get(k) for k in
                               ("harness", "model", "canonical", "source")}
                              for o in found["implementers"]]}
+
+
+def setup_retries(filename: str, head: str, ops: list[dict]) -> list[dict]:
+    """The bounded setup retries this card has spent at this head: every
+    verify operation marked as one that may have run. A restart, a pause
+    or an agreement edit resets nothing; one that provably ran nothing
+    (`abandoned`, `refused`) is not counted."""
+    return [o for o in ops if o.get("file") == filename
+            and o.get("action") == "verify" and o.get("basis") == head
+            and o.get("retry") and o["status"] in operations.CONSUMING]
+
+
+def _setup_failed(item: dict, here: dict, head: str, setup: list[dict],
+                  mine: list[dict]) -> dict:
+    """A required check that could not reach a verdict at this head (task
+    164). A repair never follows: the code is not what failed. Where the
+    agreement sets `setupRetries`, a setup failure — preparation failed,
+    and only that — is asked again, at this exact head, up to the ceiling;
+    everything else, and a ceiling reached, is held with what failed, the
+    attempts used and the action a person has."""
+    first = setup[0]
+    ceiling = ((here.get("ceilings") or {}).get("setupRetries")
+               or {}).get("value", 0)
+    spent = setup_retries(item["card"], head, mine)
+    retryable = [r for r in setup if r.get("reason") in SETUP_RETRYABLE
+                 and r.get("evidence")]
+    what = (f"{first.get('name')} could not reach a verdict at {head[:12]} "
+            f"({first.get('reason')}): "
+            f"{first.get('why') or gates.plain(first.get('reason'), head)}")
+    item["setupRetry"] = {"attempts": len(spent), "ceiling": ceiling,
+                          "retryable": len(retryable) == len(setup),
+                          "checks": [r.get("check") or r.get("name")
+                                     for r in setup]}
+    evidence = [r.get("evidence") for r in setup if r.get("evidence")]
+    if len(retryable) != len(setup):
+        bad = next(r for r in setup if r not in retryable)
+        why_held = (f"{bad.get('name')} ended {bad.get('reason')}, which is "
+                    f"not a setup failure bench asks again for — a refusal, "
+                    f"a timeout or a broken report needs a person")
+    elif ceiling <= 0:
+        why_held = ("the operating agreement sets no setup retries "
+                    "(setupRetries is 0)")
+    elif len(retryable) > operations.RETRY_MAX:
+        # the ledger keeps at most RETRY_MAX of the checks a retry names, so
+        # a larger retry could never be recognised as already asked
+        why_held = (f"{len(retryable)} checks failed their setup at once, "
+                    f"more than the {operations.RETRY_MAX} a bounded retry "
+                    f"asks about")
+    elif refused_same := [o for o in mine if o["status"] == "refused"
+                          and o.get("action") == "verify" and o.get("retry")
+                          and o.get("basis") == head
+                          and set(evidence) <= set(o["retry"].get("of") or [])]:
+        # the retry was refused about this very answer — most often a
+        # check a person's work reading may not ask for (one only the
+        # review profile is offered, say). The gate still reads the same
+        # failure, so asking again would be refused again on every pass
+        why_held = (f"a retry of this exact failure was refused "
+                    f"({refused_same[-1].get('reason') or refused_same[-1].get('code')}); "
+                    f"a check a person's work reading may not ask for is "
+                    f"never retried — add it to the work profile's verify "
+                    f"list, or run it where it is offered")
+    elif any(set(evidence) <= set((o.get("retry") or {}).get("of") or [])
+             for o in spent):
+        # the retry asked about this very answer and ended without a newer
+        # one (stopped, cancelled, a board restart): asking again would be
+        # the same question, so it is a person's
+        why_held = ("a retry of this exact failure ended without a new "
+                    "answer")
+    elif len(spent) >= ceiling:
+        why_held = (f"{len(spent)} of {ceiling} setup retries at this head "
+                    f"are spent and the failure repeated")
+    else:
+        _set(item, "retry-setup",
+             f"{what} — setup retry {len(spent) + 1} of {ceiling} at "
+             f"{head[:12]}", evidence=evidence)
+        item["action"] = "verify"
+        item["retry"] = {"checks": [r.get("check") for r in retryable],
+                         "of": [r.get("evidence") for r in retryable]}
+        return item
+    return _set(item, "verification-setup-failed",
+                f"{what} — a repair cannot fix the check's own setup. Held: "
+                f"{why_held}. Fix the setup, then ↻ run the check again from "
+                f"the card's ◫ evidence sheet; or raise setupRetries in the "
+                f"operating agreement for bounded automatic retries",
+                evidence=evidence)
 
 
 def _checks_needed(item: dict, filename: str, head: str,
@@ -735,6 +826,15 @@ def record_blockers(items: list[dict], board: dict) -> None:
                 "blocker": other, "state": "cleared", "operation": "coordinate",
                 "text": f"cleared at {head}: the card moved on"},
                 f"coord-clear-{other}-{head}")
+        tried = item.get("setupRetry") or {}
+        if item.get("code") == "verification-setup-failed" \
+                and tried.get("attempts") and tried.get("ceiling") \
+                and tried["attempts"] >= tried["ceiling"]:
+            _note(filename, "attempt", {
+                "incident": f"setup-{head}", "attempt": min(tried["attempts"], 99),
+                "of": min(tried["ceiling"], 99), "outcome": "exhausted",
+                "summary": item.get("reason") or "", "operation": "coordinate"},
+                f"coord-setup-exhausted-{head}")
         if item.get("code") == "repair-exhausted":
             ceiling = (item.get("repair") or {}).get("ceiling") or 0
             _note(filename, "attempt", {
@@ -763,7 +863,8 @@ def _begin(item: dict, answer: dict, task: dict) -> dict:
                           number=_number(task), scope=answer["scope"],
                           pool=orchestrator.LAUNCHES.get(action, "none"),
                           basis=head, attempt=attempt,
-                          note="; ".join(answer.get("provenance") or []))
+                          note="; ".join(answer.get("provenance") or []),
+                          retry=item.get("retry") if action == "verify" else None)
     _note(task["file"], "action", {
         "action": action, "operation": key, "phase": "intent",
         "outcome": "intended", "summary": item.get("reason", "")[:400]},
@@ -827,11 +928,18 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
 
 
 def _verify(op: dict, filename: str, head: str) -> dict:
+    retry = op.get("retry")
     batch = required.start(filename, STAGE, head=head, actor="orchestrator",
-                           trigger="orchestrator")
+                           trigger="orchestrator", retry=retry)
     done = operations.update(op["key"], "launched", batch=batch.get("id"),
                              observed="the required checks were requested")
-    _receipt(done, "launched", f"required checks requested at {head[:12]}")
+    if retry:
+        _receipt(done, "launched", f"setup retry (verify attempt "
+                 f"{op['attempt']} at this head): asked again "
+                 f"for {', '.join(retry.get('checks') or [])} at {head[:12]}, "
+                 f"whose newest answer was a setup failure")
+    else:
+        _receipt(done, "launched", f"required checks requested at {head[:12]}")
     return {"card": filename, "action": "verify", "outcome": "launched",
             "key": op["key"], "batch": batch.get("id")}
 

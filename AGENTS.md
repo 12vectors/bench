@@ -3895,6 +3895,36 @@ failure — and reports failing totals as findings with a cited diff. Its
 README is the step-by-step. Outside bench the same wrapper writes
 nothing and exits as it always did.
 
+**Bench's own wrappers speak it (task 164).** Every `verify/` entrypoint
+(`backend`, `docs`, `browser`, `preflight`) is built on
+`verify/benchverify.py`, which now writes a v1 report whenever bench
+hands it `$BENCH_VERIFY_REPORT`: exit 0 is `passed`, exit 1 `failed`,
+exit 2 `setup-failed`, and a cancelled run `incomplete`, with one
+bounded finding per browser case that did not pass. Without the opt-in
+nothing changes: bench hands a check no report path unless its policy
+says `"report": "v1"`, and the exit status means what it always did —
+which is why, in #158, the browser verifier's setup errors (Playwright
+timeouts, page crashes) read `failed`. Declaring `"report": "v1"` on the
+browser check in the policy document is the operator's separate act; this
+change applies nothing to a live policy. Once declared, a setup error is
+recorded `prepare-failed` (`verifier-setup`), an assertion failure
+`failed` (`report-failed`), and a timeout, a cancellation or a launch
+error stays bench's own reading whatever the wrapper wrote.
+
+**A browser health probe (task 164).** `verify/preflight browser` proves
+the browser starts, sandboxed, and answers; it never proved a page would
+load and respond. `verify/preflight browser --probe` also starts a
+disposable backend, loads the candidate's board and switches a view by a
+click and back, under the same sandbox rules as the cases (no
+`--no-sandbox`; the remote adapter requests `chromiumSandbox: true`,
+which only the server can honour, as the cases' record already says). It
+records which of `connection`, `navigation` and `interaction` it reached,
+keeps the browser and backend logs and a screenshot, and fails as a
+setup error naming the step. It is a health probe, never feature coverage
+or proof that a full run will be stable, and its record says
+`featureCoverage: false`. Using it as the browser check's `prepare` step
+is again the operator's choice.
+
 **What it is not.** Not an isolated runner, a sandbox, a dependency or
 service framework, or a way to prove a verifier honest. It contains no
 hostile code, gives no run a new permission, applies no fix a finding
@@ -5889,7 +5919,9 @@ the same toggles. The D7 defaults are written into every new draft:
 recovery then take implementation slots — counted, never free),
 20 launches a day, 6 launches per card, 2 repair rounds, 2 transient
 retries, a 120-minute run-age threshold (a warning, never a kill) and
-2 recovery attempts per incident (`recoveryAttempts`, task 144).
+2 recovery attempts per incident (`recoveryAttempts`, task 144) and
+0 setup retries (`setupRetries`, task 164: off until an operator sets
+it, and an agreement written before it reads 0).
 
 **Only narrowing, only two levels.** A phase's authority is the
 intersection with the Bench scope's, every word carrying the scope that
@@ -6691,12 +6723,49 @@ on), and every step's intent and receipt are `action` records:
 | `repair-exhausted` | the card has spent its `repairRounds`; an `attempt` record says *exhausted* |
 | `repair-no-change` | a repair ended without a new commit |
 | `check-not-granted` | a required check a person's work reading may not ask for — the permission is not widened |
-| `verification-setup-failed` | a required check could not reach a verdict (preparation failed, refused, no verdict): not repaired |
+| `verification-setup-failed` | a required check could not reach a verdict (preparation failed, refused, no verdict): not repaired. The reason says what failed, the setup retries used against `setupRetries`, why it is held, and the way through (fix the setup, then ↻ in the card's ◫ sheet) |
+| `retry-setup` | the newest answer of every unmet required check at this head is a setup failure (preparation failed), and `setupRetries` is not spent: the same checks are asked again at the same head (see "Bounded setup retries") |
 | `checks-unanswered` | checks asked at this head ended without answering; asking again is yours |
 | `authority-revoked` | the agreement, a pause, an exclusion or another person's move withdrew the step between the decision and the act |
 | `review-not-independent` | as above |
 | `step-refused` | a check batch, review or repair launch was refused at this head (its preflight said no); it is not asked again until the head moves or a person releases the operation |
 | `requirements-unmet`, `merge-refused`, `not-published`, `partial` | the merge rules, `complete_task` or publication said no |
+
+**Bounded setup retries (task 164).** A required check whose newest
+answer at the head is *preparation failed* — a required step that would
+not complete, or a verifier's own report that its setup failed — is a
+fact about the environment, not the code, so it is never repaired. With
+`setupRetries` set above 0 in the operating agreement (Orchestrator →
+Operating agreement → Ceilings; a phase may only lower it), delivery asks
+for exactly those checks again, at the same head, through the same
+**Run required checks** batch. The operation and each batch item record
+the evidence id the retry answers (`retryOf`); `verify.request` itself
+is asked exactly as a click asks. Every retry is a `verify` operation in
+the ledger marked `retry`, counted per card and head from the ledger
+itself — so a
+restart, a pause or an agreement edit resets nothing, an intent that
+provably ran nothing (`abandoned`) is not counted, an `unknown` outcome
+holds the card before anything is asked again, and two callers with one
+decision run it once. Nothing else is asked again: an assertion failure
+goes to repair as before, and a denial, a timeout, a verifier's refusal
+and a missing or broken report hold the card at once. A retry whose
+batch ended without a newer answer is not repeated, and neither is one
+the batch refused about the same failure — most often a check a person's
+work reading may not ask for (one only the review profile is offered):
+the card is held after that one refused operation, naming the work
+profile's `verify` list as the remedy. More than 32 setup failures at
+once are held rather than retried, since the ledger records at most 32
+per retry. When the ceiling is
+spent the card is held with an `attempt` record marked *exhausted* and a
+blocker naming the check, the reason, `n of m` retries and the way
+through. A retry takes no slot and spends no launch; it widens no grant,
+starts no service, stops no worker and changes no merge rule.
+
+What is *not* established, and stays unresolved: whether concurrent
+browser runs on one host contend for a shared resource. #158's crashes
+were never reproduced under controlled concurrency, so bench imposes no
+installation-wide serialization of checks; a retry runs exactly as any
+other request does.
 
 **Uncertain merges reconcile, never repeat.** A merge's intent is written
 before it. An intent found without a receipt is settled from the
