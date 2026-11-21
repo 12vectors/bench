@@ -1269,6 +1269,44 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+# The stand-in that answers a question to the orchestrator (task 181) in
+# the disposable backend. It reads only what the adapter granted it, and
+# answers from bench's facts: the question is data there.
+ASK_STUB = r'''import json, sys, time
+from pathlib import Path
+hold = Path(__HOLD__)
+n = 0
+while hold.exists() and n < 600:
+    time.sleep(0.1)
+    n += 1
+argv = sys.argv[1:]
+settings = json.loads(argv[argv.index("--settings") + 1])
+reads = [r[len("Read(/"):-1] for r in settings.get("permissions", {}).get("allow", [])
+         if r.startswith("Read(")]
+facts = json.loads(Path(next(p for p in reads if "reason-facts" in p)).read_text())
+if facts.get("need") != "ask":
+    print("bench-verify claude stub: no model here", file=sys.stderr)
+    sys.exit(1)
+bound, ask = facts["binding"], facts["ask"]
+plan = ask["readings"].get("plan") or []
+doc = {"v": 1, "kind": "bench-reasoning-response", "operation": facts["operation"],
+       "need": "ask", "card": bound["card"], "inputs": bound,
+       "summary": "From bench's readings: nothing is scheduled to change this by itself.",
+       "answer": {"now": "It is where its last move put it; no agent works on it.",
+                  "why": "No operating agreement is in force, so nothing schedules it.",
+                  "next": "Nothing happens by itself.",
+                  "unblock": "You — start the work yourself, or put an agreement in force."},
+       "findings": [{"id": "f1", "severity": "info", "evidence": ["input:reason-facts"],
+                     "statement": f"Bench's plan lists {len(plan)} card(s) and "
+                                  f"{len(ask['readings'].get('running') or [])} running agent(s)."}],
+       "gaps": [{"id": "g1", "gap": "No past scheduler pass kept a reason for this card."}],
+       "suggestions": [{"id": "s1", "suggestion": "Review the operating agreement.",
+                        "by": "you", "control": "edit-agreement",
+                        "evidence": ["input:reason-facts"]}],
+       "questions": [], "actions": []}
+print("<<<REASONING\n" + json.dumps(doc) + "\nREASONING>>>")
+'''
+
 FIXTURE_CARDS = {
     "backlog": [("01-write-the-onboarding-guide", "Write the onboarding guide", "Medium"),
                 # a title that repeats the card's own number, as real task
@@ -1312,9 +1350,21 @@ class Backend:
         # minute) before answering, so a case can see a run in flight.
         self.refine_reply = base / "refine-reply.txt"
         self.refine_hold = base / "refine-hold"
+        # A question to the orchestrator (task 181) is answered only while
+        # `ask_answers` exists — by a stub that reads bench's facts through
+        # the one exact Read rule it was granted and echoes the binding, as
+        # a real run must — and waits while `ask_hold` exists. Without the
+        # flag the run fails like every other launch: no model here.
+        self.ask_answers = base / "ask-answers"
+        self.ask_hold = base / "ask-hold"
+        ask_stub = bindir / "ask-stub.py"
+        ask_stub.write_text(ASK_STUB.replace("__HOLD__", repr(str(self.ask_hold))),
+                            encoding="utf-8")
         claude = bindir / "claude"
         claude.write_text(
             "#!/bin/sh\n"
+            f"if [ \"$AGENT_MODE\" = reason ] && [ -f '{self.ask_answers}' ]; then\n"
+            f"  exec '{python}' -I '{ask_stub}' \"$@\"\nfi\n"
             f"if [ \"$AGENT_MODE\" = refine ]; then\n"
             f"  n=0; while [ -f '{self.refine_hold}' ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done\n"
             "fi\n"
