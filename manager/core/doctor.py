@@ -1768,7 +1768,7 @@ def coverage(findings: list[dict], asked: list[str]) -> list[dict]:
 
 PURPOSES = {"work": "Implementation", "act-pr": "PR fixes",
             "review": "Reviews", "refine": "Card refinement",
-            "reason": "Orchestrator reasoning"}
+            "reason": "Orchestrator reasoning", "brain": "Brain drafting"}
 
 STATE_WORDS = {
     "valid": "Configuration valid",
