@@ -1245,10 +1245,11 @@ all:
   can settle. A card's face is kept quiet (see "The card face and its
   tools" below).
 - **Brain** — the project's maintained knowledge, read from the work
-  root's `brain/`: a list by classification and one entry at its stable
-  address, with a person's writes — create, edit, classify, override and
-  retire (see "The Brain: maintained entries, read" and "Writing the
-  Brain"), and its own search and filters (see "Finding an entry").
+  root's `brain/`: a library organised by kind and one entry at its
+  stable address, with a person's writes — create, edit, classify,
+  override and retire (see "The Brain: maintained entries, read" and
+  "Writing the Brain"), and its own search, kind and classification
+  controls in a sidebar on the right (see "Finding an entry").
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
@@ -1360,19 +1361,45 @@ fetches from a remote, launches and runs nothing.
 
 ### Finding an entry
 
-The Brain's list has its own search and filters, independent of the
-Board's stages: a **Search** box matching every word typed, case
-blind, against each entry's title, summary, id, kind, file name, sources
-and related ids; a **Classification** filter (the four, with counts) and
-a **Kind** filter (the six). It reads the index the board already sent —
-deterministic, bounded by the files `brain.py` reads, no model and no
-request — and keeps its search across a visit to an entry and back. It
-is not part of an address. A search that matches nothing says what it
-looked for and where, and offers **Clear search and filters** and **New
-entry**; files that cannot be shown are listed with how to fix each
-kind of problem, and are not found by search until they are fixed. There
-is no curated handbook, no seeding and no automatic classification yet:
-those are later phases, and nothing on the page offers them.
+The Brain's list is a library organised by **kind** (task 183). The
+entries fill the main column; the way to browse them sits in a sidebar
+on the right, independent of the Board's stages:
+
+- **Search** — every word typed, case blind, against each entry's
+  title, summary, id, kind, file name, sources and related ids.
+- **Kind** — *All kinds*, which draws one section per kind that has
+  entries, in the contract's order (Guide, Investigation, Decision,
+  Review, Prototype, Attachment), or one kind alone. Each kind's count
+  reads *shown of all entries of that kind*.
+- **Show classifications** — one checkbox each. **Current** and
+  **Unclassified** are shown by default; **Historical** and
+  **Superseded** are hidden by default. Inside a kind each shown
+  classification keeps its own heading, so Unclassified never reads as
+  current knowledge. Their counts are for the chosen kind and search.
+- **Reset to default view** — all kinds, Current and Unclassified, no
+  search.
+
+Hidden is not removed. The status line above the list says how many of
+the Brain's entries are shown and how many are hidden by the
+classification controls, each kind's section says what it hides, and
+an entry's address (`/brain/e/<id>`) opens it whatever the view — a
+Historical or Superseded entry says it is hidden from the default list
+and how to list it. A search or a combination that shows nothing says
+what matched and what is hidden, and offers **Reset to default view**
+and **New entry**; a kind with no entries says so in its own words.
+Below 760px the sidebar folds into one **Browse and filter** button
+above the list, naming the current view, rather than squeezing the
+entries beside it.
+
+It all reads the index the board already sent — deterministic, bounded
+by the files `brain.py` reads, no model and no request — and none of it
+writes, reclassifies or launches anything. The choices are kept across
+a visit to an entry and Back, with focus returned to the entry the
+reader came from; they are not part of an address, and a reload starts
+from the default. Files that cannot be shown are listed with how to fix
+each kind of problem, and are not found by search until they are fixed.
+There is no curated handbook, no seeding and no automatic classification
+yet: those are later phases, and nothing on the page offers them.
 
 ### The page's script: modules under a policy
 

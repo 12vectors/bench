@@ -5,8 +5,9 @@ root: a Current guide that links to a Historical investigation, a
 tombstone replaced by the guide, and a file that breaks the contract. The
 case drives the page as a person would and takes screenshots to look at:
 
-- **the list** at `/brain`: the four classification sections, each entry
-  by title with its kind and summary, and the broken file named as a
+- **the list** at `/brain`: kind first (task 183; the library's own case is
+  `case_brain_library`), each entry by title with its classification and
+  summary, the hidden history counted, and the broken file named as a
   diagnostic — at 1280px and 390px, Night and Daylight, with nothing
   overflowing the narrow window;
 - **an entry** at its stable address: its Markdown rendered, the entry's
@@ -145,11 +146,15 @@ class BrainReading(unittest.TestCase):
             for dark in (True, False):
                 b = self.open("/brain", width, height, dark)
                 text = b.eval("document.querySelector('#bshell').innerText")
-                for word in ("Current", "Historical", "Superseded", "Unclassified",
-                             "How review reports stay on their own board",
-                             "Why reports leaked into the live board", "Old routing notes",
+                # kind first (task 183): the Historical and Superseded entries
+                # are hidden by default, counted, and kept — not listed
+                for word in ("Guide", "Investigation", "How review reports stay on their own board",
+                             "1 Historical entry is hidden here", "1 Superseded entry is hidden here",
                              "could not be shown", "broken.md"):
                     self.assertIn(word, text, f"{label}: {word}")
+                results = b.eval("document.querySelector('#bshell .b-results').innerText")
+                for word in ("Why reports leaked into the live board", "Old routing notes"):
+                    self.assertNotIn(word, results, f"{label}: {word} is hidden by default")
                 self.assertEqual(b.eval("document.querySelector('#views [data-view=\"brain\"]')"
                                         ".getAttribute('aria-current')"), "page")
                 self.no_overflow(b, f"list {label}")
@@ -209,13 +214,19 @@ class BrainReading(unittest.TestCase):
     def test_4_the_keyboard_reaches_and_opens_an_entry(self):
         b = self.open("/brain")
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
-        # the list's own action comes first (task 158), then its search and
-        # its two filters (task 159), then its entries
+        # the list's own action comes first (task 158), then its search
+        # (task 159), the seven kind choices and the four classification
+        # controls of the sidebar (task 183), then its entries
         b.key("Tab")
         self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "new")
-        for control in ("q", "cls", "kind"):
+        b.key("Tab")
+        self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), "q")
+        for _ in range(7):
             b.key("Tab")
-            self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), control)
+            self.assertIsNotNone(b.eval("document.activeElement?.dataset?.bkind || null"))
+        for control in ("Current", "Unclassified", "Historical", "Superseded"):
+            b.key("Tab")
+            self.assertEqual(b.eval("document.activeElement?.dataset?.bshow || null"), control)
         b.key("Tab")
         first = b.eval("document.activeElement?.dataset?.brainId || null")
         self.assertEqual(first, "e-report-routing")
