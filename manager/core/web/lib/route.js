@@ -38,7 +38,7 @@ const VIEWS = ['board', 'brain', 'orchestrator', 'phases', 'flight', 'focus', 's
 const VIEW_PATHS = { board: 'board', brain: 'brain', orchestrator: 'orchestrator', phases: 'phases',
   flight: 'sessions', focus: 'focus', settings: 'settings' };
 // the Orchestrator's sections (task 145), in the order its navigation lists
-const ORCH_SECTIONS = ['overview', 'work', 'decisions', 'phases', 'recovery',
+const ORCH_SECTIONS = ['overview', 'ask', 'work', 'decisions', 'phases', 'recovery',
   'activity', 'agreement'];
 const CARD_TABS = ['overview', 'brief', 'inputs', 'acceptance', 'reviews', 'activity'];
 // a card's background on direct entry is the Board; history remembers

@@ -95,8 +95,13 @@ test('a card’s entry links to the exact section and card, and escapes what it 
   const legacy = cardEntryHtml(task, { orchestration: { configured: true, cards: {
     '140-csv.md': { scope: null, why: 'phase-not-adopted' } } } }, '140');
   assert.match(legacy, /phase runner/);
-  // nothing to say: no agreement and no history
-  assert.equal(cardEntryHtml(task, { orchestration: { configured: false }, decisions: {} }, '140'), '');
+  // nothing else to say: no agreement and no history — but a question
+  // about the card is always open to ask (task 181), and opening it
+  // launches nothing
+  assert.equal(cardEntryHtml(task, { orchestration: { configured: false }, decisions: {} }, '140'),
+               '<a class="o-asklink" data-route data-o="ask-card" href="/orchestrator/ask?card=140">Ask about this card</a>');
+  assert.match(html, /href="\/orchestrator\/ask\?card=140">Ask about this card<\/a>/);
+  assert.match(phase, /href="\/orchestrator\/ask\?card=140">Ask about this phase<\/a>/);
   // an identifier is escaped where it is written
   assert.ok(!cardEntryHtml(task, state, '"><x').includes('"><x'));
   assert.equal(orchHref('overview'), '/orchestrator');

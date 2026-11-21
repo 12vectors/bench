@@ -328,6 +328,8 @@ function offlineHtml() {
 
 function sectionHtml(section) {
   const o = orch();
+  // asking reads its own routes, so it does not wait on the reading
+  if (section === 'ask') return askHtml();
   if (!o.reading) {
     return o.error ? `<p class="o-empty">The orchestration reading could not be taken: ${esc(o.error)}.</p>`
       : `<p class="o-empty" aria-busy="true">Reading the orchestration…</p>`;
@@ -351,6 +353,349 @@ function shellHtml() {
   return navHtml(section) +
     `<div class="o-main"><h1 class="o-title">${esc(SECTION_WORDS[section] || 'Orchestrator')}</h1>` +
     offlineHtml() + stripHtml(section) + noticeHtml() + sectionHtml(section) + `</div>`;
+}
+
+/* ── ask orchestrator (task 181) ─────────────────────────────────────── */
+
+/* Asking explains; it never acts. The section reads GET /api/ask (the
+   conversations and what asking would launch and count) and one thread,
+   and the only write it makes is POST /api/ask — a person's explicit,
+   armed submission. Opening it, reloading it and reconnecting launch
+   nothing. */
+
+const ASK_STATUS = {
+  valid: ['Answered', 'calm'],
+  stale: ['Stale — the facts changed while it ran; history, not current', 'alarm'],
+  invalid: ['Refused by validation — no answer kept', 'alarm'],
+  failed: ['Failed — no answer', 'alarm'],
+  cancelled: ['Cancelled — no answer', 'idle'],
+  refused: ['Not launched', 'alarm'],
+  queued: ['Queued', 'working'],
+  running: ['Reasoning', 'working'],
+  asked: ['Asked', 'neutral'],
+};
+const BY_WORDS = { you: 'you', owner: 'the product owner', orchestrator: 'the orchestrator, by itself',
+                   teammate: 'a teammate', nobody: 'nobody yet' };
+const CONTROL_WORDS = {
+  'open-card': 'Open the card', 'move-card': 'Move it on the Board', 'start-work': '▸ start work on the card',
+  hold: '‖ hold on the card', 'take-over': '▸ take over on the card', 'answer-decision': 'Answer in Decisions',
+  'run-required-checks': 'Run required checks on the card', 'settle-operation': 'Settle it in Recovery',
+  'resolve-incident': 'Resolve it in Recovery', 'reset-breaker': 'Reset the breaker in Recovery',
+  'edit-agreement': 'Review the Operating agreement', 'adopt-phase': 'Adopt the phase in Phases',
+  'designate-installation': 'Designate in Overview', 'settings-agents': 'Settings → Agents',
+};
+
+function askState() {
+  const o = orch();
+  if (!o.ask) {
+    o.ask = { list: null, pre: null, at: 0, error: null, fetching: false, conv: null,
+              thread: {}, scope: null, text: '', req: null, pollT: null, item: undefined };
+  }
+  return o.ask;
+}
+
+async function loadAsk(force) {
+  const a = askState();
+  if (a.fetching) return;
+  if (!force && a.at && Date.now() - a.at < FRESH_MS) return;
+  a.fetching = true;
+  try {
+    const body = await getJson('/api/ask');
+    a.list = body.conversations || [];
+    a.pre = body.preflight || null;
+    a.actor = body.actor || null;
+    a.error = null;
+  } catch (e) {
+    a.error = (e && e.message) || 'the conversations could not be read';
+  } finally {
+    a.at = Date.now();
+    a.fetching = false;
+  }
+  scheduleRender();
+}
+
+async function loadThread(id, force) {
+  const a = askState();
+  if (!id) return;
+  const have = a.thread[id];
+  if (have && (have.fetching || (!force && Date.now() - have.at < FRESH_MS))) return;
+  a.thread[id] = { ...(have || {}), fetching: true, at: (have || {}).at || 0 };
+  try {
+    const data = await getJson(`/api/ask/thread?conversation=${encodeURIComponent(id)}`);
+    a.thread[id] = { data, error: null, at: Date.now(), fetching: false };
+  } catch (e) {
+    a.thread[id] = { ...(have || {}), error: (e && e.message) || 'not read', at: Date.now(), fetching: false };
+  }
+  // while a run answers, ask again in a few seconds — a read, never a launch
+  const live = ((a.thread[id].data || {}).conversation || {}).exchanges || [];
+  clearTimeout(a.pollT);
+  if (live.some(x => x.active)) a.pollT = setTimeout(() => { loadThread(id, true); loadAsk(true); }, 3000);
+  scheduleRender();
+}
+
+/* The context a new question is about: what the page chose, else the card
+   the address names, else the board. */
+function askScope() {
+  const a = askState();
+  if (a.item !== S.orchItem) { a.item = S.orchItem; a.scope = null; a.conv = null; }
+  if (a.scope) return a.scope;
+  const t = selected();
+  if (t) return { kind: t.isPhase ? 'phase' : 'card', card: String(idOf(t)) };
+  return { kind: 'board' };
+}
+
+function scopeWords(scope) {
+  if (!scope || scope.kind === 'board') return 'the whole board';
+  const found = findCard(scope.card, S.state).task;
+  const what = scope.kind === 'phase' ? 'Phase' : 'Card';
+  return found ? `${what} ${num(found)} · ${title(found)}` : `${what} ${scope.card}`;
+}
+
+function convWhereWords(c) {
+  const w = c.where || {};
+  if ((c.scope || w.kind) === 'board') return 'Board';
+  return `${w.kind === 'phase' ? 'Phase' : 'Card'} #${parseInt(w.card || c.subject, 10) || c.subject}`;
+}
+
+function scopeMatches(c, scope) {
+  if (scope.kind === 'board') return (c.scope || (c.where || {}).kind) === 'board';
+  const t = findCard(scope.card, S.state).task;
+  return !!t && (c.where || {}).file === t.file;
+}
+
+function cardOptions(phases) {
+  return tasks().filter(t => (phases ? t.isPhase : !t.isPhase) && t.stage !== 'archive')
+    .map(t => ({ id: String(idOf(t)), label: `${num(t)} · ${title(t)}`, stage: t.stage }));
+}
+
+function scopePickerHtml(scope) {
+  const a = askState();
+  const phases = cardOptions(true), cards = cardOptions(false);
+  const radio = (kind, label) => `<label class="o-askradio"><input type="radio" name="askscope" ` +
+    `data-ofield="ask-kind" data-o="askkind-${kind}" value="${kind}"${scope.kind === kind ? ' checked' : ''}` +
+    `${kind === 'phase' && !phases.length ? ' disabled' : ''}> ${esc(label)}</label>`;
+  const select = (kind, list) => scope.kind !== kind ? '' :
+    `<label class="o-askselect">${kind === 'phase' ? 'Phase' : 'Card'} ` +
+    `<select data-ofield="ask-card" data-o="askcard-${kind}">` +
+    (scope.card ? '' : `<option value="">Choose…</option>`) +
+    list.map(c => `<option value="${esc(c.id)}"${c.id === String(scope.card) ? ' selected' : ''}>` +
+      `${esc(c.label)}</option>`).join('') + `</select></label>`;
+  return `<fieldset class="o-askscope"><legend>Context — what the question is about</legend>` +
+    radio('board', 'Board') + radio('phase', 'Phase') + radio('card', 'Card') +
+    select('phase', phases) + select('card', cards) +
+    `<p class="o-dim">Changing the context starts a new conversation; ${a.conv ? 'this one stays where it is.' : 'nothing is asked until you submit.'}</p>` +
+    `</fieldset>`;
+}
+
+function preflightHtml(pre, follow) {
+  if (!pre) return `<p class="o-dim" aria-busy="true">Reading what asking would launch…</p>`;
+  const model = pre.model ? `${pre.model} (${pre.modelSource === 'default' ? 'default' : esc(pre.modelSetting || pre.modelSource)})`
+    : 'the harness’s own default model';
+  return `<div class="o-askpre${pre.ready ? '' : ' alarm'}">` +
+    (pre.ready ? '' : `<p role="alert"><strong>Cannot ask here now:</strong> ${esc(pre.reason || pre.code)}` +
+      (pre.remedy ? ` <span class="o-dim">Fix: ${esc(pre.remedy)}</span>` : '') + `</p>`) +
+    `<p><strong>On submit:</strong> one read-only reasoning run through <strong>${esc(pre.harness)}</strong>` +
+    ` · model ${model}. ${esc(pre.readOnly)}.</p>` +
+    `<p class="o-dim">${esc(pre.accounting)} ${esc(pre.delegation)}</p>` +
+    `<p class="o-dim">${follow ? 'A follow-up keeps this conversation and reads fresh facts on submission.'
+      : 'Questions and replies are kept with the conversation — on the card, the phase card, or the board’s shared conversation file.'}</p>` +
+    `</div>`;
+}
+
+function composerHtml(scope, thread) {
+  const a = askState();
+  const pre = a.pre;
+  const follow = !!(thread && a.conv);
+  const busy = thread && ((thread.conversation || {}).exchanges || []).some(x => x.active);
+  const disabled = !pre || !pre.ready || busy || (scope.kind !== 'board' && !scope.card);
+  const why = busy ? 'a run is still answering this conversation; wait for it or cancel it'
+    : scope.kind !== 'board' && !scope.card ? 'choose the card first' : (pre && pre.reason) || '';
+  return `<div class="o-askcomposer">` +
+    `<label for="o-asktext" class="o-eyebrow">${follow ? 'Ask a follow-up' : `Ask about ${esc(scopeWords(scope))}`}</label>` +
+    `<textarea id="o-asktext" rows="3" maxlength="1000" data-ofield="ask-text" data-o="ask-text" ` +
+    `placeholder="${follow ? 'And what would unblock it?' : scope.kind === 'board' ? 'What is consuming capacity?' : 'Why is this card still in To Do?'}">` +
+    `${esc(a.text)}</textarea>` +
+    preflightHtml(pre, follow) +
+    `<div class="o-acts">` + btn('ask-submit', follow ? 'Ask follow-up' : 'Ask', {
+      act: 'ask', primary: true, disabled, why,
+      confirm: 'Confirm: launch one read-only reasoning run' }) +
+    (a.conv ? `<button type="button" class="o-btn" data-oact="askNew" data-o="ask-new">New conversation</button>` : '') +
+    `</div><p class="o-effect">Asking explains; it acts on nothing. No card moves, no work starts or stops, no check runs, and no agreement, gate or budget changes. A suggestion in a reply is a link to where that control already lives.</p>` +
+    `</div>`;
+}
+
+function refHref(ref, reply) {
+  const [kind, name] = [ref.slice(0, ref.indexOf(':')), ref.slice(ref.indexOf(':') + 1)];
+  if (kind === 'card') {
+    const t = findCard(name, S.state).task;
+    return t ? { href: `/cards/${encodeURIComponent(idOf(t))}`, label: `Card ${num(t)}`, route: true }
+      : { href: null, label: `Card #${name} (not on this board)` };
+  }
+  if (kind === 'evidence') {
+    const w = (reply && reply.subject) || '';
+    return { href: w && w !== 'board' ? `/cards/${encodeURIComponent(w)}` : null,
+             label: `Check evidence ${name}`, note: 'open the card, then its ◫ evidence' };
+  }
+  if (name === 'reason-facts' && reply && reply.operation) {
+    return { href: `/api/ask/facts?operation=${encodeURIComponent(reply.operation)}`,
+             label: `Bench’s readings${reply.snapshot ? ` at ${when(reply.snapshot)}` : ''}`, raw: true };
+  }
+  if (name === 'reason-card' && reply && reply.subject && reply.subject !== 'board') {
+    return { href: `/cards/${encodeURIComponent(reply.subject)}`, label: `The card #${reply.subject}`, route: true };
+  }
+  return { href: null, label: `Input ${name}` };
+}
+
+function refLinks(refs, reply, notes) {
+  return (refs || []).map(ref => {
+    const r = refHref(ref, reply);
+    if (!notes.find(n => n.ref === ref)) notes.push({ ref, ...r });
+    const n = notes.findIndex(x => x.ref === ref) + 1;
+    return r.href ? `<a href="${esc(r.href)}"${r.route ? ' data-route' : ' target="_blank" rel="noopener"'}` +
+      ` title="${esc(r.label)}">[${n}]</a>` : `<span title="${esc(r.label)}">[${n}]</span>`;
+  }).join(' ');
+}
+
+function replyHtml(reply, notes) {
+  const [label, tone] = ASK_STATUS[reply.status] || [reply.status, 'neutral'];
+  const stale = reply.status === 'valid' && reply.fresh && reply.fresh.fresh === false;
+  const meta = [reply.agent, reply.harness, reply.model, reply.snapshot ? `facts read ${when(reply.snapshot)}` : null]
+    .filter(Boolean).join(' · ');
+  let body = '';
+  if (reply.answer && (reply.status === 'valid' || reply.status === 'stale')) {
+    const parts = [['now', 'What is happening now'], ['why', 'Why'],
+                   ['next', 'What happens next by itself'], ['unblock', 'Who can unblock it']];
+    body += `<p class="o-answerlead">${esc(reply.summary || '')}</p><dl class="o-answer">` +
+      parts.map(([k, l]) => `<dt>${l}</dt><dd>${esc(reply.answer[k] || 'not said')}</dd>`).join('') + `</dl>`;
+    if ((reply.findings || []).length) {
+      body += `<h4>Recorded facts <span class="o-dim">— each cites where bench recorded it</span></h4><ul class="o-askfacts">` +
+        reply.findings.map(f => `<li>${esc(f.statement)} ${refLinks(f.evidence, reply, notes)}</li>`).join('') + `</ul>`;
+    }
+    if ((reply.gaps || []).length) {
+      body += `<h4>What the records do not say</h4><ul class="o-askgaps">` +
+        reply.gaps.map(g => `<li>${esc(g.gap)}</li>`).join('') + `</ul>`;
+    }
+    if ((reply.suggestions || []).length) {
+      body += `<h4>Suggestions <span class="o-dim">— not actions; nothing here runs</span></h4><ul class="o-asksugg">` +
+        reply.suggestions.map(s => `<li>${esc(s.suggestion)} <span class="o-dim">· by ${esc(BY_WORDS[s.by] || s.by || 'nobody')}</span>` +
+          `${suggestionLink(s, reply)} ${refLinks(s.evidence, reply, notes)}</li>`).join('') + `</ul>`;
+    }
+  } else {
+    body += `<p>${esc(reply.summary || '')}</p>` +
+      ((reply.diagnostics || []).length ? `<p class="o-dim">Codes: ${esc(reply.diagnostics.join(', '))}</p>` : '');
+  }
+  return `<article class="o-reply ${esc(tone)}" aria-label="Orchestrator reply">` +
+    `<p class="o-eyebrow">Orchestrator · ${badge(stale ? 'Answered — no longer current' : label, stale ? 'alarm' : tone)}` +
+    ` · <span title="a reasoning run's interpretation of bench's records">agent-reported interpretation</span>` +
+    `${reply.at ? ` · ${esc(when(reply.at))}` : ''}</p>` +
+    (stale ? `<p class="o-dim" role="note">Changed since: ${esc((reply.fresh || {}).why || 'its inputs')}. Read it as history; ask again for a current answer.</p>` : '') +
+    body + (meta ? `<p class="o-dim">${esc(meta)}</p>` : '') + `</article>`;
+}
+
+function suggestionLink(s, reply) {
+  const label = CONTROL_WORDS[s.control];
+  if (!label) return '';
+  const card = s.card || (reply.subject && reply.subject !== 'board' ? reply.subject : null);
+  const section = { 'answer-decision': 'decisions', 'settle-operation': 'recovery', 'resolve-incident': 'recovery',
+                    'reset-breaker': 'recovery', 'edit-agreement': 'agreement', 'adopt-phase': 'phases',
+                    'designate-installation': 'overview' }[s.control];
+  const href = s.control === 'settings-agents' ? '/settings/agents'
+    : section ? orchHref(section, card || undefined)
+      : card ? `/cards/${encodeURIComponent(card)}` : null;
+  return href ? ` · <a data-route data-o="sugg-${esc(s.id)}" href="${esc(href)}">${esc(label)} ↗</a>` : '';
+}
+
+function activeHtml(x) {
+  const j = x.active;
+  const since = j.started || j.created;
+  return `<div class="o-askactive" role="status" aria-live="polite">${badge(ASK_STATUS[j.status][0], 'working')} ` +
+    `<span>${esc(j.name || 'A reasoning run')} · ${esc(j.harness || '')}${j.model ? ' · ' + esc(j.model) : ''}` +
+    `${since ? ` · ${esc(ago(since))} so far` : ''}</span>` +
+    `<p class="o-dim">A read-only reasoning run, not implementation: it reads bench’s facts and the cards, and nothing on the board changes while it runs. The board observes the process; it shows no invented steps.</p>` +
+    `<div class="o-acts">${btn(`ask-cancel:${j.id}`, 'Cancel this question', { act: 'askCancel', data: { operation: j.id },
+      confirm: 'Confirm: cancel this reasoning run' })}</div></div>`;
+}
+
+function threadHtml(entry) {
+  if (!entry) return `<p class="o-empty" aria-busy="true">Reading the conversation…</p>`;
+  if (entry.error && !entry.data) return `<p class="o-empty" role="alert">The conversation could not be read: ${esc(entry.error)}.</p>`;
+  const conv = entry.data.conversation;
+  const notes = [];
+  const where = entry.data.where || {};
+  const html = conv.exchanges.map(x => {
+    const q = x.ask;
+    const replies = x.replies.map(r => replyHtml(r, notes)).join('');
+    const retry = x.canRetry ? btn(`ask-retry:${q.id}`, 'Retry this question', { act: 'askRetry', data: { ask: q.id },
+      confirm: 'Confirm: launch the question again' }) : '';
+    return `<section class="o-exchange"><div class="o-askq"><p class="o-eyebrow">${esc(q.actor || 'You')} · ${esc(when(q.at))}</p>` +
+      `<p>${esc(q.text)}</p></div>` + replies + (x.active ? activeHtml(x) : '') +
+      (!x.active && !x.replies.length ? `<p class="o-dim">No run answered this question yet.</p>` : '') +
+      (retry ? `<div class="o-acts">${retry}</div>` : '') + `</section>`;
+  }).join('');
+  const rail = notes.length ? `<aside class="o-askrail" aria-label="Evidence for these answers"><p class="o-eyebrow">Evidence</p><ol>` +
+    notes.map(n => `<li>${n.href ? `<a href="${esc(n.href)}"${n.route ? ' data-route' : ' target="_blank" rel="noopener"'}>${esc(n.label)}</a>` : esc(n.label)}` +
+      `${n.note ? ` <span class="o-dim">${esc(n.note)}</span>` : ''}</li>`).join('') +
+    `</ol><p class="o-dim">Bench’s readings are a snapshot: each reply says when they were read.</p></aside>` : '';
+  const kept = where.kind === 'board' ? 'the board’s shared conversation file, synced with the work state'
+    : `card #${esc(where.subject)}’s Orchestration record`;
+  return `<div class="o-askthread"><div class="o-askmain"><p class="o-dim">Kept in ${kept}` +
+    `${entry.data.persistence && !entry.data.persistence.commits ? ' (written, not committed — moves do not commit on this board)' : ''}.</p>` +
+    html + `</div>${rail}</div>`;
+}
+
+function askHtml() {
+  const a = askState();
+  loadAsk(false);
+  const scope = askScope();
+  if (a.conv) loadThread(a.conv, false);
+  const list = a.list || [];
+  const listHtml = !a.list ? `<p class="o-dim" aria-busy="true">Reading conversations…</p>`
+    : !list.length ? `<p class="o-dim">No conversations yet. Ask the first question.</p>`
+    : `<ul class="o-asklist">` + list.map(c => `<li><button type="button" class="o-askconv${c.id === a.conv ? ' on' : ''}${scopeMatches(c, scope) ? ' here' : ''}"` +
+        ` data-oact="askConv" data-conv="${esc(c.id)}" data-o="conv-${esc(c.id)}"${c.id === a.conv ? ' aria-current="true"' : ''}>` +
+        `<span>${esc(c.title || '(no question)')}</span><small>${esc(convWhereWords(c))} · ${esc(c.count)} question${c.count === 1 ? '' : 's'}` +
+        ` · ${esc((ASK_STATUS[c.status] || [c.status || ''])[0])} · ${esc(when(c.updated))}</small></button></li>`).join('') + `</ul>`;
+  const thread = a.conv ? (a.thread[a.conv] || null) : null;
+  return `<p class="o-lead">Ask why work is or is not moving. A question launches one read-only reasoning run on your request; the answer explains, from bench’s own records, and changes nothing.</p>` +
+    (a.error ? `<p class="o-notice alarm" role="alert">${esc(a.error)}</p>` : '') +
+    `<div class="o-asklayout"><aside class="o-asksidebar" aria-label="Conversations"><p class="o-eyebrow">Conversations</p>${listHtml}</aside>` +
+    `<div class="o-askbody">` +
+    (a.conv ? `<p class="o-dim">Conversation ${esc(a.conv)} · about ${esc(thread && thread.data ? scopeWordsOf(thread.data.where) : '…')}</p>`
+      : scopePickerHtml(scope)) +
+    (a.conv ? threadHtml(thread) : '') +
+    composerHtml(a.conv ? ((thread && thread.data && whereScope(thread.data.where)) || scope) : scope,
+                 thread && thread.data) +
+    `</div></div>`;
+}
+
+function whereScope(where) {
+  if (!where || where.kind === 'board') return { kind: 'board' };
+  return { kind: where.kind, card: String(where.subject) };
+}
+
+function scopeWordsOf(where) { return scopeWords(whereScope(where)); }
+
+async function submitAsk() {
+  const a = askState();
+  const text = (a.text || '').trim();
+  if (text.length < 3) return { ok: false, error: 'write a question first — nothing was sent' };
+  a.req = a.req || newRequest('ask');
+  const body = { text, request: a.req };
+  if (a.conv) body.conversation = a.conv;
+  else body.scope = askScope();
+  const res = await send('/api/ask', body, false);
+  if (!res.ok) {
+    if (res.data && res.data.code === 'not-launched') { a.text = ''; a.req = null; }
+    loadAsk(true);
+    if (a.conv) loadThread(a.conv, true);
+    return { ok: false, error: res.error + (res.data && res.data.remedy ? ` — ${res.data.remedy}` : '') };
+  }
+  a.text = '';
+  a.req = null;
+  a.conv = res.data.conversation;
+  loadAsk(true);
+  loadThread(a.conv, true);
+  return { said: res.data.duplicate ? 'already asked — the first submission stands' : 'asked — one read-only reasoning run is answering' };
 }
 
 /* ── overview ────────────────────────────────────────────────────────── */
@@ -1149,6 +1494,41 @@ async function doAction(el) {
     case 'answer':
     case 'withdraw':
       return armed(key, () => answer(d.file, d.q, d.oact));
+    case 'ask':
+      return armed(key, submitAsk);
+    case 'askCancel':
+      return armed(key, async () => {
+        const res = await send('/api/ask/cancel', { operation: d.operation }, false);
+        const a = askState();
+        if (a.conv) loadThread(a.conv, true);
+        return res.ok ? { said: 'cancel requested — the reply records it once the run is observed gone; nothing else is touched' } : res;
+      });
+    case 'askRetry':
+      return armed(key, async () => {
+        const a = askState();
+        const res = await send('/api/ask/retry', { conversation: a.conv, ask: d.ask }, false);
+        if (a.conv) loadThread(a.conv, true);
+        loadAsk(true);
+        return res.ok ? { said: res.data.duplicate ? 'the inputs are unchanged — the earlier outcome stands' : 'asked again — one read-only reasoning run' }
+          : { ok: false, error: res.error + (res.data && res.data.remedy ? ` — ${res.data.remedy}` : '') };
+      });
+    case 'askConv': {
+      const a = askState();
+      a.conv = d.conv;
+      a.text = '';
+      a.req = null;
+      loadThread(a.conv, true);
+      paintNow();
+      return;
+    }
+    case 'askNew': {
+      const a = askState();
+      a.conv = null;
+      a.text = '';
+      a.req = null;
+      paintNow();
+      return;
+    }
     case 'startDraft':
       return armed(key, async () => {
         const doc = d.from === 'effective' ? r.effective.document : 'new';
@@ -1298,6 +1678,26 @@ function wire(root) {
       form.note = el.value;
     } else if (f === 'newphase') {
       o.newPhase = el.value;
+    } else if (f === 'ask-text') {
+      const a = askState();
+      // a changed question is a new submission; the same text resent is not
+      if (a.text !== el.value) a.req = null;
+      a.text = el.value;
+    } else if (f === 'ask-kind' && e.type === 'change') {
+      const a = askState();
+      const now = askScope();
+      const kind = el.value;
+      a.scope = { kind, card: kind === 'board' ? null
+        : kind === now.kind ? now.card : (cardOptions(kind === 'phase')[0] || {}).id || null };
+      a.conv = null;
+      a.req = null;
+      paintNow();
+    } else if (f === 'ask-card' && e.type === 'change') {
+      const a = askState();
+      a.scope = { kind: askScope().kind, card: el.value || null };
+      a.conv = null;
+      a.req = null;
+      paintNow();
     } else if (f === 'ag' && o.edit) {
       setPath(o.edit.doc, el.dataset.path, el.dataset.type, el.value, el.checked);
       o.edit.dirty = true;

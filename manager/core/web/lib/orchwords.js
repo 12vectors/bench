@@ -13,6 +13,7 @@ import { formatRoute } from './route.js';
 /* The sections, with the words the navigation uses. */
 const SECTION_WORDS = {
   overview: 'Overview',
+  ask: 'Ask orchestrator',
   work: 'Work',
   decisions: 'Decisions',
   phases: 'Phases',
@@ -198,7 +199,11 @@ function cardEntryHtml(task, state, id) {
   const o = state && state.orchestration;
   const dec = ((state && state.decisions) || {})[task.file];
   const held = o && o.configured ? (o.cards || {})[task.file] : null;
-  if (!held && !dec) return '';
+  // a question about the card is always open to ask (task 181): it
+  // launches nothing until it is submitted, there
+  const askLink = ` <a class="o-asklink" data-route data-o="ask-card" href="${esc(orchHref('ask', id))}">` +
+    `${task.isPhase ? 'Ask about this phase' : 'Ask about this card'}</a>`;
+  if (!held && !dec) return askLink.trim();
   const words = [];
   if (held) {
     if (held.scope) words.push(`Managed by ${scopeName(held.scope)}`);
@@ -215,7 +220,7 @@ function cardEntryHtml(task, state, id) {
   const section = dec && (dec.open || dec.reevaluate) ? 'decisions'
     : task.isPhase ? 'phases' : 'work';
   return `${esc(words.join(' · '))} · <a data-route href="${esc(orchHref(section, id))}">` +
-    `Open in Orchestrator</a>`;
+    `Open in Orchestrator</a> ·${askLink}`;
 }
 
 /* `n of m` for one pool, or the honest words when nothing is allotted. */
