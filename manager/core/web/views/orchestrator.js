@@ -1210,20 +1210,27 @@ function decisionHtml(d, entry, links) {
   const alternatives = d.selected
     ? same.filter(x => !x.selected)
     : same.filter(x => x.selected);
+  // each fold keeps its open state across a live repaint
+  const at = `tf-${entry.id}-${(entry.decisions || []).indexOf(d)}`;
   const altHtml = !d.pool ? ''
-    : `<details class="o-fold"><summary>${d.selected ? 'Alternatives skipped' : 'Selected instead'} (${alternatives.length})</summary>` +
-      (alternatives.length ? `<ul class="o-list">${alternatives.map(x =>
+    : traceFold(`${at}-alt`, `${d.selected ? 'Alternatives skipped' : 'Selected instead'} (${alternatives.length})`,
+      alternatives.length ? `<ul class="o-list">${alternatives.map(x =>
         `<li>${decCard(x)} — ${esc(x.action)} · ${outcomeBadge(x.outcome)} <code>${esc(x.code || '')}</code>: ${esc(x.reason || '')}</li>`).join('')}</ul>`
-        : `<p class="o-dim">${d.selected ? 'No other candidate for this pool was evaluated this pass.' : 'Nothing in this pool was selected this pass.'}</p>`) +
-      `</details>`;
+        : `<p class="o-dim">${d.selected ? 'No other candidate for this pool was evaluated this pass.' : 'Nothing in this pool was selected this pass.'}</p>`);
   return `<article class="o-tdec${d.selected ? ' selected' : ''}">${head}${what}` +
     nextStepHtml(d, (s) => orchHref(s)) +
-    `<details class="o-fold"><summary>Facts considered</summary>${factsHtml(d)}</details>` +
+    traceFold(`${at}-facts`, 'Facts considered', factsHtml(d)) +
     altHtml +
-    `<details class="o-fold"><summary>Rule or limit</summary><p><code>${esc(d.code || 'none recorded')}</code>` +
-    `${d.state ? ` · state <code>${esc(d.state)}</code>` : ''} — ${esc(d.reason || '')}</p></details>` +
-    `<details class="o-fold"><summary>Evidence and links</summary>${linkHtml(d, links)}</details>` +
+    traceFold(`${at}-rule`, 'Rule or limit', `<p><code>${esc(d.code || 'none recorded')}</code>` +
+      `${d.state ? ` · state <code>${esc(d.state)}</code>` : ''} — ${esc(d.reason || '')}</p>`) +
+    traceFold(`${at}-links`, 'Evidence and links', linkHtml(d, links)) +
     `</article>`;
+}
+
+function traceFold(key, summary, body) {
+  const open = orch().open[key];
+  return `<details class="o-fold" data-okeep="${esc(key)}"${open ? ' open' : ''}>` +
+    `<summary>${esc(summary)}</summary>${body}</details>`;
 }
 
 function entrySummary(e) {
@@ -1255,9 +1262,9 @@ function entryBody(e, cached) {
   if (e.truncated) notes.push(`This record was bounded: ${JSON.stringify(e.truncated)} left out.`);
   const occHtml = occ.count > 1
     ? `<p>This exact decision was made on <strong>${esc(occ.count)} consecutive passes</strong>, from ${stamp(occ.first)} to ${stamp(occ.last)} (passes ${esc(occ.firstSeq)}–${esc(occ.lastSeq)}). Repeats are folded, never dropped.</p>` +
-      (occ.passes ? `<details class="o-fold"><summary>Every pass</summary><ul class="o-list">${occ.passes.map(p =>
+      (occ.passes ? traceFold(`tf-${full.id}-passes`, 'Every pass', `<ul class="o-list">${occ.passes.map(p =>
         `<li><code>${esc(p.id)}</code> · ${esc(utc(p.at))}</li>`).join('')}</ul>` +
-        `${occ.passesOmitted ? `<p class="o-dim">${esc(occ.passesOmitted)} older pass ids are counted above and not listed.</p>` : ''}</details>` : '')
+        `${occ.passesOmitted ? `<p class="o-dim">${esc(occ.passesOmitted)} older pass ids are counted above and not listed.</p>` : ''}`) : '')
     : '';
   const decs = (full.decisions || []).slice().sort((a, b) =>
     (b.result ? 2 : b.selected ? 1 : 0) - (a.result ? 2 : a.selected ? 1 : 0));
@@ -1278,9 +1285,9 @@ function entryBody(e, cached) {
     (full.status === 'error' ? `<p role="alert"><strong>The pass stopped with an error:</strong> ${esc(full.error || '')}. ` +
       `What it had read before is below; nothing after the error happened in this pass.</p>` : '') +
     (full.breaker && full.breaker.open ? `<p>The circuit breaker was open: no launch was attempted.</p>` : '') +
-    (observed.length ? `<details class="o-fold"><summary>Observed this pass (${observed.length})</summary><ul class="o-list">${observed.map(o =>
-      `<li><code>${esc(o.key || '')}</code> ${esc(o.action || '')} ${esc(o.file || o.card || '')} → ${esc(o.status || '')}${o.outcome ? ' · ' + esc(o.outcome) : ''}</li>`).join('')}</ul></details>` : '') +
-    (full.capacity && full.capacity.limits ? `<details class="o-fold"><summary>Capacity as read</summary>${factValue(full.capacity)}</details>` : '') +
+    (observed.length ? traceFold(`tf-${full.id}-observed`, `Observed this pass (${observed.length})`, `<ul class="o-list">${observed.map(o =>
+      `<li><code>${esc(o.key || '')}</code> ${esc(o.action || '')} ${esc(o.file || o.card || '')} → ${esc(o.status || '')}${o.outcome ? ' · ' + esc(o.outcome) : ''}</li>`).join('')}</ul>`) : '') +
+    (full.capacity && full.capacity.limits ? traceFold(`tf-${full.id}-capacity`, 'Capacity as read', factValue(full.capacity)) : '') +
     (shown.length ? shown.map(d => decisionHtml(d, full, links)).join('')
       : full.status === 'evaluated' ? `<p class="o-dim">${want ? `Card #${esc(want)} was not a candidate in this pass.` : 'No card in To Do, In Progress or Review was under an orchestrator scope on this pass.'}</p>` : '') +
     (rest > 0 ? `<p class="o-dim">${rest} other decision(s) in this pass are about other cards. <a data-route href="${esc(orchHref('trace', null, full.id))}">Show the whole pass</a></p>` : '') +
