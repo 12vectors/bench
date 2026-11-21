@@ -269,7 +269,9 @@ class PhaseRepairInTheBrowser(unittest.TestCase):
             time.sleep(0.5)
             found = read(OPEN)
         self.assertEqual("run-failed", found["status"]["word"], found["status"])
-        self.assertEqual("act-pr", found["primary"]["action"])
+        # the hand-off is the failed run's own, as on any card: what
+        # happened first, read on the phase card itself
+        self.assertEqual("read-failure", found["primary"]["action"])
         self.assertEqual("review", found["stage"])
         self.wait_word(OPEN, "run-failed")
         shot("phase-repair-handoff-1280")
