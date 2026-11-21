@@ -82,7 +82,17 @@ STAGES = ("to-do", "in-progress")
 PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 BACKOFF_SECONDS = 60
 # What authorize answers when the card is fine but there is no room now.
-WAITING = ("slots-full", "daily-starts-exhausted")
+WAITING = ("slots-full", "daily-starts-exhausted", "queued-behind")
+# Task 182: why a queued request may wait without losing its place. Each
+# is temporary and about something other than the request itself being
+# settled; a request on one of these holds blocks nobody behind it.
+HOLDS = ("paused", "waiting-dependency", "touches-overlap", "backing-off",
+         "breaker-open", "waiting-integration", "waiting-member",
+         "phase-member-in-flight", "phase-not-started")
+# The launches that wait in the admission queue, first come first served
+# per pool: implementation and repair share the implementation pool,
+# review has its own. Verification, merge and integration launch no agent.
+QUEUED = ("implement", "repair", "review")
 
 _PASS_LOCK = threading.Lock()
 LAST: dict = {"pass": None}
@@ -266,11 +276,15 @@ def _held(task: dict, ops: list[dict], here_basis: str,
     return None
 
 
-def plan(board: dict | None = None) -> dict:
+def plan(board: dict | None = None, delivery: dict | None = None,
+         sync: bool = False) -> dict:
     """The schedule as it stands: every card a scope could launch work on,
-    ready, waiting or blocked, each with its code and reason, and the ones
-    this pass would choose. Deterministic, and a read: it reserves,
-    launches and writes nothing."""
+    ready, waiting or blocked, each with its code and reason, its place in
+    the admission queue, and the launches this pass would admit — its own
+    implementation work and delivery's reviews and repairs (`delivery`,
+    `coordinate.plan`'s reading), in one first-come-first-served order.
+    Deterministic, and a read: it reserves, launches and writes nothing,
+    unless the pass asks it to `sync` the durable queue first."""
     board = taskfiles.collect() if board is None else board
     tasks = _tasks(board)
     reading = agreements.effective()
@@ -309,7 +323,10 @@ def plan(board: dict | None = None) -> dict:
             continue
         here = agreements.scope(reading, sid)
         ceiling = here["ceilings"]["transientRetries"]["value"] if here else 0
-        held = _held(task, ops, basis(task), ceiling)
+        here_basis = basis(task)
+        item["request"] = operations.request_id(ACTION, task["file"], here_basis)
+        item["basis"] = here_basis
+        held = _held(task, ops, here_basis, ceiling)
         if held:
             item.update(state="held" if held[0] in ("outcome-unknown", "in-flight")
                         else "blocked", code=held[0], reason=held[1])
@@ -336,7 +353,10 @@ def plan(board: dict | None = None) -> dict:
                 item.update(state="blocked", code=base["code"],
                             reason=base["summary"])
                 continue
-        answer = orchestrator.authorize(ACTION, task["file"], board=board)
+        # eligibility, with capacity read but the queue not: the order
+        # among eligible requests is first come, first served (`_choose`)
+        answer = orchestrator.authorize(ACTION, task["file"], board=board,
+                                        queue=False)
         if not answer["allowed"]:
             item.update(state="waiting" if answer["code"] in WAITING else "blocked",
                         code=answer["code"], reason=answer["reason"])
@@ -350,76 +370,172 @@ def plan(board: dict | None = None) -> dict:
                 continue
         item.update(state="ready", code="ready", reason="authorized")
         ready.append((task, item))
-    chosen = _choose(ready, reading, tasks, running, by_number)
+    by_file = {t["file"]: t for t in tasks}
+    launches = [(task, item) for task, item in ready]
+    for d in (delivery or {}).get("items") or []:
+        if d.get("state") == "ready" and d.get("action") in QUEUED \
+                and d.get("head") and d["card"] in by_file:
+            d["request"] = operations.request_id(d["action"], d["card"], d["head"])
+            launches.append((by_file[d["card"]], d))
+    entries = {e["id"]: e for e in operations.queue_entries()}
+    chosen = _choose(launches, reading, tasks, running, entries)
+    if sync:
+        # after the choice, so an overlap found this pass is written as the
+        # hold it is and blocks nobody behind it
+        _sync_queue(items, (delivery or {}).get("items") or [])
+        entries = {e["id"]: e for e in operations.queue_entries()}
+    _positions(items + [i for t, i in launches if t.get("stage") == "review"],
+               entries)
     return {"status": "on", "items": items,
-            "chosen": [item["card"] for _task, item in chosen],
+            "chosen": [item["card"] for _task, item in chosen
+                       if item.get("action", ACTION) == ACTION],
+            "admitted": [{"card": item["card"],
+                          "action": item.get("action") or ACTION}
+                         for _task, item in chosen],
             "_chosen": chosen}
 
 
-def _choose(ready: list, reading: dict, tasks: list[dict], running: set[str],
-            by_number: dict) -> list:
-    """Fair, bounded selection: within a scope by priority, phase run
-    order and number; across scopes round-robin, the scope with the
-    fewest starts today first; within the free slots and starts; and never
-    two declared overlaps at once."""
-    if not ready:
+def _wanted(item: dict, action: str) -> dict:
+    return {"id": item["request"], "action": action, "file": item["card"],
+            "card": item.get("number"), "scope": item.get("scope"),
+            "pool": orchestrator.LAUNCHES[action],
+            "basis": item.get("basis") or item.get("head")}
+
+
+def _sync_queue(items: list[dict], delivery: list[dict]) -> None:
+    """Write who waits, durably (task 182). An implementation request is
+    wanted once it is eligible but for capacity (ready, or waiting on a
+    slot, a launch or an older request); one on a temporary hold keeps the
+    place it already has; anything else leaves. Delivery's reviews and
+    repairs are wanted while delivery says that step is next."""
+    wanted, held = [], {}
+    for item in items:
+        if not item.get("request"):
+            continue
+        if item.get("state") in ("ready", "chosen") or \
+                (item.get("state") == "waiting" and item.get("code") in WAITING):
+            wanted.append(_wanted(item, ACTION))
+        elif item.get("code") in HOLDS or \
+                str(item.get("code") or "").startswith("base-"):
+            held[item["request"]] = item["code"]
+    operations.queue_sync("implement", wanted, held)
+    operations.queue_sync("delivery", [
+        _wanted(d, d["action"]) for d in delivery
+        if d.get("action") in QUEUED and d.get("request")
+        and (d.get("state") == "ready" or
+             (d.get("state") == "waiting" and d.get("code") in WAITING))])
+
+
+def _positions(items: list[dict], entries: dict) -> None:
+    """Each item's place in its pool's queue, for the page: a position
+    among requests on no hold, or the hold that keeps its place."""
+    ordered = operations.queue_order(list(entries.values()))
+    place, count = {}, {}
+    for entry in ordered:
+        pool = entry.get("pool") or "implementation"
+        if entry.get("hold"):
+            place[entry["id"]] = None
+            continue
+        count[pool] = count.get(pool, 0) + 1
+        place[entry["id"]] = count[pool]
+    for item in items:
+        entry = entries.get(item.get("request") or "")
+        if entry is not None:
+            item["queue"] = {"position": place.get(entry["id"]),
+                             "pool": entry.get("pool"),
+                             "since": entry.get("readyAt"),
+                             "hold": entry.get("hold")}
+
+
+def _order_key(item: dict, entries: dict) -> tuple:
+    """First come, first served: a request's durable place, else — not yet
+    written, as on a read before the first pass — after every waiting one,
+    in the tie-break the queue itself would assign."""
+    entry = entries.get(item.get("request") or "")
+    number = str(item.get("number") or "")
+    tie = (int(number) if number.isdigit() else 10 ** 9, item.get("card") or "",
+           item.get("action") or ACTION)
+    if entry is not None:
+        return (0,) + operations.queue_key(entry) + tie
+    return (1, 0, 0, "") + tie
+
+
+def _choose(launches: list, reading: dict, tasks: list[dict], running: set[str],
+            entries: dict | None = None) -> list:
+    """First come, first served admission (task 182), bounded: every
+    eligible launch — implementation work, a review, a repair — in the
+    order it became ready (`operations` queue: time, then sequence), not
+    by priority or kind. Each takes a slot if its scope's ceiling and the
+    global total both have room, and a launch today; a request whose scope
+    is saturated, or whose declared Touches overlap running or admitted
+    work, waits *without* stopping the requests behind it. Never two
+    declared overlaps at once."""
+    if not launches:
         return []
+    entries = {} if entries is None else entries
     used = orchestrator.usage(reading, tasks)
-    pool = orchestrator.LAUNCHES[ACTION]
-    per_scope: dict = {}
-    for task, item in sorted(ready, key=lambda p: (
-            _priority(p[0]), (p[0].get("phase") or {}).get("index", 0),
-            int(_number(p[0]) or 10 ** 9), p[0]["file"])):
-        per_scope.setdefault(item["scope"], []).append((task, item))
-    order = sorted(per_scope, key=lambda sid: (used["startsToday"].get(sid, 0), sid))
-    interleaved = []
-    while any(per_scope[s] for s in order):
-        for sid in order:
-            if per_scope[sid]:
-                interleaved.append(per_scope[sid].pop(0))
+    ordered = sorted(launches, key=lambda p: _order_key(p[1], entries))
     bench = agreements.scope(reading, agreements.BENCH)
     active = [t.get("touches") for t in tasks if t["file"] in running]
     active_names = [t["file"] for t in tasks if t["file"] in running]
     taken_scope: dict = {}
-    taken_total = 0
+    taken_total: dict = {}
     starts = dict(used["startsToday"])
     starts_total = used["startsTodayTotal"]
     chosen = []
-    for task, item in interleaved:
+    for task, item in ordered:
+        action = item.get("action") or ACTION
         sid = item["scope"]
         here = agreements.scope(reading, sid)
-        slot = orchestrator.pool_for(pool, here)
-        mine = used["running"].get(sid, {}).get(slot, 0) + taken_scope.get((sid, slot), 0)
-        if mine >= here["capacity"][slot]["own"] or \
-                used["totals"].get(slot, 0) + taken_total >= \
-                bench["capacity"][slot]["total"]:
-            item.update(state="waiting", code="slots-full",
-                        reason=f"no free {slot} slot this pass")
+        if here is None:
             continue
-        if starts.get(sid, 0) >= here["capacity"]["dailyStarts"]["own"] or \
+        slot = orchestrator.pool_for(orchestrator.LAUNCHES[action], here)
+        cap = here["capacity"][slot]
+        bench_shared = cap.get("shared") and here["kind"] == "bench"
+        mine = used["running"].get(sid, {}).get(slot, 0) + taken_scope.get((sid, slot), 0)
+        total = bench["capacity"][slot]["total"]
+        if not bench_shared and mine >= cap["own"]:
+            item.update(state="waiting", code="slots-full",
+                        reason=(f"the {sid} scope's ceiling of {cap['own']} "
+                                f"{slot} run(s) at once is reached; it reserves "
+                                f"nothing, so later requests in other scopes "
+                                f"go ahead" if cap.get("shared") else
+                                f"no free {slot} slot in the {sid} scope this pass"))
+            continue
+        if used["totals"].get(slot, 0) + taken_total.get(slot, 0) >= total:
+            item.update(state="waiting", code="slots-full",
+                        reason=f"all {total} {slot} slots on this board are in "
+                               f"use; it is admitted, in its turn, when one frees")
+            continue
+        if (not bench_shared and
+                starts.get(sid, 0) >= here["capacity"]["dailyStarts"]["own"]) or \
                 starts_total >= bench["capacity"]["dailyStarts"]["total"]:
             item.update(state="waiting", code="daily-starts-exhausted",
                         reason="no launch left today")
             continue
-        clash = next((name for name, other in zip(active_names, active)
-                      if overlap(task.get("touches"), other)), None)
-        if clash:
-            item.update(state="waiting", code="touches-overlap",
-                        reason=f"its declared Touches overlap {clash}, which is "
-                               f"running or chosen")
-            continue
-        unknown = [name for name, other in zip(active_names, active)
-                   if overlap(task.get("touches"), other) is None]
-        item["overlap"] = ("unknown" if unknown else "none")
-        if unknown:
-            item["overlapUnknownWith"] = unknown
+        if action == ACTION:
+            clash = next((name for name, other in zip(active_names, active)
+                          if overlap(task.get("touches"), other)), None)
+            if clash:
+                item.update(state="waiting", code="touches-overlap",
+                            reason=f"its declared Touches overlap {clash}, which "
+                                   f"is running or chosen")
+                continue
+            unknown = [name for name, other in zip(active_names, active)
+                       if overlap(task.get("touches"), other) is None]
+            item["overlap"] = ("unknown" if unknown else "none")
+            if unknown:
+                item["overlapUnknownWith"] = unknown
+            active.append(task.get("touches"))
+            active_names.append(task["file"])
         taken_scope[(sid, slot)] = taken_scope.get((sid, slot), 0) + 1
-        taken_total += 1
+        taken_total[slot] = taken_total.get(slot, 0) + 1
         starts[sid] = starts.get(sid, 0) + 1
         starts_total += 1
-        active.append(task.get("touches"))
-        active_names.append(task["file"])
-        item.update(state="chosen", code="chosen", reason="chosen this pass")
+        if action == ACTION:
+            item.update(state="chosen", code="chosen", reason="chosen this pass")
+        else:
+            item["admitted"] = True
         chosen.append((task, item))
     return chosen
 
@@ -429,9 +545,11 @@ def projection(board: dict | None = None) -> dict:
     circuit breaker and the last pass. A read — it launches, reserves,
     writes and acquires nothing."""
     board = taskfiles.collect() if board is None else board
-    found = plan(board)
+    delivery = coordinate.projection(board)
+    found = plan(board, delivery)
     found.pop("_chosen", None)
-    return {**found, "delivery": coordinate.projection(board),
+    return {**found, "delivery": delivery,
+            "queue": orchestrator.queue_reading(),
             # a member's readiness is this plan's — authorization, capacity,
             # dependencies and the ledger — never the strategy alone (160)
             "phases": phasescope.projection(board, found.get("items")),
@@ -590,7 +708,10 @@ def execute(task: dict, item: dict, board: dict | None = None,
     stand-in to play a crash or a lost reply."""
     start = agents.start_agent if start is None else start
     filename = task["file"]
-    answer = orchestrator.authorize(ACTION, filename, board=board)
+    request = item.get("request") or operations.request_id(
+        ACTION, filename, basis(task))
+    answer = orchestrator.authorize(ACTION, filename, board=board,
+                                    request=request)
     if not answer["allowed"]:
         return {"card": filename, "outcome": "not-authorized",
                 "code": answer["code"], "reason": answer["reason"]}
@@ -623,13 +744,18 @@ def execute(task: dict, item: dict, board: dict | None = None,
                         or recovery.transient(o))]) + 1
     key = operations.key_for(ACTION, filename, here_basis, attempt)
     try:
-        op = operations.begin(key, action=ACTION, card=filename,
-                              number=_number(task), scope=answer["scope"],
-                              pool=orchestrator.LAUNCHES[ACTION],
-                              basis=here_basis, attempt=attempt,
-                              note="; ".join(answer.get("provenance") or []))
+        # the capacity reading and the intent that reserves the slot, in
+        # one step (task 182): no other launch can take the same slot
+        admitted, op = orchestrator.admit(
+            ACTION, filename, key, board=board, request=request,
+            number=_number(task), pool=orchestrator.LAUNCHES[ACTION],
+            basis=here_basis, attempt=attempt,
+            note="; ".join(answer.get("provenance") or []))
     except operations.Exists as exists:
         return {"card": filename, "outcome": "duplicate", "key": exists.op["key"]}
+    if op is None:
+        return {"card": filename, "outcome": "not-authorized",
+                "code": admitted["code"], "reason": admitted["reason"]}
     _note(op, "intent", "intended", f"launching implementation work "
           f"(attempt {attempt}) under the {answer['scope']} scope")
     moved = False
@@ -770,7 +896,12 @@ def run_pass(board: dict | None = None, start=None) -> dict:
         # below start from a branch that is there
         prepared = phasescope.run(taskfiles.collect() if given is None else given)
         board = taskfiles.collect() if board is None else board
-        found = plan(board)
+        # the cards already in review/: their next delivery step (task
+        # 142). Their reviews and repairs wait in the same first-come,
+        # first-served queue as implementation work (task 182), so the
+        # plan reads both before anything is admitted
+        delivery = coordinate.plan(board)
+        found = plan(board, delivery, sync=True)
         results = list(prepared)
         # a blocked work-base decision goes onto its card, with its remedy
         # as an open blocker — not only into the schedule (task 150)
@@ -780,13 +911,15 @@ def run_pass(board: dict | None = None, start=None) -> dict:
             results.append({"outcome": "breaker-open",
                             "until": tripped["until"]})
         else:
+            # every launch in the order it became ready, whatever its kind
             for task, _item in found.get("_chosen", []):
-                results.append(execute(task, _item, None, start))
-            # then the cards already in review/: their checks, independent
-            # review, repair and merge (task 142), on the board as it is
-            # after this pass's own moves
-            results.extend(coordinate.run(
-                taskfiles.collect() if given is None else given))
+                if (_item.get("action") or ACTION) == ACTION:
+                    results.append(execute(task, _item, None, start))
+                else:
+                    results.append(coordinate.execute(_item, task, board))
+            # then delivery's steps that launch no agent — checks, merge,
+            # integration — on the reading taken above
+            results.extend(coordinate.run(board, delivery, launches=False))
         # last, work that is not moving (task 144): incidents opened only
         # on justified evidence, a bounded diagnosis each, a coordinated
         # restart where one was proposed — and with the breaker open,

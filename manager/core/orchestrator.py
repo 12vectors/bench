@@ -47,6 +47,7 @@ launches nothing, runs no check, asks no remote and writes nothing.
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import agreements
@@ -141,8 +142,12 @@ def scope_of(task: dict, reading: dict) -> tuple[str | None, str | None]:
 
 
 def pool_for(word: str, scope_reading: dict) -> str:
-    """Reasoning without slots of its own takes an implementation slot."""
-    if word == "reasoning" and scope_reading["capacity"]["reasoning"]["own"] == 0:
+    """Reasoning without slots of its own takes an implementation slot:
+    under shared capacity when the board has no reasoning pool at all,
+    under the legacy reserved model when this scope was allocated none."""
+    cap = scope_reading["capacity"]["reasoning"]
+    empty = cap["total"] == 0 if cap.get("shared") else cap["own"] == 0
+    if word == "reasoning" and empty:
         return "implementation"
     return word
 
@@ -157,6 +162,7 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
     running: dict = {}
     unscoped = {pool: 0 for pool in agreements.POOLED if pool != "dailyStarts"}
     totals = dict(unscoped)
+    holders = []
     with state.LOCK:
         records_ = [dict(r) for r in state.AGENTS.values()
                     if r.get("status") == "running"]
@@ -170,6 +176,12 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
         elif pool == "reasoning":
             pool = "implementation"
         totals[pool] = totals.get(pool, 0) + 1
+        # which runs hold a slot, whatever stage their card is in — a
+        # repair of a card in Review holds an implementation slot (182)
+        holders.append({"card": record.get("task"), "pool": pool,
+                        "scope": sid, "mode": record.get("mode") or "work",
+                        "stage": (task or {}).get("stage"),
+                        "name": record.get("name"), "kind": "run"})
         if sid is None:
             unscoped[pool] = unscoped.get(pool, 0) + 1
         else:
@@ -198,6 +210,9 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
         running.setdefault(sid, {}).setdefault(pool, 0)
         running[sid][pool] += 1
         reserved += 1
+        holders.append({"card": op.get("file"), "pool": pool, "scope": sid,
+                        "mode": op.get("action"), "operation": op.get("key"),
+                        "status": op.get("status"), "kind": "reservation"})
     starts, per_card = {}, {}
     today = _today()
     for line in _ledger():
@@ -213,7 +228,7 @@ def usage(reading: dict, tasks: list[dict], exclude: str | None = None) -> dict:
         if op.get("day") == today:
             starts[op["scope"]] = starts.get(op["scope"], 0) + 1
     return {"running": running, "unscoped": unscoped, "totals": totals,
-            "reserved": reserved,
+            "reserved": reserved, "holders": holders,
             "startsToday": starts, "startsTodayTotal": sum(starts.values()),
             "launchesPerCard": per_card}
 
@@ -261,7 +276,8 @@ def _refuse(code: str, reason: str, **extra) -> dict:
 
 def authorize(action: str, filename: str, *, board: dict | None = None,
               gate_reading: dict | None = None,
-              operation: str | None = None) -> dict:
+              operation: str | None = None,
+              request: str | None = None, queue: bool = True) -> dict:
     """May the orchestrator take `action` on `filename` now?
 
     The answer, never cached, with the code and the scope that decided:
@@ -274,7 +290,11 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
     seam for `gates.evaluate`; the mutation path passes nothing.
     `operation` names an operation already reserved for this very action
     (task 141): re-authorizing it immediately before its side effect must
-    not count its own reservation against it."""
+    not count its own reservation against it. `request` names the launch
+    request's place in the admission queue (task 182): an older request
+    in the same pool whose scope has room is admitted first
+    (`queued-behind`). A planner reading eligibility passes `queue=False`
+    and orders by the queue itself."""
     if action not in ACTIONS:
         return _refuse("unknown-action", f"{action!r} is not an orchestrator action")
     owner = execowner.authorizes()
@@ -356,7 +376,10 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        by=grant["by"], **base)
     provenance = [f"{word}: granted by {grant['by']}"]
     if action in LAUNCHES:
-        refusal = _capacity(action, here, reading, tasks, number, operation)
+        # an operation already reserved holds its slot: re-authorizing it
+        # asks again about everything, but not about its turn in the queue
+        refusal = _capacity(action, here, reading, tasks, number, operation,
+                            request, queue and operation is None)
         if refusal:
             return {**refusal, **base}
     label = None
@@ -388,23 +411,58 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
             "provenance": provenance, "eligibility": eligible, **base}
 
 
+# Admission is one step (task 182): the capacity reading and the durable
+# intent that reserves the slot are taken under one lock, so two callers
+# in this process — the scheduler's launches, delivery's review and
+# repair, a recovery restart — can never both read a free slot and both
+# take it. A second process cannot execute at all: the execution lock
+# (`execowner`) admits one.
+ADMIT_LOCK = threading.RLock()
+
+
+def admit(action: str, filename: str, key: str, *, board: dict | None = None,
+          request: str | None = None, **fields) -> tuple[dict, dict | None]:
+    """Authorize a launch and, if allowed, reserve its slot by writing its
+    intent (`operations.begin`), atomically; the request then leaves the
+    admission queue. Returns (answer, operation or None). `fields` are
+    `operations.begin`'s. Raises `operations.Exists` for a decision already
+    recorded — the second caller learns what the first did."""
+    with ADMIT_LOCK:
+        answer = authorize(action, filename, board=board, request=request)
+        if not answer["allowed"]:
+            return answer, None
+        op = operations.begin(key, action=action, card=filename,
+                              scope=answer["scope"], request=request, **fields)
+        operations.queue_remove(request)
+        return answer, op
+
+
 def _capacity(action: str, here: dict, reading: dict, tasks: list[dict],
-              number: str | None, operation: str | None = None) -> dict | None:
+              number: str | None, operation: str | None = None,
+              request: str | None = None, queue: bool = True) -> dict | None:
     used = usage(reading, tasks, exclude=operation)
     pool = pool_for(LAUNCHES[action], here)
     bench = agreements.scope(reading, agreements.BENCH)
     own = here["capacity"][pool]["own"]
+    shared = bool(here["capacity"][pool].get("shared"))
     mine = used["running"].get(here["id"], {}).get(pool, 0)
-    if mine >= own:
-        return _refuse("slots-full", f"the {here['id']} scope's {pool} slots "
-                       f"are in use ({mine} of {own})", pool=pool)
     total = bench["capacity"][pool]["total"]
+    if mine >= own and not (shared and here["kind"] == "bench"):
+        if shared:
+            return _refuse("slots-full", f"the {here['id']} scope's ceiling of "
+                           f"{own} {pool} run(s) at once is reached ({mine} in "
+                           f"use); a ceiling reserves nothing, so other work "
+                           f"uses the rest of the {total}", pool=pool,
+                           limit="scope")
+        return _refuse("slots-full", f"the {here['id']} scope's {pool} slots "
+                       f"are in use ({mine} of {own})", pool=pool, limit="scope")
     if used["totals"].get(pool, 0) >= total:
         return _refuse("slots-full", f"all {total} {pool} slots on this board "
                        f"are in use, counting runs no scope manages",
-                       pool=pool)
+                       pool=pool, limit="global")
     starts = here["capacity"]["dailyStarts"]["own"]
-    if used["startsToday"].get(here["id"], 0) >= starts:
+    if used["startsToday"].get(here["id"], 0) >= starts \
+            and not (shared and here["kind"] == "bench"):
         return _refuse("daily-starts-exhausted", f"the {here['id']} scope has "
                        f"made its {starts} launches today")
     if used["startsTodayTotal"] >= bench["capacity"]["dailyStarts"]["total"]:
@@ -414,6 +472,68 @@ def _capacity(action: str, here: dict, reading: dict, tasks: list[dict],
     if number and used["launchesPerCard"].get(number, 0) >= ceiling:
         return _refuse("card-launches-exhausted", f"card {number} has had "
                        f"{ceiling} orchestrated launches, the ceiling")
+    if queue:
+        ahead = queued_ahead(pool, request, reading, tasks, used)
+        if ahead is not None:
+            return _refuse("queued-behind", f"an older request waits for the "
+                           f"same {pool} capacity and is admitted first: "
+                           f"{ahead.get('action')} of {ahead.get('file')} "
+                           f"(waiting since {ahead.get('readyAt')})", pool=pool,
+                           ahead=ahead.get("id"))
+    return None
+
+
+def scope_room(scope_reading: dict | None, pool: str, used: dict) -> bool:
+    """Has this scope room for one more run in `pool` now — its own
+    ceiling (allocation, under the legacy model) and today's launches?
+    The global total is the caller's question."""
+    if scope_reading is None or scope_reading.get("off") \
+            or scope_reading.get("pausedBy"):
+        return False
+    cap = scope_reading["capacity"]
+    bench_shared = cap[pool].get("shared") and scope_reading["kind"] == "bench"
+    sid = scope_reading["id"]
+    if not bench_shared and \
+            used["running"].get(sid, {}).get(pool, 0) >= cap[pool]["own"]:
+        return False
+    if not bench_shared and \
+            used["startsToday"].get(sid, 0) >= cap["dailyStarts"]["own"]:
+        return False
+    return True
+
+
+def queued_ahead(pool: str, request: str | None, reading: dict,
+                 tasks: list[dict], used: dict) -> dict | None:
+    """The oldest waiting request in `pool` that is older than `request`,
+    on no hold, and whose scope has room now — the one first come, first
+    served admits before this one (task 182). A request on a hold, one
+    whose scope is saturated or paused, one whose card is gone or already
+    running blocks nobody, so nothing waits behind work that cannot move.
+    A launch that is not itself queued (a recovery restart, a diagnosis)
+    waits behind every such request."""
+    entries = operations.queue_entries()
+    if not entries:
+        return None
+    mine = next((e for e in entries if e.get("id") == request), None)
+    files = {t["file"] for t in tasks}
+    busy = {h.get("card") for h in used.get("holders") or []}
+    for entry in entries:
+        if entry.get("id") == request:
+            return None
+        if mine is not None and operations.queue_key(entry) >= \
+                operations.queue_key(mine):
+            return None
+        if entry.get("hold") or entry.get("file") not in files \
+                or entry.get("file") in busy \
+                or entry.get("action") not in LAUNCHES:
+            continue
+        other = agreements.scope(reading, entry.get("scope") or "")
+        if other is None:
+            continue
+        if pool_for(LAUNCHES[entry["action"]], other) != pool:
+            continue
+        if scope_room(other, pool, used):
+            return entry
     return None
 
 
@@ -487,6 +607,14 @@ def reading(board: dict | None = None) -> dict:
                       "revision": effective["revision"],
                       "problems": effective["problems"],
                       "scopes": _public_scopes(effective),
+                      # task 182: shared pools and the default ceiling, or
+                      # the legacy reserved model and what it still sets aside
+                      "capacityModel": effective.get("capacityModel"),
+                      "scopeDefaults": effective.get("scopeDefaults"),
+                      "legacyAllocations": effective.get("legacyAllocations") or {},
+                      "migrationNeeded": bool(
+                          effective["configured"] and
+                          effective.get("capacityModel") == agreements.RESERVED),
                       # what the Orchestrator view edits from (task 145):
                       # known keys only, notes scrubbed
                       "document": agreements.public_document(
@@ -498,6 +626,8 @@ def reading(board: dict | None = None) -> dict:
             "differs": draft["revision"] != effective["revision"],
             "document": agreements.public_document(draft_doc)},
         "defaults": dict(agreements.DEFAULTS),
+        "scopeDefaults": dict(agreements.SCOPE_DEFAULTS),
+        "queue": queue_reading(),
         "authorities": list(agreements.AUTHORITIES),
         "installation": {k: owner[k] for k in (
             "role", "problem", "revision", "designated", "state", "since",
@@ -559,6 +689,22 @@ def board_summary(board: dict | None = None) -> dict:
             "cards": cards}
 
 
+def queue_reading() -> list[dict]:
+    """The admission queue in order (task 182): per pool, each waiting
+    request's position, since when it waits and any explicit hold. A read
+    of one file; it admits, reserves and writes nothing."""
+    out, positions = [], {}
+    for entry in operations.queue_entries():
+        pool = entry.get("pool") or "implementation"
+        if not entry.get("hold"):
+            positions[pool] = positions.get(pool, 0) + 1
+        out.append({k: entry.get(k) for k in (
+            "id", "action", "file", "card", "scope", "pool", "readyAt",
+            "seq", "hold")} | {"position": None if entry.get("hold")
+                               else positions[pool]})
+    return out
+
+
 def _notes(effective: dict) -> list[str]:
     notes = []
     if not effective["configured"]:
@@ -569,6 +715,17 @@ def _notes(effective: dict) -> list[str]:
             notes.append("Reasoning and recovery launches have no slots of "
                          "their own: they use implementation slots and count "
                          "against daily starts.")
+    if effective.get("capacityModel") == agreements.SHARED:
+        notes.append("Capacity is shared: every pool is one global total used "
+                     "first come, first served by standalone and phase work "
+                     "alike, and only while a run holds a slot. A phase's "
+                     "ceiling limits what it may use at once and reserves "
+                     "nothing.")
+    elif effective.get("capacityModel") == agreements.RESERVED:
+        notes.append("This agreement still reserves capacity per phase: an "
+                     "allocated slot is set aside even while its phase is "
+                     "idle. Migrate it to shared capacity in Orchestrator → "
+                     "Operating agreement.")
     return notes
 
 
