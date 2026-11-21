@@ -582,6 +582,87 @@ class Refusals(Board):
         self.assertEqual(agreements.effective()["revision"],
                          agreements.revision(doc), "asking changed no agreement")
 
+    def put_in_force(self, doc):
+        agreements.save_draft(doc, agreements.revision(agreements.draft_document()[0]))
+        agreements.apply(agreements.effective()["revision"], agreements.revision(doc))
+
+    def test_a_question_never_takes_a_slot_ahead_of_a_queued_launch(self):
+        # task 182's first-come-first-served admission: a question joins
+        # no queue, and waits behind a launch already queued for its pool
+        self.put_in_force(agreement(capacity={"implementation": 2, "reasoning": 0}))
+        operations.queue_sync("scheduler", [{
+            "id": operations.request_id("implement", "175-a-card-in-to-do.md", "b"),
+            "action": "implement", "file": "175-a-card-in-to-do.md", "card": "175",
+            "scope": "bench", "pool": "implementation", "basis": "b"}])
+        pre = ask.preflight()
+        self.assertEqual((False, "queued-behind"), (pre["ready"], pre["code"]))
+        self.assertIn("175-a-card-in-to-do.md", pre["reason"])
+        with self.assertRaises(ask.Refused) as refused:
+            ask.submit({"kind": "card", "card": "51"}, "Why?", request=self.request_id())
+        self.assertEqual("queued-behind", refused.exception.code)
+        self.assertNotIn("bench:orchestration", self.card.read_text())
+        self.assertEqual(reasoning.JOBS, {})
+        self.assertEqual(1, len(operations.queue_entries()), "the queue is untouched")
+        # once the queued launch was admitted, the question may run
+        operations.queue_sync("scheduler", [])
+        self.assertTrue(ask.preflight()["ready"])
+
+    def test_the_capacity_check_and_the_launch_are_one_step(self):
+        # two questions at once cannot both take the last free slot: the
+        # reading is taken again under the admission lock, right before
+        # the run is registered
+        self.put_in_force(agreement(capacity={"implementation": 1, "reasoning": 0}))
+        self.scenario("slow")
+        real = ask._person_capacity
+        calls = []
+
+        def taken_meanwhile(board):
+            calls.append(1)
+            if len(calls) == 2:      # the re-check under the lock
+                state.AGENTS["raced"] = {"id": "raced", "task": "49-table-model.md",
+                                         "mode": "work", "status": "running",
+                                         "started": time.time()}
+            return real(board)
+
+        with mock.patch.object(ask, "_person_capacity", taken_meanwhile):
+            with self.assertRaises(ask.Refused) as refused:
+                ask.submit({"kind": "card", "card": "51"}, "Why?",
+                           request=self.request_id())
+        self.assertEqual("not-launched", refused.exception.code)
+        self.assertIn("slots-full", str(refused.exception))
+        self.assertEqual(reasoning.JOBS, {})
+        state.AGENTS.pop("raced")
+
+    def test_a_reused_request_identity_with_another_question_is_refused(self):
+        self.scenario("ok")
+        rid = self.request_id()
+        first = ask.submit({"kind": "card", "card": "51"}, "Why is it waiting?",
+                           request=rid)
+        self.assertFalse(first["duplicate"])
+        # in flight or settled, the same identity asking something else is
+        # never answered as the earlier question
+        with self.assertRaises(ask.Refused) as refused:
+            ask.submit({"kind": "card", "card": "51"}, "What is consuming capacity?",
+                       request=rid)
+        self.assertEqual("request-reused", refused.exception.code)
+        wait_for(lambda: reasoning.JOBS[first["job"]["id"]]["status"]
+                 not in reasoning.ACTIVE)
+        with self.assertRaises(ask.Refused):
+            ask.submit({"kind": "card", "card": "51"}, "What is consuming capacity?",
+                       request=rid)
+        # and the record layer refuses it too, with nothing written
+        before = self.card.read_text()
+        with self.assertRaises(decisions.RequestReused):
+            decisions.record_ask(
+                {"kind": "card", "file": self.card.name, "stage": "to-do",
+                 "subject": "51"}, conversation=first["conversation"],
+                text="Something else entirely", request=rid)
+        self.assertEqual(before, self.card.read_text())
+        same = ask.submit({"kind": "card", "card": "51"}, "Why is it waiting?",
+                          request=rid)
+        self.assertTrue(same["duplicate"])
+        self.assertEqual(first["job"]["id"], same["job"]["id"])
+
     def test_a_launch_refused_after_recording_is_said_in_the_conversation(self):
         self.scenario("ok")
         with mock.patch.object(reasoning, "_launch",

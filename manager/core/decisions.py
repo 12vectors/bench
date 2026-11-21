@@ -626,6 +626,19 @@ def ask_id(conversation: str, request) -> str:
     return _request_id("a", conversation, request)
 
 
+def question_text(text) -> str:
+    """A question as `record_ask` would write it — what a resend is
+    compared by. Raises ValueError for text it would refuse."""
+    text = _clean("question", text, required=True)
+    if len(text) > 1000:
+        raise ValueError(f"'question' is {len(text)} characters; the limit is 1000")
+    return text
+
+
+class RequestReused(ValueError):
+    """A request identity already used for a different question."""
+
+
 def record_ask(target: dict, *, conversation: str, text, request,
                basis: str | None = None) -> dict:
     """A person's question, written where it belongs before anything is
@@ -636,9 +649,7 @@ def record_ask(target: dict, *, conversation: str, text, request,
     if target.get("kind") not in ASK_SCOPES:
         raise ValueError("a question is about a card, a phase or the board")
     who = _who()
-    text = _clean("question", text, required=True)
-    if len(text) > 1000:
-        raise ValueError(f"'question' is {len(text)} characters; the limit is 1000")
+    text = question_text(text)
     record_id = ask_id(conversation, request)
     record = _base("ask", record_id, "person", who,
                    target.get("subject") if target["kind"] != "board" else None,
@@ -651,6 +662,12 @@ def record_ask(target: dict, *, conversation: str, text, request,
     def change(current: str):
         known = {r.get("id"): r for r in _raw_records(current)}
         if record_id in known:
+            # the same identity is the same submission only when it asks
+            # the same thing; a reused identity is never answered as the
+            # earlier question
+            if known[record_id].get("text") != text:
+                raise RequestReused("this request identity was already used "
+                                    "for a different question")
             return current, {"duplicate": True, "id": record_id,
                              "record": _public(known[record_id])}
         return _append(current, record), {"duplicate": False, "id": record_id,

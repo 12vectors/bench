@@ -7658,7 +7658,9 @@ history and ask again); *Stale* when they changed while it ran;
 question was recorded. **Retry this question** asks again, only after a
 failure, a cancellation, a refusal or a stale answer — never over a run
 in flight or an answer that stands. The same submission sent twice (a
-double click, a resend after a lost reply) asks once.
+double click, a resend after a lost reply) asks once; a submission
+identity reused for a different question is refused, never answered as
+the earlier one.
 
 **Before asking, and what it costs.** A harness that cannot run the
 `reason` intent (opencode today) refuses the question by name with the
@@ -7666,15 +7668,22 @@ remedy — choose another harness in Settings → Agents; bench never falls
 back to another harness or widens a grant. A question takes a reasoning
 slot while it runs (an implementation slot where the agreement allocates
 none), counted with every running agent; with every slot of that pool in
-use it is refused, naming the runs to wait for or hold. It spends none of
-the orchestrator's daily starts, and token use and cost are *not
-reported*. **Asking needs no orchestration authority**: no agreement, no
+use it is refused, naming the runs to wait for or hold. A question joins
+no admission queue: it is asked now or not at all, and it never takes a
+slot ahead of an orchestrator launch already waiting for it — while one
+is queued for that pool and would be admitted first, the question is
+refused (*queued-behind*), naming it, and can be asked again once the
+next pass has admitted it. The capacity reading and the run's start are
+one step under the admission lock, so two questions cannot both take
+the last free slot. It spends none of the orchestrator's daily starts,
+and token use and cost are *not reported*. **Asking needs no orchestration authority**: no agreement, no
 delegated word and no designated installation. That a card's
 orchestration is off, or that the orchestrator may not act on it, is a
 separate fact the answer may explain — and asking changes nothing about
 it. One question runs at a time per card, and per board conversation;
 while it runs, a recovery diagnosis the orchestrator wants for the
-card waits for it, as it waits for a slot, and is not held because of it.
+card waits for it, as it waits for a slot, and is not held because of it
+— and so does a recovery restart between its diagnosis and its launch.
 
 **Ask is not act.** A question or a follow-up launches one read-only
 reasoning run and writes its public conversation, and nothing else: no

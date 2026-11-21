@@ -279,7 +279,15 @@ def _person_capacity(board: dict) -> dict | None:
     """A person's question takes a reasoning slot like any reasoning run
     (an implementation slot where the agreement allocates none). It spends
     no orchestrator daily start. With every slot of its pool in use, it is
-    refused rather than run over the board's capacity."""
+    refused rather than run over the board's capacity.
+
+    Under first-come-first-served admission (task 182) a question does not
+    join the queue — it is a person's read, asked now or not at all — and
+    it never takes a slot ahead of a launch already waiting for it: like
+    a recovery diagnosis, which is not queued either, it is refused while
+    a queued request in its pool would be admitted first. Called under
+    `orchestrator.ADMIT_LOCK` just before the launch, so the reading and
+    the run's registration are one step."""
     reading = agreements.effective()
     if not (reading["configured"] and reading["valid"]):
         return None
@@ -287,7 +295,8 @@ def _person_capacity(board: dict) -> dict | None:
     if bench is None:
         return None
     pool = orchestrator.pool_for("reasoning", bench)
-    used = orchestrator.usage(reading, _tasks(board))
+    tasks = _tasks(board)
+    used = orchestrator.usage(reading, tasks)
     total = bench["capacity"][pool]["total"]
     if used["totals"].get(pool, 0) >= total:
         return {"code": "slots-full", "pool": pool,
@@ -296,6 +305,16 @@ def _person_capacity(board: dict) -> dict | None:
                 "remedy": "wait for a run to finish, or ‖ hold one from its "
                           "card; raising the agreement's capacity is a "
                           "separate decision in Orchestrator → Operating agreement"}
+    ahead = orchestrator.queued_ahead(pool, None, reading, tasks, used)
+    if ahead is not None:
+        return {"code": "queued-behind", "pool": pool,
+                "reason": f"a {pool} slot is free, but an orchestrator launch "
+                          f"waiting for it is admitted first: "
+                          f"{ahead.get('action')} of {ahead.get('file')} "
+                          f"(waiting since {ahead.get('readyAt')})",
+                "remedy": "ask again once the next orchestration pass has "
+                          "admitted it; a question never takes a slot ahead "
+                          "of work already queued for it"}
     return None
 
 
@@ -316,8 +335,10 @@ def preflight(scope=None, board: dict | None = None) -> dict:
         "accounting": ("One read-only reasoning run per question: it takes a "
                        "reasoning slot while it runs (an implementation slot "
                        "where none is allocated) and spends none of the "
-                       "orchestrator's daily starts. Token use and cost are not "
-                       "reported by the harness."),
+                       "orchestrator's daily starts. It joins no queue and never "
+                       "takes a slot ahead of an orchestrator launch already "
+                       "waiting for one. Token use and cost are not reported by "
+                       "the harness."),
         "delegation": NO_DELEGATION,
         "orchestration": orchestrator.board_summary(board)["status"],
         "readOnly": ("the run reads bench's facts and the cards; it has no "
@@ -489,8 +510,15 @@ def _launch(target: dict, conversation: str, ask_record: str, question: str,
                "snapshot": readings["taken"], "facts": readings,
                "cards": readings.get("cardNumbers") or []}
     try:
-        found = reasoning.request(target.get("file"), "ask", via="person",
-                                  retry=retry, board=board, ask=payload)
+        # Capacity is read again and the run registered under the
+        # admission lock (task 182): two questions, or a question and an
+        # orchestrator launch, cannot both take the last free slot.
+        with orchestrator.ADMIT_LOCK:
+            full = _person_capacity(board)
+            if full:
+                raise ValueError(f"{full['reason']} ({full['code']})")
+            found = reasoning.request(target.get("file"), "ask", via="person",
+                                      retry=retry, board=board, ask=payload)
     except (ValueError, OSError) as exc:
         reason = str(exc)[:600]
         try:
@@ -534,7 +562,7 @@ def submit(scope, text, *, request, conversation: str | None = None,
     # on the network — is answered with its run before anything is
     # checked: the run it made may be the very one holding the slot or
     # the card, and that is not a reason to refuse the resend.
-    replay = _replayed(target, conversation, request)
+    replay = _replayed(target, conversation, request, text)
     if replay is not None:
         return replay
     pre = preflight(None, board)
@@ -552,8 +580,12 @@ def submit(scope, text, *, request, conversation: str | None = None,
         conversation = decisions.conversation_id(target["kind"], subject, request)
     if target["kind"] == "board":
         target["conversation"] = conversation
-    written = decisions.record_ask(target, conversation=conversation,
-                                   text=text, request=request)
+    try:
+        written = decisions.record_ask(target, conversation=conversation,
+                                       text=text, request=request)
+    except decisions.RequestReused as exc:
+        raise Refused(str(exc), "request-reused",
+                      "send a new question with a new request identity") from exc
     ask_record = written["id"]
     if written.get("duplicate"):
         jobs = reasoning.for_ask(conversation, ask_record)
@@ -565,11 +597,14 @@ def submit(scope, text, *, request, conversation: str | None = None,
             "duplicate": found["duplicate"], "where": _public_where(target)}
 
 
-def _replayed(target: dict, conversation: str | None, request) -> dict | None:
+def _replayed(target: dict, conversation: str | None, request,
+              text) -> dict | None:
     """The run an earlier submission with this request identity made,
-    when there is one. Reads the derived ids and the runtime record only;
-    a question recorded with no run yet falls through to the normal
-    path, which finds the record and launches."""
+    when there is one and it asked the same question. Reads the derived
+    ids, the runtime record and the recorded question; a question
+    recorded with no run yet falls through to the normal path, which
+    finds the record and launches. A reused identity with another
+    question is refused, never answered as the earlier one."""
     try:
         conv = conversation or decisions.conversation_id(
             target["kind"], target.get("subject") or "board", request)
@@ -579,6 +614,20 @@ def _replayed(target: dict, conversation: str | None, request) -> dict | None:
     jobs = reasoning.for_ask(conv, record)
     if not jobs:
         return None
+    where = dict(target)
+    if where["kind"] == "board":
+        where["conversation"] = conv
+    try:
+        asked = decisions.conversation(where, conv) or {}
+        wanted = decisions.question_text(text)
+    except (ValueError, OSError):
+        return None
+    earlier = next((x["ask"].get("text") for x in asked.get("exchanges") or []
+                    if x["ask"].get("id") == record), None)
+    if earlier is not None and earlier != wanted:
+        raise Refused("this request identity was already used for a different "
+                      "question", "request-reused",
+                      "send a new question with a new request identity")
     return {"conversation": conv, "ask": record, "job": jobs[-1],
             "duplicate": True, "where": _public_where(target)}
 
