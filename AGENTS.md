@@ -1963,7 +1963,13 @@ A request is at most `BOARD_BRAIN_DRAFT_ROUNDS` rounds (4), each at most
 must propose. Reaching a limit is said — *the round reached its limit*,
 *this request has used its rounds* — and nothing is relaunched by
 itself. A board that restarts closes a round in flight as failed, naming
-the restart; **Continue** is the person's way on.
+the restart; **Continue** is the person's way on. A round that fails
+after an earlier round proposed a draft — a revision that hit its time
+limit, crashed, declined, answered invalidly or was cut by a restart —
+does not take that draft away: the request stays *Draft ready*, the
+failure is shown above the draft, and the draft (with any edits on the
+page) can still be applied, revised again or discarded, at the round
+limit too. Only a request with no draft yet reads *Failed*.
 
 **What it reads.** Before Generate, the composer's fold says exactly what
 the run would use (`GET /api/brain/draft/preflight`, a read):
@@ -1980,15 +1986,29 @@ the run would use (`GET /api/brain/draft/preflight`, a read):
   bytes bench hashed. A link, a file resolving outside the work root, one
   over a bound, one that is not UTF-8 text and a credential-shaped name
   (`.env`, `*.pem`, `*token*`, `*secret*`, …) are left out, and the
-  preflight lists each with why. Archived cards are not read.
+  preflight lists each with why. Archived cards are not pinned.
+  **Where the work root sits inside the checkout** — a vendored or
+  source-hosted install — the run can also read it through the
+  application, so this selection bounds what is pinned and what may be
+  cited (`work:`), not what is readable; there the deny rules below are
+  the boundary, and they add the work root's `tasks/archive/`. The
+  preflight says so.
 - **Never**: credential-shaped paths in the checkout (`**/.env`,
-  `**/.env.*`, keys, `.git/`, `.netrc`, `.npmrc`, `.pypirc`), the tool's
+  `**/.env.*`, keys, `.git/`, `.netrc`, `.npmrc`, `.pypirc`, and the
+  shapes bench refuses to cite — `*secret*`, `*credential*`,
+  `*password*`, `token`/`tokens` and `*_token*`-style names; a glob errs
+  towards denying, so `secretscan.py` is unreadable too), the tool's
   `manager/local/.env` and preview secrets, and every directory of
-  `manager/local/state/` but this run's own pinned copies — other runs'
-  logs, manifests, sessions, drafts and bundles. These are read
-  deny-rules the adapter renders; **an operator's ability to read a file
-  is not proof the run can, and a permission rule is not an
-  operating-system sandbox**.
+  `manager/local/state/` but `state/brain-context/`, where a drafting
+  round's own copies are pinned. `state/context/`, where every other run
+  pins, is denied as one directory, so a bundle another run makes while
+  the round reads is denied too; other drafting rounds' bundles (which
+  hold only work-root text a drafting run may read) are denied one by
+  one. A deny path the adapter cannot write as a rule — an install under
+  a path with a space, say — refuses the preflight and the launch; no
+  rule is ever dropped. These are read deny-rules the adapter renders;
+  **an operator's ability to read a file is not proof the run can, and a
+  permission rule is not an operating-system sandbox**.
 
 **What it may do.** The `brain` intent is the `reason` stance: no
 worktree, no command grant, no check, no shell, no edit tool — and no web
@@ -2079,11 +2099,16 @@ requests** on the Brain's list reopens one.
 They sit behind the browser-mutation door. **What is proved, and what is
 not:** `tests/test_braindraft.py` runs the whole lifecycle through the
 Claude adapter's real `run` against a stub vendor, on a split fixture
-(an application repository, a work root and the tool's state apart),
-and holds the generated permission text. Whether the installed CLI
-honours those rules with a real model is the opt-in, billable
+(an application repository, a work root and the tool's state apart) and
+on a vendored one (all three inside the checkout), and holds the
+generated permission text. Whether the installed CLI honours those rules
+with a real model is the opt-in, billable
 `develop/brain-agent-probe.py --approve-real-agent`, which nothing runs
-by itself; a passing stub run is not that proof.
+by itself; a passing stub run is not that proof. The probe reads the
+vendor's own tool events (its PostToolUse hook, posted to a listener in
+the board's place) and fails on any successful Read of a withheld file.
+It cannot tell a Read the vendor denied from one the model never
+attempted — a denied call fires no hook — and says so in its report.
 
 **Not in v1:** background or card-triggered curation, seeding a Brain,
 automatic classification, handbook membership, adopting legacy files,
