@@ -103,6 +103,8 @@ def stages() -> dict:
             for s in api("/api/state")["board"]["stages"] for t in s["tasks"]}
 
 
+# Read with textContent: a status badge sits in an uppercased eyebrow, and
+# innerText reports the rendered case
 THREAD = "document.querySelector('#oshell .o-askthread')"
 
 
@@ -158,7 +160,7 @@ class Ask(unittest.TestCase):
         before = stages()
         type_question(b, HOSTILE)
         double(b, "#oshell [data-o='ask-submit']")
-        if not b.wait(f"{THREAD} && /Failed — no answer/.test({THREAD}.innerText)", 40):
+        if not b.wait(f"{THREAD} && /Failed — no answer/.test({THREAD}.textContent)", 40):
             raise bv.CheckFailed("a failed run was not shown as failed: "
                                  + b.eval("document.querySelector('#oshell').innerText.slice(0, 600)"))
         # the hostile text is text, never markup
@@ -174,12 +176,12 @@ class Ask(unittest.TestCase):
         double(b, "#oshell [data-oact='askRetry']")
         if not b.wait("document.querySelector('#oshell .o-askactive')", 20):
             raise bv.CheckFailed("the run in flight was not shown")
-        self.assertIn("read-only reasoning run", b.eval("document.querySelector('.o-askactive').innerText"))
+        self.assertIn("read-only reasoning run", b.eval("document.querySelector('.o-askactive').textContent"))
         shot("ask-running-1440-dark")
         S["backend"].ask_hold.unlink()
-        if not b.wait(f"/Answered/.test({THREAD}.innerText) && !document.querySelector('.o-askactive')", 40):
+        if not b.wait(f"/Answered/.test({THREAD}.textContent) && !document.querySelector('.o-askactive')", 40):
             raise bv.CheckFailed("the answer never arrived")
-        text = b.eval(f"{THREAD}.innerText")
+        text = b.eval(f"{THREAD}.textContent")
         for words in ("What is happening now", "Who can unblock it", "Recorded facts",
                       "What the records do not say", "not actions", "agent-reported interpretation"):
             self.assertIn(words, text)
@@ -217,9 +219,9 @@ class Ask(unittest.TestCase):
         b.wait("document.querySelector('[data-o=\"askkind-board\"]').checked", 5)
         type_question(b, "What is consuming capacity?")
         double(b, "#oshell [data-o='ask-submit']")
-        if not b.wait(f"{THREAD} && /Answered/.test({THREAD}.innerText)", 40):
+        if not b.wait(f"{THREAD} && /Answered/.test({THREAD}.textContent)", 40):
             raise bv.CheckFailed("the board question was not answered")
-        self.assertIn("board’s shared conversation file", b.eval(f"{THREAD}.innerText"))
+        self.assertIn("board’s shared conversation file", b.eval(f"{THREAD}.textContent"))
         files = list((S["backend"].work / "orchestration" / "conversations").glob("k-*.md"))
         self.assertEqual(1, len(files), "one shared work-state conversation file")
         # a held run is cancelled from the page
@@ -229,7 +231,7 @@ class Ask(unittest.TestCase):
         if not b.wait("document.querySelector('#oshell [data-oact=\"askCancel\"]')", 20):
             raise bv.CheckFailed("no cancel control for the run in flight")
         double(b, "#oshell [data-oact='askCancel']")
-        if not b.wait(f"/Cancelled — no answer/.test({THREAD}.innerText)", 40):
+        if not b.wait(f"/Cancelled — no answer/.test({THREAD}.textContent)", 40):
             raise bv.CheckFailed("the cancelled run was not shown as cancelled")
         S["backend"].ask_hold.unlink(missing_ok=True)
 
