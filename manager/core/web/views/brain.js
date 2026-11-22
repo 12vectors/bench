@@ -581,7 +581,7 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) {
-    return head + stale + requestsHtml() + handbookHtml() + emptyGuidance(index.directory) + filingHtml() +
+    return head + stale + requestsHtml() + handbookHtml(false) + emptyGuidance(index.directory) + filingHtml() +
       diagnosticsBlock(index) + reviewsNote();
   }
   const t = tally(index);
@@ -601,7 +601,10 @@ function listHtml(slot) {
   const results = !t.visible.length && !emptyKind
     ? noResults(index, t)
     : kinds.map(k => kindSection(index, k, t)).join('');
-  return head + stale + requestsHtml() + handbookHtml() +
+  // reviews filed on cards are listed in the library and are not entries
+  // a section can link
+  const linkable = slot.data.entries.some(e => !e.tombstone);
+  return head + stale + requestsHtml() + handbookHtml(linkable) +
     '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
@@ -777,7 +780,7 @@ function hbSectionHtml(s, editable) {
     '</section>';
 }
 
-function handbookHtml() {
+function handbookHtml(linkable) {
   const slot = cache.handbook;
   const head = '<h2 id="hb-h">Project handbook</h2>';
   if (!slot) return `<section class="b-panel b-hb" aria-labelledby="hb-h">${head}<p class="b-loading" role="status" ` +
@@ -786,7 +789,9 @@ function handbookHtml() {
   if (!h) return `<section class="b-panel b-hb b-bad" aria-labelledby="hb-h">${head}<p role="alert">` +
     `${esc(slot.error || 'the handbook could not be read')}</p></section>`;
   const rec = h.record;
-  const editable = rec.state === 'record' || rec.state === 'missing';
+  // organizing links existing entries: with none to link, there is
+  // nothing to offer but the one action that writes the first entry
+  const editable = (rec.state === 'record' || rec.state === 'missing') && (linkable || hb);
   const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading.</p>` : '';
   const recNote = rec.state === 'refused'
     ? `<p class="b-warn" role="alert"><code>${esc(rec.file)}</code> was not read: ${esc(rec.why)}. Organizing is off until it is fixed.</p>`
@@ -806,6 +811,8 @@ function handbookHtml() {
     `<p class="b-note" role="status">${sum.covered} of ${sum.sections} sections covered · ${sum.empty} empty · ` +
     `<span class="mono">${esc(rec.file)}</span> revision <span class="mono">${esc(rec.revision)}</span></p>` +
     stale + recNote + writeStatus('handbook') +
+    (!linkable && !hb ? '<p class="b-note">The handbook links existing entries: write one first, ' +
+      'then organize its sections here.</p>' : '') +
     `<div class="b-hbsecs">${h.sections.map(s => hbSectionHtml(s, editable)).join('')}</div>${history}</section>`;
 }
 

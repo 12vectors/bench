@@ -276,13 +276,18 @@ class Handbook(unittest.TestCase):
 
     def test_6_editing_a_linked_entry_keeps_its_identity_and_place(self):
         b = self.open("/brain/e/e-hb-arch")
-        self.wait_text(b, ["Source authority", "How it works — 2 of 2"])
+        if not b.wait("!!document.querySelector('#bshell .b-authority')", 10):
+            raise bv.CheckFailed("the entry drew no Source authority panel: " + self.text(b)[-1500:])
+        self.wait_text(b, ["Source authority", "Handbook", "How it works", "2 of 2"],
+                       "#bshell .b-authority")
         b.click('#bshell [data-bact="edit"]')
         b.eval("(() => { const f = document.querySelector('#bshell [data-bf=\"title\"]'); f.focus(); "
                "f.value = 'How the pieces fit'; f.dispatchEvent(new Event('input', {bubbles: true})); "
                "return true; })()")
         b.click('#bshell [data-bact="save"]')
-        self.wait_text(b, ["How the pieces fit", "edited"])
+        if not b.wait("!document.querySelector('#bshell .b-form')", 12):
+            raise bv.CheckFailed("the edit was not saved: " + self.text(b, "#bshell .b-form")[-1500:])
+        self.wait_text(b, ["How the pieces fit"], "#bshell #btitle")
         self.assertEqual(b.eval("location.pathname"), "/brain/e/e-hb-arch")
         b = self.open()
         self.wait_text(b, ["How the pieces fit"], '#bshell [data-hbsec="how-it-works"]')
