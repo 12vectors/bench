@@ -223,17 +223,17 @@
       "lede": "The model, before anything runs: what a phase card is made of, how membership is written down, why it runs one direction only, and what the board flags when the list does not resolve.",
       "source": "AGENTS.md",
       "from": "## Phases",
-      "to": "### A phase runs itself, on a branch of its own"
+      "to": "### A phase runs on a branch of its own"
     },
     {
       "path": "/concepts/running-a-phase/",
       "title": "Running a phase",
       "layout": "article",
       "section": "Concepts",
-      "description": "Each member branches from the phase's tip, runs headless, and merges back on green. Halt, never skip — and one PR into main at the end.",
-      "lede": "Everything between starting a phase and the one PR it ends with: where each member's branch is cut, what advances the run and what stops it, how a restarted board picks the phase back up, and what merging it does to the cards it carried.",
+      "description": "Move the phase card into To Do and the Orchestrator queues it and its members: each branches from the phase's tip, is integrated in turn, and one PR goes into main at the end.",
+      "lede": "Everything between queueing a phase and the one PR it ends with: the one move that queues it, where each member's branch is cut, what a member waits on, what refuses a merge, and what merging the phase does to the cards it carried.",
       "source": "AGENTS.md",
-      "from": "### A phase runs itself, on a branch of its own",
+      "from": "### A phase runs on a branch of its own",
       "to": "### A phase's members leave the Board view"
     },
     {
