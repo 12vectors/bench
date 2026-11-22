@@ -220,6 +220,77 @@ class Results(SignoffCase):
         self.assertEqual(item["by"], "person")
         self.assertTrue(item["skipped"], "the report is kept, shown as set aside")
 
+    def test_the_review_answers_a_recheck_a_person_asked_for(self):
+        """A person's Needs recheck names the independent review as next;
+        the review at the same commit must therefore be able to answer it."""
+        a, *_ = self.revs()
+        self.implement([f"- {a}: met — done"])
+        item = self.read()["items"][0]
+        acceptance.decide(CARD, "review", criterion=item["id"], state="recheck",
+                          rev=item["rev"], basis=item["basis"],
+                          note="look at the narrow view again")
+        reading = self.read()
+        self.assertEqual(reading["items"][0]["state"], "recheck")
+        self.assertEqual(reading["outcome"]["owner"], "reviewer")
+        self.review([f"- {a}: accepted — the narrow view is right"])
+        item = self.read()["items"][0]
+        self.assertEqual(item["state"], "accepted")
+        self.assertEqual(item["by"], "reviewer")
+        # an implementer's word still does not answer a person's recheck
+        self.implement([f"- {a}: met — still fine"])
+        self.assertEqual(self.read()["items"][0]["state"], "accepted")
+
+    def test_assigning_ids_is_not_a_requirement_change(self):
+        """The first filed report gives the criteria ids, which edits the
+        brief; nothing bound to the brief's revision — the scheduler's
+        "a run on this brief has ended" hold, an owner's open question, a
+        waiting refinement proposal — may read that as a new requirement."""
+        import decisions
+        import scheduler
+        before = self.text()
+        brief = taskfiles.card_parts(before)["brief"]
+        task = {"file": CARD, "stage": "review", "body": before}
+        basis, rev = scheduler.basis(task), decisions._brief_rev(before)
+        a, *_ = self.revs()
+        self.implement([f"- {a}: met — done"])
+        after = self.text()
+        self.assertTrue(all(c["id"] for c in self.read()["items"]))
+        self.assertNotEqual(taskfiles.card_parts(after)["brief"], brief)
+        self.assertEqual(taskfiles.brief_sha(taskfiles.card_parts(after)["brief"]),
+                         taskfiles.brief_sha(brief))
+        self.assertEqual(scheduler.basis({**task, "body": after}), basis)
+        self.assertEqual(decisions._brief_rev(after), rev)
+        # a wording change is still a new revision
+        self.assertNotEqual(taskfiles.brief_sha(brief.replace("runs nothing",
+                                                              "runs one thing")),
+                            taskfiles.brief_sha(brief))
+
+    def test_a_proposal_drafted_before_the_ids_keeps_them(self):
+        """A refinement drafted against the id-less brief is applied after
+        bench assigned ids: unchanged criteria keep their ids (and their
+        history), a reworded one has its records marked for recheck."""
+        old_brief = taskfiles.card_parts(self.text())["brief"]
+        sha = taskfiles.brief_sha(old_brief)
+        a, *_ = self.revs()
+        self.implement([f"- {a}: met — done"])
+        ids = [c["id"] for c in self.read()["items"]]
+        proposed = old_brief.replace("Counts link to their section",
+                                     "Counts link to their own section")
+        taskfiles.replace_brief(
+            CARD, "review", expected_sha=sha, new_brief=proposed,
+            decision={"v": 1, "id": "d-0000000001", "kind": "decision",
+                      "outcome": "applied", "proposal": "p-0000000001",
+                      "comment": "c-0000000001", "author": "ron",
+                      "at": taskfiles.now_iso()},
+            title="Applied p-0000000001", body="Applied.", affected=[])
+        items = self.read()["items"]
+        self.assertEqual([c["id"] for c in items[:2]], ids[:2])
+        self.assertEqual(items[0]["state"], "reported", "history kept")
+        self.assertIsNone(items[2]["id"], "reworded: no inherited id")
+        marked = [r for r in taskfiles.acceptance_records(self.text())
+                  if r.get("criterion") == ids[2]]
+        self.assertTrue(marked and all(r.get("recheck") for r in marked))
+
     def test_decision_and_not_verified_are_distinct_from_not_met(self):
         a, b, c = self.revs()
         self.review([f"- {a}: needs decision — Should hidden columns be exported?",

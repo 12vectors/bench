@@ -297,7 +297,8 @@ def _effective(item: dict, records: list[dict], claim: dict | None,
     (`## Acceptance record`) and the results runs reported in their filed
     reports (task 190). The newest stands, with two exceptions that keep a
     report from overwriting a judgment silently: a run's result never
-    supersedes a person's decision about the same commit, and an
+    supersedes a person's decision about the same commit (except the
+    reviewer's, answering a decision that itself asks for a recheck), and an
     implementer's "met" never supersedes the reviewer's result about the
     same commit. Then the newest is held to what it was about: the
     requirement reworded (its revision differs), the record marked for
@@ -314,7 +315,12 @@ def _effective(item: dict, records: list[dict], claim: dict | None,
             continue
         if current is not None and event.get("source") == "agent":
             if current.get("source") != "agent" and current.get("state") != "pending" \
-                    and _same_commit(current.get("commit"), event.get("commit")):
+                    and _same_commit(current.get("commit"), event.get("commit")) \
+                    and not (event.get("role") == "reviewer"
+                             and _asks_recheck(current, item)):
+                # a person's decision stands over a run's report about the
+                # same commit — unless the decision is itself a request to
+                # assess again, which the independent review answers
                 skipped.append(event)
                 continue
             if current.get("source") == "agent" and current.get("role") == "reviewer" \
@@ -328,6 +334,15 @@ def _effective(item: dict, records: list[dict], claim: dict | None,
     out = _from_decision(item, current, claim, filename)
     out["skipped"] = skipped
     return out
+
+
+def _asks_recheck(decision: dict, item: dict) -> bool:
+    """Whether a person's decision now reads *Needs recheck*: a recheck
+    they asked for, one an applied refinement marked, or a decision about
+    wording the criterion no longer has. The next independent review is
+    the one named to answer it, so its result is not set aside."""
+    return bool(decision.get("recheck") or decision.get("state") == "recheck"
+                or (decision.get("rev") and decision["rev"] != item["rev"]))
 
 
 def _from_result(item: dict, result: dict, claim: dict | None, filename: str,

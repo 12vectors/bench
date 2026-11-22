@@ -2036,10 +2036,72 @@ def brief_outline(text: str) -> dict:
     return out
 
 
+_CRITERION_ID_STRIP_RE = re.compile(
+    r"[ \t]*<!--\s*ac:[a-z0-9][a-z0-9-]{0,40}\s*-->")
+
+
 def brief_sha(brief: str) -> str:
-    """The brief's revision: what a proposal is bound to. Surrounding blank
-    lines are not content, so they do not make a proposal stale."""
-    return hashlib.sha256(brief.strip().encode("utf-8")).hexdigest()
+    """The brief's revision: what a proposal, an owner's question, the
+    scheduler's "a run on this brief has ended" hold and a relevance
+    review are bound to. Surrounding blank lines are not content, and
+    neither are criterion identities (`<!-- ac:<id> -->`): bench assigns
+    them itself on the first authorized write (task 190), and giving a
+    criterion its id changes no requirement — so it must not read as
+    one to anything holding this revision."""
+    text = _CRITERION_ID_STRIP_RE.sub("", brief).strip()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _criterion_items(brief: str) -> list[list]:
+    """The brief's checklist items as line spans — [first index, first
+    line, continuation lines…] over `brief.splitlines(keepends=True)` —
+    read exactly as `criteria` reads them."""
+    lines = brief.splitlines(keepends=True)
+    fenced, items = False, []
+    for index, line in enumerate(lines):
+        if is_fence(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if CRITERION_RE.match(line):
+            items.append([index, line])
+        elif items and line.strip() and line[:1].isspace() \
+                and items[-1][0] + len(items[-1]) - 2 == index - 1:
+            items[-1].append(line)
+    return items
+
+
+def carry_criterion_ids(current: str, proposed: str) -> str:
+    """Give each criterion of `proposed` that has no id the id its exact
+    wording carries in `current`. A refinement drafted before bench
+    assigned the ids (task 190) would otherwise drop them, orphaning the
+    criterion's history. Only an unambiguous match is carried — wording
+    that appears once in `current`, under an id `proposed` does not
+    already use — so a reworded criterion never inherits anything."""
+    by_text: dict[str, list[str]] = {}
+    for item in criteria(current):
+        if item["id"]:
+            by_text.setdefault(item["text"], []).append(item["id"])
+    if not by_text:
+        return proposed
+    used = {c["id"] for c in criteria(proposed) if c["id"]}
+    lines = proposed.splitlines(keepends=True)
+    for item in _criterion_items(proposed):
+        raw = "".join(item[1:])
+        if CRITERION_ID_RE.search(raw):
+            continue
+        text = " ".join(CRITERION_ID_RE.sub(
+            "", CRITERION_RE.match(item[1].rstrip("\r\n")).group(1) + " "
+            + " ".join(l.strip() for l in item[2:])).split())
+        ids = by_text.get(text) or []
+        if len(ids) != 1 or ids[0] in used:
+            continue
+        used.add(ids[0])
+        line = lines[item[0]]
+        body = line.rstrip("\r\n")
+        lines[item[0]] = f"{body} <!-- ac:{ids[0]} -->" + line[len(body):]
+    return "".join(lines)
 
 
 def one_line(value, cap: int = 80) -> str:
@@ -2563,6 +2625,13 @@ def replace_brief(filename: str, stage: str, *, expected_sha: str,
         if head.strip() and not head.endswith("\n\n"):
             head = head.rstrip("\n") + "\n\n"
         tail = "\n\n" if parts["history"].strip() else "\n"
+        # Ids bench assigned after the proposal was drafted are carried
+        # over by exact wording, and any identified criterion the new
+        # brief rewords or removes has its records marked for recheck —
+        # read against the brief as it is now, not as it was drafted.
+        new_brief = carry_criterion_ids(parts["brief"], new_brief)
+        affected = sorted(set(affected) | set(
+            affected_criteria(parts["brief"], new_brief)))
         updated = head + new_brief.strip("\n") + tail + parts["history"]
         updated = mark_for_recheck(updated, affected,
                                    f"brief revised by {decision.get('proposal')}",

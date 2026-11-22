@@ -197,8 +197,9 @@ REASONS = {
     "signoff-other-head": ("criteria were accepted against an earlier "
                            "commit, and a sign-off is about the commit that "
                            "would merge"),
-    "signoff-needs-work": ("a person recorded that an acceptance criterion "
-                           "is not met"),
+    "signoff-needs-work": ("an acceptance criterion is recorded as not met — "
+                           "by a person, the independent review or the "
+                           "implementation agent"),
     "signoff-unreadable": ("the card's text could not be read, so no "
                            "acceptance record can be weighed"),
 }
@@ -285,7 +286,8 @@ REMEDIES = {
                           "saved brief or filed run report gives the criteria "
                           "their ids; that accepts nothing by itself."),
     "signoff-no-criteria": ("Write the acceptance criteria into the brief as a "
-                            "checklist, track them, and confirm each — or use "
+                            "checklist and confirm each once it is met — "
+                            "bench gives them their ids itself — or use "
                             "a merge rule without sign-off for this kind of "
                             "card."),
     "signoff-pending": ("Confirm each remaining criterion in the card's "
@@ -300,7 +302,7 @@ REMEDIES = {
                            "Confirm them again against the commit that would "
                            "merge — the earlier decisions are kept as "
                            "history."),
-    "signoff-needs-work": ("Fix what the decision says is missing, then have "
+    "signoff-needs-work": ("Fix what the result says is missing, then have "
                            "a person decide the criterion again."),
     "signoff-unreadable": ("Make the card readable on this board (refresh, or "
                            "check the work state), then read the gate again."),
