@@ -57,7 +57,8 @@ LAYOUT = ("(() => { const sec = document.querySelector('#dsec-overview');"
           " return { keys: kids.map(key), boxes: kids.map(box),"
           " head: document.querySelector('#drawer .dsticky').getBoundingClientRect().bottom,"
           " tools: tools ? box(tools) : null,"
-          " heads: [...sec.querySelectorAll('h3.ovh')].map(h => h.innerText.trim()),"
+          # the headings are uppercased by CSS; their text is what is read
+          " heads: [...sec.querySelectorAll('h3.ovh')].map(h => h.textContent.trim()),"
           " view: document.querySelector('#drawerbody').getBoundingClientRect().bottom }; })()")
 PHASE = """# 207 — Ship the overview reorder
 
