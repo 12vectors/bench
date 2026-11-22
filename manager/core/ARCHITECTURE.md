@@ -44,7 +44,7 @@ L2  githost assets agreements operations decisiontrace
 L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice
+L6  gatepolicy reviews inputs basechoice handbook
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
@@ -117,6 +117,15 @@ the Brain's one writer, kept apart from `brain` (L5, the reader) because
 a write needs the actor (`acceptance`), the scoped work-state commit
 (`taskfiles.commit_work_file`) and sync's status and push (`sync`), all
 above the reader. Only `routes` and `braindraft` import it.
+
+`handbook` (task 171) sits beside `gatepolicy` (L6), directly above
+`brain`: the curated handbook's membership record under
+`brain/handbook/` (whose format it owns; the writer is `brainwrite`) and
+the reading of each linked entry's source authority — the entry's own
+Standing, Policy, Bindings and Assessed fields, and local git metadata
+for an `app:` or `work:` binding. It imports `brain`, `config` and
+`gitrepo` and writes nothing; `brainwrite`, `routes` and `board` import
+it.
 
 `brainreviews` (task 168) sits beside `gates` (L12), directly above
 `acceptance`: the Brain's reading of the reviews filed on cards. It reads
@@ -402,7 +411,7 @@ L2  state reports templates gitrepo assets verifierreport agreements operations 
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice
+L6  gatepolicy reviews inputs basechoice handbook
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
@@ -523,6 +532,7 @@ neither.
 | the unified phase model's migration record and its one-time recovery copy (machine-local) (task 188) | `phasescope` (read by `agreements.phase_holds`) | `phasescope._MODEL_LOCK`; only the execution installation writes; the copy is written once and never overwritten | yes |
 | Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 | review classification records under `brain/reviews/` (portable) (task 168) | `brainwrite` (format: `brainreviews`) | `brainwrite.LOCK`, interprocess; each write is held to the record's exact revision, or to its absence | yes |
+| the handbook's membership record `brain/handbook/handbook.md` (portable) (task 171) | `brainwrite` (format: `handbook`) | `brainwrite.LOCK`, interprocess; each write changes one section, held to the record's exact revision, or to its absence | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -745,5 +755,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 173
+routes 175
 ```

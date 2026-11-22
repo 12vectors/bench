@@ -64,6 +64,7 @@ import brain
 import brainreviews
 import config
 import gitrepo
+import handbook
 import records
 import state
 import sync
@@ -261,6 +262,65 @@ def _classification(value) -> str:
     return value
 
 
+AUTHORITY_KEYS = ("standing", "policy", "bindings", "assessed")
+
+
+def _authority(payload: dict, fields: dict) -> None:
+    """The source-authority fields a person set on an entry (task 171),
+    each written only when the request names it — so a write that does
+    not (the Brain Agent's Apply, an older page) keeps what is there.
+    Empty clears it. Refused, never guessed at."""
+    if "standing" in payload:
+        value = payload.get("standing") or ""
+        if not isinstance(value, str) or (value and value not in brain.STANDINGS):
+            raise Refused("standing is one of " + ", ".join(brain.STANDINGS) +
+                          ", or empty for not stated", field="standing")
+        fields["Standing"] = value
+    if "policy" in payload:
+        value = payload.get("policy") or ""
+        note = _line(payload.get("policyNote"), "policy note", cap=MAX_SOURCE)
+        if not isinstance(value, str) or (value and value not in brain.POLICIES):
+            raise Refused("policy is approved or inferred, or empty for not stated",
+                          field="policy")
+        if note and not value:
+            raise Refused("a policy note needs the policy it is about", field="policy")
+        fields["Policy"] = f"{value} — {note}" if value and note else value
+    if "bindings" in payload:
+        value = payload.get("bindings") or []
+        if isinstance(value, str):
+            value = value.split("\n")
+        if not isinstance(value, list):
+            raise Refused("bindings are a list", field="bindings")
+        out: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise Refused("each binding is text", field="bindings")
+            text = _line(item, "a binding", cap=MAX_SOURCE)
+            if not text:
+                continue
+            if brain.parse_binding(text) is None:
+                raise Refused(f"{text[:80]!r} is not a binding: app:<path>@<commit>, "
+                              "work:<path>@<commit>, review:#<card>/<review> or "
+                              "deploy:<where>@<identity>", field="bindings")
+            if text not in out:
+                out.append(text)
+        if len(out) > brain.MAX_LIST_ITEMS:
+            raise Refused(f"at most {brain.MAX_LIST_ITEMS} bindings", field="bindings")
+        fields["Bindings"] = ", ".join(out)
+    if "assessed" in payload:
+        value = payload.get("assessed") or ""
+        if not isinstance(value, str):
+            raise Refused("assessed is a date, YYYY-MM-DD", field="assessed")
+        if value:
+            if not brain.DATE_RE.match(value):
+                raise Refused("assessed is a date, YYYY-MM-DD", field="assessed")
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError as exc:
+                raise Refused("assessed is a date, YYYY-MM-DD", field="assessed") from exc
+        fields["Assessed"] = value
+
+
 def check_fields(payload: dict) -> dict:
     """The fields an entry's create or edit would write, normalised by the
     very rules `write` holds them to — or `Refused` naming the field. For
@@ -292,7 +352,7 @@ def _who() -> str:
 # ── the file ───────────────────────────────────────────────────────────
 
 _ORDER = ("Brain", "Id", "Kind", "Classification", "Summary", "Source", "Related",
-          "Supersedes", "Superseded by", "Invalidated", "Override", "Removed",
+          "Standing", "Policy", "Bindings", "Assessed", "Supersedes", "Superseded by", "Invalidated", "Override", "Removed",
           "Replaced by")
 
 
@@ -485,6 +545,7 @@ def _plan_create(payload: dict, reading: dict, actor: str) -> dict:
     fields = {"Brain": str(brain.CONTRACT), "Id": entry_id, "Kind": kind,
               "Classification": klass, "Summary": summary,
               "Source": ", ".join(sources), "Related": ", ".join(related)}
+    _authority(payload, fields)
     text = render(title, fields, body, [_history_line(_now(), klass, actor, reason)])
     return {"id": entry_id, "file": f"{entry_id}.md", "expected": None, "text": text,
             "what": "created"}
@@ -506,6 +567,7 @@ def _plan_edit(payload: dict, reading: dict, actor: str) -> dict:
     fields = dict(parts["fields"])
     fields.update({"Kind": kind, "Summary": summary, "Source": ", ".join(sources),
                    "Related": ", ".join(related)})
+    _authority(payload, fields)
     text = render(title, fields, body, parts["history"], parts["extra"])
     return {"id": found["id"], "file": found["file"], "expected": found["revision"],
             "text": text, "what": "edited"}
@@ -740,8 +802,113 @@ def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
             "what": what}
 
 
+# ── the handbook's membership (task 171) ───────────────────────────────
+#
+# One record, brain/handbook/handbook.md (the format is handbook's), and one
+# section of it per write: assign, reorder, replace or remove links in that
+# section, bound to the record's exact revision (or its absence) and to a
+# request identity, with a reason in its history. It never writes an entry,
+# so a link never changes an entry's classification or anything else.
+
+HANDBOOK_FIELDS = {"request", "expected", "section", "entries", "reason"}
+
+
+def _handbook_directory(make: bool) -> Path:
+    """brain/handbook/, refused when a write must not go through it; made
+    (with brain/) only by a write that is about to happen."""
+    _check_directory(create=True, make=make)
+    path = handbook.directory()
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        if make:
+            os.mkdir(path)
+        return path
+    if stat.S_ISLNK(info.st_mode):
+        raise Refused("brain/handbook/ is a link; bench never writes through one", 409)
+    if not stat.S_ISDIR(info.st_mode):
+        raise Refused("brain/handbook/ is not a directory; nothing was written", 409)
+    if config.escapes_work(path) is not None:
+        raise Refused("brain/handbook/ resolves outside the work root; nothing was written", 409)
+    return path
+
+
+def _change_words(before: list[str], after: list[str]) -> str:
+    added = [i for i in after if i not in before]
+    removed = [i for i in before if i not in after]
+    words = []
+    if added:
+        words.append("added " + ", ".join(added))
+    if removed:
+        words.append("removed " + ", ".join(removed))
+    kept_before = [i for i in before if i in after]
+    kept_after = [i for i in after if i in before]
+    if kept_before != kept_after:
+        words.append("reordered")
+    return "; ".join(words) or "unchanged"
+
+
+def _plan_handbook(payload: dict, reading: dict, actor: str) -> dict:
+    for key in payload:
+        if key not in HANDBOOK_FIELDS:
+            raise Refused(f"{str(key)[:40]!r} cannot be written here: the handbook records which "
+                          "entries each section links, and nothing else — an entry is edited on "
+                          "its own page", field=str(key)[:40])
+    _handbook_directory(make=False)
+    rec = handbook.read_record()
+    if rec["state"] == "refused":
+        raise Refused(f"{rec['file']} was not read: {rec['why']}; nothing was written", 409)
+    if rec["state"] in ("invalid", "unsupported"):
+        raise Refused(f"{rec['file']} does not follow the handbook format "
+                      f"({'; '.join(rec['problems'][:2])}); fix it by hand first — the board "
+                      "does not write over a record it cannot read", 409)
+    now = rec["revision"]
+    expected = payload.get("expected")
+    expected = None if expected in (None, "", "none") else expected
+    if expected != now:
+        raise Refused(
+            f"the handbook changed since this page read it (it read {str(expected or 'none')[:16]}, "
+            f"the record is now {now or 'none'}). Nothing was written. Read the current "
+            "handbook, bring your change across, and save again.", 409, stale=True,
+            current=handbook.reading())
+    section = payload.get("section")
+    if section not in handbook.SECTION_IDS:
+        raise Refused("section is one of " + ", ".join(handbook.SECTION_IDS), field="section")
+    after = _ids(payload.get("entries"), "entries")
+    if len(after) > handbook.MAX_ITEMS:
+        raise Refused(f"a section links at most {handbook.MAX_ITEMS} entries", field="entries")
+    before = list(rec["sections"].get(section) or [])
+    by_id = {e["id"]: e for e in reading["entries"]}
+    for entry_id in after:
+        if entry_id in before:
+            continue    # a link already here may stay while its problem is shown
+        if entry_id in reading["duplicates"]:
+            raise Refused(f"{entry_id} is claimed by more than one file; fix that first",
+                          field="entries")
+        found = by_id.get(entry_id)
+        if found is None:
+            raise Refused(f"{entry_id} is not an entry on this board; a section links existing "
+                          "entries only — create it first", field="entries")
+        if found["removed"] is not None:
+            raise Refused(f"{entry_id} is retired; link the entry that replaced it",
+                          field="entries")
+    if after == before:
+        raise Refused("this would change nothing in the section; nothing was written",
+                      field="entries")
+    reason = _reason(payload.get("reason"))
+    title = dict((s[0], s[1]) for s in handbook.SECTIONS)[section]
+    sections = {s: list(rec["sections"].get(s) or []) for s in handbook.SECTION_IDS}
+    sections[section] = after
+    history = list(rec.get("history") or []) + [
+        f"- {_now()} · {actor} — {title}: {_change_words(before, after)}; {reason}"]
+    return {"id": "handbook", "file": f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}",
+            "expected": now, "text": handbook.render(sections, history),
+            "what": f"{section} updated"}
+
+
 PLANS = {"create": _plan_create, "edit": _plan_edit, "classify": _plan_classify,
          "override": _plan_override, "retire": _plan_retire,
+         "handbook": _plan_handbook,
          "review-classify": lambda p, r, a: _plan_review("review-classify", p, r, a),
          "review-override": lambda p, r, a: _plan_review("review-override", p, r, a)}
 REVIEW_KINDS = ("review-classify", "review-override")
@@ -757,6 +924,10 @@ def _entry_path(entry: dict) -> Path:
         if sub != brain.REVIEWS_DIRECTORY or not brainreviews.RECORD_NAME_RE.match(name):
             raise Refused("the review record's name is not c<card>-<review id>.md", 409)
         return _reviews_directory(make=True) / name
+    if entry.get("kind") == "handbook":
+        if file != f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}":
+            raise Refused("the handbook record is brain/handbook/handbook.md", 409)
+        return _handbook_directory(make=True) / handbook.FILE
     directory = _check_directory(create=entry.get("kind") == "create")
     if not brain.NAME_RE.match(file):
         raise Refused("the entry's file name is not a plain flat name", 409)
@@ -837,7 +1008,8 @@ def write(kind: str, payload: dict) -> dict:
             return _finish(request, prior, resumed=True)
         actor = _who()
         reading = brain.reading()
-        _check_directory(create=(kind == "create" or kind in REVIEW_KINDS), make=False)
+        _check_directory(create=(kind in ("create", "handbook") or kind in REVIEW_KINDS),
+                         make=False)
         plan = PLANS[kind](payload, reading, actor)
         entry = {"kind": kind, "digest": digest, "status": "started", "at": _now(),
                  "id": plan["id"], "file": plan["file"], "expected": plan["expected"],
@@ -891,6 +1063,9 @@ def _conflict(request: str, entry: dict) -> dict:
 
 
 def _current_entry(entry_id) -> dict | None:
+    if entry_id == "handbook":
+        # the handbook's record, never an entry that happens to be named so
+        return handbook.reading()
     try:
         return brain.entry(entry_id)
     except brain.NotAnId:
