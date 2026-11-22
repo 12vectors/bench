@@ -208,12 +208,17 @@ class ReportFiling(unittest.TestCase):
         self.assertEqual(self.copies(self.card7, REL7), 1)
 
     def test_3_retry_from_the_card_by_keyboard(self):
-        b = self.open("/cards/8?tab=activity", ready="#drawerbody .dfiling")
-        banner = self.text(b, "#drawerbody .dfiling")
+        # the banner leads both Activity and (for a review) Reviews; the
+        # Reviews section is drawn hidden behind its tab, so the visible
+        # one is Activity's
+        b = self.open("/cards/8?tab=activity", ready="#dsec-activity .dfiling")
+        banner = self.text(b, "#dsec-activity .dfiling")
         self.assertIn("1 report needs you", banner)
         self.assertIn("Retry filing", banner)
+        self.assertTrue(b.eval("!!document.querySelector('#dsec-reviews .dfiling')"),
+                        "the review's banner leads Reviews too")
         shot("report-filing-card-activity")
-        sel = "#drawerbody .dfiling [data-rfop]"
+        sel = "#dsec-activity .dfiling [data-rfop]"
         # the drawer is redrawn as its readings land; focus the button as
         # it stands now, immediately before each key
         focus = f"(() => {{ const x = document.querySelector({json.dumps(sel)}); x?.focus();" \
@@ -233,7 +238,7 @@ class ReportFiling(unittest.TestCase):
         while time.time() < deadline and self.copies(self.card8, REL8) == 0:
             time.sleep(0.2)
         self.assertEqual(self.copies(self.card8, REL8), 1)
-        if not b.wait("!document.querySelector('#drawerbody .dfiling')", 10):
+        if not b.wait("!document.querySelector('#dsec-activity .dfiling')", 10):
             raise bv.CheckFailed("the card's banner did not leave once its report was filed")
         b.viewport(390, 844)
         time.sleep(0.3)
