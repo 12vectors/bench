@@ -424,8 +424,6 @@ def run() -> dict:
         taskfiles.move_task(STEP["file"], STEP["from"], STEP["to"],
                             actor=STEP.get("actor", "you"))
         return {"stage": taskfiles.find_stage_of(STEP["file"])}
-    if kind == "adopt":
-        return phasescope.adopt(STEP["file"], actor="ada")
     if kind == "pass":
         crash(STEP.get("crash"))
         race(STEP.get("race"))

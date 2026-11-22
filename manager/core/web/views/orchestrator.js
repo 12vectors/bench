@@ -249,8 +249,7 @@ const EFFECTS = {
   adoptCard: 'Marks this working card adopted by this installation after a handover, so automation may act on it from here. Its branch, worktree and runs are left as they are.',
   designate: 'Makes this installation the one that executes. It launches nothing now; with an enabled agreement the scheduler’s next pass may start eligible work. Another installation’s designation is never taken over.',
   handover: 'Releases execution so another installation can adopt it. Refused while any run is working or any operation is unsettled; nothing is stopped to make it pass.',
-  adoptPhase: 'Moves this phase from the phase runner to its phase scope. Refused while anything still works it. Writes one line to the phase log; no branch, worktree or member is touched, and an integrated member is never run again.',
-  releasePhase: 'Hands this phase back to the phase runner. Refused while anything works it. The runner does not resume until a person runs it.',
+  resumeMigrated: 'The retired phase runner had halted or held this phase, so the upgrade held it back. Resuming hands it to its phase scope, which carries on from what the phase branch holds — an integrated member is never run again. Refused while anything still works it. Launches nothing itself; the next pass does, under your agreement.',
   launched: 'Records that the run was in fact launched: its start is spent and it reads as ended. Nothing is launched.',
   notLaunched: 'Records that nothing ran: the slot is freed and a new attempt may follow on its own merits. Nothing is launched.',
   release: 'Releases a refused launch so it may be tried again on the same brief. Nothing is launched now.',
@@ -383,7 +382,7 @@ const CONTROL_WORDS = {
   hold: '‖ hold on the card', 'take-over': '▸ take over on the card', 'answer-decision': 'Answer in Decisions',
   'run-required-checks': 'Run required checks on the card', 'settle-operation': 'Settle it in Recovery',
   'resolve-incident': 'Resolve it in Recovery', 'reset-breaker': 'Reset the breaker in Recovery',
-  'edit-agreement': 'Review the Operating agreement', 'adopt-phase': 'Adopt the phase in Phases',
+  'edit-agreement': 'Review the Operating agreement', 'adopt-phase': 'See the phase in Orchestrator → Phases',
   'designate-installation': 'Designate in Overview', 'settings-agents': 'Settings → Agents',
 };
 
@@ -754,7 +753,7 @@ function holdersHtml() {
     const t = taskByFile(h.card);
     const what = h.kind === 'run' ? `${h.mode || 'work'} run${h.name ? ' ' + h.name : ''}` : `reserved by operation ${h.operation} (${h.status})`;
     return `<li>${t ? cardLink(t) : esc(h.card || '')} — ${esc(what)} · ${esc(h.pool)} slot` +
-      `${h.stage ? ` · card in ${esc(h.stage)}` : ''}${h.scope ? ` · ${esc(scopeName(h.scope))}` : ' · no scope (a person’s or the phase runner’s run)'}</li>`;
+      `${h.stage ? ` · card in ${esc(h.stage)}` : ''}${h.scope ? ` · ${esc(scopeName(h.scope))}` : ' · no scope (a person’s own run)'}</li>`;
   }).join('')}</ul>`;
 }
 
@@ -1219,19 +1218,23 @@ function phaseHtml(p, isSel) {
   const n = p.number;
   const acts = [];
   const r = orch().reading;
-  if (p.named && p.mode !== 'scoped') {
-    acts.push(action(`adopt-phase:${n}`, 'Adopt into its phase scope', 'phase', { card: p.card, action: 'adopt' },
-      EFFECTS.adoptPhase + (p.adoptable ? '' : ' Not adoptable now: ' + [].concat(p.working || []).join(', '))));
+  // task 188: every phase is its phase scope's — nothing to adopt or
+  // release. A phase the upgrade held because the retired runner had
+  // halted or held it is resumed here, once, by a person
+  if (p.resumable) {
+    acts.push(action(`resume-phase:${n}`, 'Resume under the Orchestrator', 'phase', { card: p.card, action: 'resume' }, EFFECTS.resumeMigrated));
   }
-  if (p.mode === 'scoped') {
-    acts.push(action(`release-phase:${n}`, 'Release to the phase runner', 'phase', { card: p.card, action: 'release' }, EFFECTS.releasePhase));
+  if (p.scope && r.effective.valid && !p.hold) {
+    // a phase the agreement does not name can be paused too: the entry
+    // written only narrows (enabled, paused)
+    const paused = scope ? scope.paused : false;
+    acts.push(paused
+      ? action(`resume:${p.scope}`, 'Resume this phase', 'scope', { scope: p.scope, action: 'resume' }, EFFECTS.resumePhase)
+      : action(`pause:${p.scope}`, 'Pause this phase', 'scope', { scope: p.scope, action: 'pause' }, EFFECTS.pausePhase));
   }
-  if (scope && r.effective.valid) {
-    acts.push(scope.paused
-      ? action(`resume:${scope.id}`, 'Resume this phase', 'scope', { scope: scope.id, action: 'resume' }, EFFECTS.resumePhase)
-      : action(`pause:${scope.id}`, 'Pause this phase', 'scope', { scope: scope.id, action: 'pause' }, EFFECTS.pausePhase));
-  }
-  const [word, tone] = scope ? scopeStateWords(scope) : [p.owner === 'phase runner' ? 'Phase runner' : 'Not named', 'idle'];
+  const [word, tone] = p.hold ? ['Held by the upgrade', 'alarm']
+    : scope ? scopeStateWords(scope)
+    : r.effective.valid && r.effective.configured !== false ? ['Inherits the Bench scope', 'neutral'] : ['Orchestration off', 'idle'];
   const members = (p.members || []).map(m => {
     const mt = taskByFile(m.card);
     return `<li class="o-row">${mt ? cardLink(mt, num(mt) + ' ' + title(mt)) : esc(m.card)}` +
@@ -1242,7 +1245,7 @@ function phaseHtml(p, isSel) {
   // and the Phases lane draw, so the three cannot disagree
   const life = p.lifecycle || null;
   const lifeTone = !life ? 'neutral'
-    : ['unknown', 'moved-early', 'stopped'].includes(life.word) ? 'alarm'
+    : ['unknown', 'moved-early', 'stopped', 'migrating', 'blocked'].includes(life.word) ? 'alarm'
     : life.word === 'working' ? 'working'
     : ['delivered', 'finishing'].includes(life.word) ? 'calm' : 'neutral';
   const who = life && life.next ? ({ you: 'You', agent: 'The agent', board: 'The board' }[life.next.who] || '') : '';
@@ -1250,8 +1253,9 @@ function phaseHtml(p, isSel) {
   const lifeHtml = life
     ? `<div class="o-life" data-life="${esc(life.word)}"><p>${badge(life.label, lifeTone)} ${esc(life.line)}</p>` +
       (life.next ? `<p><b>Next${who ? ' — ' + esc(who) : ''}:</b> ${esc(life.next.text)}</p>` : '') +
-      ((life.backlog || []).length ? `<p class="o-dim">In Backlog, not queued: ${esc(life.backlog.map(f => {
-        const bt = taskByFile(f); return bt ? num(bt) : f; }).join(', '))}. Members start only from To Do; nothing here moves them.</p>` : '') +
+      ((life.inherited || []).length ? `<p class="o-dim">Queued with the phase, stored in Backlog: ${esc(life.inherited.map(f => {
+        const bt = taskByFile(f); return bt ? num(bt) : f; }).join(', '))}. Each starts in its turn and moves to In Progress when it does; nobody needs to move it.</p>` : '') +
+      (life.compat ? `<p class="o-warn">${badge('Older board', 'alarm')} ${esc(life.compat)}</p>` : '') +
       (b ? `<p class="o-dim">Budget: ${esc(b.lines.join('; '))}.</p>` +
         (b.missing || []).map(m => `<p class="o-warn">${badge('Missing', 'alarm')} ${esc(m)}</p>`).join('') +
         (b.warnings || []).map(w => `<p class="o-warn">${badge('Note', 'neutral')} ${esc(w)}</p>`).join('') : '') +
@@ -1261,7 +1265,8 @@ function phaseHtml(p, isSel) {
     `<h3>${t ? cardLink(t, num(t)) : esc('#' + n)} ${esc(title(t))} ${badge(word, tone)}</h3>` +
     lifeHtml +
     `<dl class="o-kv"><div><dt>scheduling owner</dt><dd>${esc(p.owner)}${p.mode ? ` · mode ${esc(p.mode)}` : ''}</dd></div>` +
-    `<div><dt>agreement</dt><dd>${p.named ? `named (${esc(p.scope)}) · strategy ${esc(p.strategy || 'sequential')}` : 'not named — the phase runner schedules it'}</dd></div>` +
+    `<div><dt>agreement</dt><dd>${p.named ? `an entry narrows it (${esc(p.scope)}) · strategy ${esc(p.strategy || 'sequential')}` : `no entry — it inherits the Bench scope · strategy ${esc(p.strategy || 'sequential')}`}</dd></div>` +
+    (p.hold ? `<div><dt>upgrade hold</dt><dd>${esc(p.hold.reason || '')}</dd></div>` : '') +
     `<div><dt>integrated</dt><dd>${(p.integrated || []).length ? esc((p.integrated || []).map(x => '#' + x).join(', ')) + ' — in the phase branch, not delivered' : 'none yet'}</dd></div>` +
     (p.delivered !== undefined ? `<div><dt>delivered</dt><dd>${p.delivered ? 'yes' : 'not yet'}</dd></div>` : '') +
     `</dl>` +
@@ -1915,10 +1920,10 @@ function agreementHtml() {
       (draft.changes && draft.changes.length ? `<details class="o-fold" data-okeep="saved-changes"${keepOpen('saved-changes', true)}><summary>What applying the saved draft would change (${draft.changes.length})</summary><ul>${draft.changes.map(c => `<li>${esc(changeWords(c))}</li>`).join('')}</ul></details>`
         : `<p class="o-dim">The saved draft changes nothing against what is in force.</p>`) +
       benchFormHtml(doc) + phaseKeys.map(n => phaseFormHtml(doc, n)).join('') +
-      `<fieldset class="o-form"><legend>Add a phase scope</legend><label class="o-setting" for="ag-newphase"><span>Phase card number</span>` +
+      `<fieldset class="o-form"><legend>Narrow one phase (optional)</legend><label class="o-setting" for="ag-newphase"><span>Phase card number</span>` +
       `<input id="ag-newphase" type="text" inputmode="numeric" data-ofield="newphase" data-o="ag-newphase" value="${esc(o.newPhase || '')}"></label>` +
       `<div class="o-actions">${btn('addphase', 'Add to the draft', { act: 'addphase' })}</div>` +
-      `<p class="o-dim">Naming a phase does not take it from the phase runner: a person adopts it in Phases once it is quiet.</p></fieldset>` +
+      `<p class="o-dim">Not needed to run a phase: every phase inherits the Bench scope and is queued by moving its card into To Do. An entry here only narrows one phase — its authority, ceilings or strategy.</p></fieldset>` +
       `<div class="o-steps">` +
       action('save-draft', 'Save draft', 'saveDraft', {}, EFFECTS.saveDraft) +
       `<div class="o-action">${btn('preview', 'Preview against what is in force', { act: 'preview' })}<p class="o-effect">Compares two resolutions; writes nothing.</p></div>` +
@@ -2004,7 +2009,7 @@ async function doAction(el) {
     case 'phase':
       return armed(key, async () => {
         const res = await send('/api/orchestration/phase', { card: d.card, action: d.action }, true);
-        return res.ok ? { said: `phase ${d.action}ed — nothing was launched` } : res;
+        return res.ok ? { said: `phase ${d.action}d — nothing was launched; the next pass schedules it` } : res;
       });
     case 'operation':
       return armed(key, async () => {

@@ -608,12 +608,17 @@ class OneAnswerForLaunchAndPage(Board):
         self.assertEqual(found["code"], "phase-not-delegated")
         self.assertEqual(found["phase"]["code"], "foreign-move")
 
-    def test_a_legacy_phase_stays_the_runners_whatever_the_movement(self):
+    def test_an_unnamed_phase_is_delegated_by_its_cards_move(self):
+        # task 188: no legacy runner and no adoption — this board's move
+        # of the phase card into To Do delegates the phase to its implicit
+        # scope, and the member is answered from that move
         self.phase()
         self.move("backlog", "to-do", by=ADA, filename="50-ship.md")
         self.orchestrate()          # no phase agreement for 50
-        self.assertEqual(orchestrator.authorize("implement", "51-member.md")["code"],
-                         "legacy-phase")
+        answer = orchestrator.authorize("implement", "51-member.md")
+        self.assertEqual(("authorized", "phase:50"),
+                         (answer["code"], answer["scope"]))
+        self.assertEqual("phase-delegated", answer["eligibility"]["code"])
 
 
 if __name__ == "__main__":

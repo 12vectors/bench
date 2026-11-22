@@ -1351,13 +1351,17 @@ class AGatedPhase(PhaseCase):
         return verify.request(check="unit", task=filename, stage=stage,
                               actor="you")
 
-    def test_a_member_with_no_check_halts_the_phase_instead_of_merging(self):
+    # The merge into the phase branch refuses an unmet member gate with
+    # `phases.Halt` and merges nothing; the phase scope (task 188) records
+    # that as a blocker on the card. These hold the refusal itself.
+
+    def test_a_member_with_no_check_is_refused_instead_of_merged(self):
         self.gate()
         self.start()
-        found = self.advance()
-        self.assertIsNotNone(found["halted"], "an unmet gate halts")
-        self.assertIn("member gate is unmet", found["halted"])
-        self.assertIn("nothing has asked bench for 'unit'", found["halted"])
+        with self.assertRaises(phases.Halt) as caught:
+            self.advance()
+        self.assertIn("member gate is unmet", str(caught.exception))
+        self.assertIn("nothing has asked bench for 'unit'", str(caught.exception))
         self.assertFalse(
             phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH),
             "nothing was merged into the phase branch")
@@ -1370,29 +1374,28 @@ class AGatedPhase(PhaseCase):
         self.gate()
         self.start()
         self.assertEqual(changes.PR_STATE.get(ONE, {}).get("ci"), None)
-        self.advance()
-        self.assertIn("halted", " ".join(self.log()))
+        with self.assertRaises(phases.Halt):
+            self.advance()
+        self.assertFalse(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
 
     def test_a_verified_member_merges_and_the_phase_carries_on(self):
         self.gate()
         self.start()
         found = self.verify_card(ONE)
         self.assertEqual(found["outcome"], "passed", found["why"])
-        snapshot = self.advance()
-        self.assertIsNone(snapshot["halted"], snapshot.get("halted"))
+        self.advance()
         self.assertTrue(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
         self.assertIn(f"{ONE[:-3].split('-')[0]} merged", " ".join(self.log()))
 
-    def test_running_the_phase_again_after_verifying_clears_the_halt(self):
+    def test_verifying_after_a_refusal_lets_the_next_attempt_merge(self):
         self.gate()
         self.start()
-        self.advance()
-        self.assertIn("halted", " ".join(self.log()))
+        with self.assertRaises(phases.Halt):
+            self.advance()
         self.verify_card(ONE)
         verify.forget_cached()
         gates.forget_cached()
-        phases.start_phase(PHASE, "in-progress")
-        self.settle()
+        self.advance()
         self.assertTrue(phases._contains(f"task/{ONE[:-3]}", PHASE_BRANCH))
 
     def test_a_members_gate_is_re_read_immediately_before_the_merge(self):
@@ -1463,32 +1466,27 @@ class AGatedPhase(PhaseCase):
         self.assertTrue(result["merged"])
         self.assertEqual(sorted(result["swept"]), sorted([ONE, TWO]))
 
-    def test_a_replica_evaluates_and_advances_nothing(self):
+    def test_reading_a_verified_member_merges_nothing(self):
+        # a reading renders the gate and acts on nothing (a replica's
+        # whole share; who may act is the execution owner's, task 188)
         self.gate()
         self.start()
         self.verify_card(ONE)
         verify.forget_cached()
         gates.forget_cached()
-        # team mode, and the card is held by somebody else
-        self.patch(COMMIT_MOVES=True)
-        text = self.text(PHASE).replace("**Priority:** High",
-                                        "**Priority:** High\n"
-                                        "**Assignee:** elena")
-        (self.tasks / "in-progress" / PHASE).write_text(text,
-                                                        encoding="utf-8")
         before = self.tip(PHASE_BRANCH)
-        snapshot = self.advance()
-        self.assertEqual(self.tip(PHASE_BRANCH), before,
-                         "a replica merges nothing")
+        snapshot = phases._snapshot(phases._cards()[0][PHASE],
+                                    phases._cards()[0])
+        self.assertEqual(self.tip(PHASE_BRANCH), before, "a read merges nothing")
         member = next(m for m in snapshot["members"] if m["file"] == ONE)
-        self.assertEqual(member["state"], "ready",
-                         "it still renders the same reading")
+        self.assertEqual(member["state"], "ready")
         self.assertEqual(member["gate"]["decision"], "allowed")
 
     def test_the_snapshot_carries_the_gate_the_lane_draws(self):
         self.gate(scopes=("member", "integration"))
         self.start()
-        snapshot = self.advance()
+        snapshot = phases._snapshot(phases._cards()[0][PHASE],
+                                    phases._cards()[0])
         member = next(m for m in snapshot["members"] if m["file"] == ONE)
         self.assertEqual(member["gate"]["decision"], "blocked")
         self.assertEqual(member["gate"]["scope"], "member")

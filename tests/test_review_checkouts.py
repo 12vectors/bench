@@ -1281,9 +1281,10 @@ class ThePageSaysWhereAReviewRan(unittest.TestCase):
 
     def test_the_review_glyph_is_its_own_and_takes_nobody_elses(self):
         """Colour means state here and a glyph means one thing: `⌸` is the
-        archive tray's and appears in exactly two places (its own test
-        enforces that), so the review surface wears `⌾` instead."""
-        self.assertEqual(self.html.count("⌸"), 2,
+        archive tray's and appears in exactly three places — the tray, the
+        card's chip and the Done column's Archive all (task 187); its own
+        test enforces that — so the review surface wears `⌾` instead."""
+        self.assertEqual(self.html.count("⌸"), 3,
                          "the tray's glyph is the tray's")
         for name in ("function reviewPanel(record", "function reviewRows(found)",
                      "function reviewChip(task)"):

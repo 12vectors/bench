@@ -92,9 +92,15 @@ test('a card’s entry links to the exact section and card, and escapes what it 
   const handed = cardEntryHtml(task, { orchestration: { configured: true, cards: {
     '140-csv.md': { scope: 'bench', manual: 'handback' } } } }, '140');
   assert.match(handed, /handed back to you/);
-  const legacy = cardEntryHtml(task, { orchestration: { configured: true, cards: {
-    '140-csv.md': { scope: null, why: 'phase-not-adopted' } } } }, '140');
-  assert.match(legacy, /phase runner/);
+  // task 188: no phase runner — the only scope-less phase is one the
+  // upgrade held, and a Backlog member of a queued phase says so
+  const held = cardEntryHtml(task, { orchestration: { configured: true, cards: {
+    '140-csv.md': { scope: null, why: 'phase-migrating' } } } }, '140');
+  assert.match(held, /held by the upgrade/);
+  assert.doesNotMatch(held, /phase runner/);
+  const queued = cardEntryHtml({ ...task, queue: { inherited: true } }, { orchestration: {
+    configured: true, cards: { '140-csv.md': { scope: 'phase:9' } } } }, '140');
+  assert.match(queued, /queued with its phase/);
   // nothing else to say: no agreement and no history — but a question
   // about the card is always open to ask (task 181), and opening it
   // launches nothing

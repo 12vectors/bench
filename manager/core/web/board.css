@@ -149,6 +149,21 @@
   .kcol > h2 .tickmark{width:6px;height:6px;border-radius:2px;flex:none}
   .kcol > h2 .count{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--dim)}
   .kcol > h2 .note{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none;font-size:11px;color:var(--dim)}
+  /* Archive all, in the Done column's header (task 187) */
+  .kcol > h2 .colact{
+    flex:none;display:inline-flex;align-items:center;gap:4px;min-height:26px;padding:2px 8px;
+    border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);
+    font:inherit;font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;cursor:pointer;
+  }
+  .kcol > h2 .note + .colact{margin-left:0}
+  .kcol > h2 .colact:hover:not(:disabled), .kcol > h2 .colact:focus-visible{color:var(--ink);border-color:var(--muted)}
+  .kcol > h2 .colact:disabled{opacity:.55;cursor:default}
+  @media (pointer:coarse){ .kcol > h2 .colact{min-height:44px;padding:4px 12px} }
+  .sheet .aa-list{margin:0;padding:0 0 0 18px;max-height:30vh;overflow-y:auto;font-size:12.5px;line-height:1.55;color:var(--ink)}
+  .sheet .aa-list .why{color:var(--muted)}
+  .sheet .aa-items li.bad{color:var(--alarm)}
+  .sheet .aa-items li.skip{color:var(--muted)}
+  .sheet .aa-left summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
   .drop{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:var(--gap);border-radius:var(--radius)}
   .drop.over{background:color-mix(in oklab, var(--accent) 9%, transparent)}
   .empty{

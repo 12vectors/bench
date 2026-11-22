@@ -190,7 +190,7 @@ const GROUP_WORDS = {
   unattributed: { label: 'Unattributed — needs your move',
                   help: 'Bench cannot say who moved these last. Move one yourself, or take it over, before it is managed.' },
   unmanaged: { label: 'Not in an orchestrator scope',
-               help: 'Their phase is run by the phase runner (not adopted, or not named by the agreement).' },
+               help: 'Their phase was held back by the upgrade to the unified phase model; Phases says why and how to resume it.' },
 };
 
 /* What a card's Overview says about orchestration, with the link into the
@@ -208,9 +208,10 @@ function cardEntryHtml(task, state, id) {
   const words = [];
   if (held) {
     if (held.scope) words.push(`Managed by ${scopeName(held.scope)}`);
-    else if (held.why === 'phase-not-adopted') words.push('Its phase is run by the phase runner (not adopted into a phase scope)');
-    else if (held.why === 'legacy-phase') words.push('Its phase has no phase agreement — the phase runner schedules it');
+    else if (held.why === 'phase-migrating') words.push('Its phase is held by the upgrade to the unified phase model — see Phases');
     else words.push('Not managed');
+    const queue = task.queue || {};
+    if (queue.inherited) words.push('queued with its phase (stored in Backlog until it starts)');
     if (held.manual === 'handback') words.push('handed back to you');
     if (held.manual === 'excluded') words.push('excluded from its scope');
   } else if (o && !o.configured) {

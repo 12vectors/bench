@@ -287,9 +287,10 @@ def working_on(files: set[str]) -> list[dict]:
 # It is about *starting*: a card that gains `**Type:** Phase` while an
 # ordinary run is in flight is left alone, and the run ends as it would
 # have.
-PHASE_RUNS_WITH = ("a list of other cards, not a brief. Run it with ▸ run "
-                   "phase, which cuts a branch of its own and works the list "
-                   "into it; its members are worked on their own cards")
+PHASE_RUNS_WITH = ("a list of other cards, not a brief. It is queued by "
+                   "moving it into To Do: the Orchestrator then cuts a branch "
+                   "of its own and works the list into it; its members are "
+                   "worked on their own cards")
 
 
 def is_phase_card(filename: str, stage: str) -> bool:

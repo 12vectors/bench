@@ -9,7 +9,7 @@
 import { esc } from './dom.js';
 
 // who: 'automatic' — the board reconsiders by itself; 'you' — a person's
-// step; 'phase runner' — not an orchestrator scope's work at all
+// step (the retired phase runner is no longer a third answer, task 188)
 const NEXT = {
   'slots-full': { who: 'automatic', step: 'Admitted in its turn when a slot frees; nothing is reserved for it. You can raise the limit in the Operating agreement.', section: 'agreement' },
   'queued-behind': { who: 'automatic', step: 'Older requests in the same pool go first; it is admitted in its turn.' },
@@ -36,9 +36,14 @@ const NEXT = {
   'breaker-open': { who: 'you', step: 'The circuit breaker is open: fix the cause, then reset it in Recovery.', section: 'recovery' },
   'outcome-held': { who: 'you', step: 'Held for a person in Recovery.', section: 'recovery' },
   running: { who: 'automatic', step: 'A run is working on it; its ending is observed on a later pass.' },
-  'phase-card': { who: 'phase runner', step: 'A phase card is run by its phase scope, not launched as work.' },
-  'phase-not-adopted': { who: 'you', step: 'Its phase is the phase runner’s until you adopt it in Phases.', section: 'phases' },
-  'legacy-phase': { who: 'phase runner', step: 'Its phase has no phase agreement; the phase runner schedules it.' },
+  'phase-card': { who: 'automatic', step: 'A phase card is run by its phase scope, not launched as work.' },
+  'phase-migrating': { who: 'you', step: 'The upgrade to the unified phase model held this phase: resume it in Phases, or wait for the work it names to end.', section: 'phases' },
+  integrated: { who: 'automatic', step: 'It is already in the phase branch; it is never launched again.' },
+  'waiting-member': { who: 'automatic', step: 'Sequential: the member before it is integrated first; the next pass reconsiders.' },
+  'waiting-integration': { who: 'automatic', step: 'A member it depends on is integrated first; the next pass reconsiders.' },
+  // records from before task 188: the phase runner and adoption are retired
+  'phase-not-adopted': { who: 'automatic', step: 'Recorded before the unified phase model: every phase is its scope’s now.', section: 'phases' },
+  'legacy-phase': { who: 'automatic', step: 'Recorded before the unified phase model: every phase is its scope’s now.' },
 };
 
 /* Every outcome a decision can carry, as the filter and the badge say it. */

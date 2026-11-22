@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 145417,
-   "sha256": "a264ae7bf6f04d0d51af307764ea9d003c45b70a212ef6cd1d99b1b592607049",
+   "bytes": 146442,
+   "sha256": "6aa44414af51adc2799c190c5bb91123227650d28f72a345ad6b1c12974f2558",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -216,8 +216,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/orchwords.js": {
-   "bytes": 12400,
-   "sha256": "823fc3711bab46a28ba3b1f2d7ac4f41c828719b398912a203ccb5a15157c0e0",
+   "bytes": 12435,
+   "sha256": "0652e75e2f61623ca3921fab54b909ce82c52c2668511c1ef9eaf36fdddbf966",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/press.js": {
@@ -251,23 +251,28 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/tracewords.js": {
-   "bytes": 6365,
-   "sha256": "c118fe6255a14603b7919d60ce491cf0e482df7c89f09f93e40b69cd6dc76fb2",
+   "bytes": 7015,
+   "sha256": "7a7a11ef33fa2591fb34ae196c5585d42874269b38c9fa8d0ee24f2782e2994a",
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 23428,
-   "sha256": "8344a65c60bc6cedf89deaefe15bdc4a8bf70bdbc94d9ba128f274d49214ed49",
+   "bytes": 23830,
+   "sha256": "3660a032f779bd4f4871fc33301d810649dcbbc91a7fc52ea57a51561d57f3d3",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
-   "bytes": 10137,
-   "sha256": "56de69428d47354953f7ada2d1b942b3e1d4ce2cb38f33a47c24f856c3bb7660",
+   "bytes": 10928,
+   "sha256": "fcc5ba73ab5850689fee0980f661262a97af4e184e057d322eb1d4f81f4aa18e",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/archiveall.js": {
+   "bytes": 11422,
+   "sha256": "f2f8486f843c51cef103d6970e0682086c05d42d664a56ae4f5b72e04a5d2ea2",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {
-   "bytes": 29493,
-   "sha256": "1b81692b07bc2fa49984b769a2b48b6f2f8ef24097344b04f24ef68b85734373",
+   "bytes": 28525,
+   "sha256": "bf1ed9404e6c6b459bdd0faba3ff02606038b76a0fb2a88a15d2b41869ec58f3",
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
@@ -276,13 +281,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
-   "bytes": 104418,
-   "sha256": "fb98d4b2f7df000b8769f89027dce81d41201c70b3ca861f4d8281672034a2b5",
+   "bytes": 101445,
+   "sha256": "a539aaaeddc642adf415bf774d323ca3f6fea4e9f923da3e30e5c814f4a1bb9f",
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
-   "bytes": 24173,
-   "sha256": "b32b5c3a14b938dbcbbf08b2ebae79257e5417db1876242641bac242e6aad73c",
+   "bytes": 23948,
+   "sha256": "486ba3eba5a5036a484e257e5353f40e53f70ea77d24bc27dd991de18407381e",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/discussion.js": {
@@ -296,8 +301,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 118171,
-   "sha256": "f816736558cf8136ba45baf59f36933c2cca61229e11f136122d2b9307ba2d42",
+   "bytes": 118288,
+   "sha256": "d0e5741ad81f2be1802a2203d88435772d910ea9802c331d5e2d1ec5edd7c47d",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
@@ -331,18 +336,18 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 143488,
-   "sha256": "b215a880d060d65dc39ed9e6b9f5f18ac39c7e0469a1db61dc983ae3769fe215",
+   "bytes": 144106,
+   "sha256": "49daaabcd982db5c7a87daf7814400c19b8bef1c8dda0579287e952e7c7d4290",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {
-   "bytes": 28958,
-   "sha256": "3e0c25d3c2680b3c39ef71c91a0b6638c40b0abeab52724e16689b2d058325e1",
+   "bytes": 27980,
+   "sha256": "87e374a5499beb46ecf0d175fa87f1327e1541d023787f8174ad2186ac4fe2d6",
    "type": "text/javascript; charset=utf-8"
   },
   "views/profile.js": {
-   "bytes": 21553,
-   "sha256": "54e59d8f990fb69b0244fc3b421ecb85c1a60000752359414d3bedbe7541e818",
+   "bytes": 21581,
+   "sha256": "4c17b3be8f0a02e33a17b7fba0db86b31aca9fe2fa26726610c49de96958e457",
    "type": "text/javascript; charset=utf-8"
   },
   "views/progress.js": {

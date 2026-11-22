@@ -509,13 +509,20 @@ class ExternalPhase(Workspace):
                    card("60 — Ship it", status="In Progress", kind="Phase",
                         cards="- 61 — First\n- 62 — Second\n"), "in-progress")
 
+    # the phase runner is retired (task 188); these put the phase where a
+    # test needs it through the mechanics its phase scope rides
+    def start_phase(self) -> None:
+        from tests.test_phase_runs import drive_start
+        drive_start(self.PHASE_FILE)
+
     def run_pass(self) -> dict:
-        snapshots = phases.advance_all()
+        from tests.test_phase_runs import drive_pass
+        drive_pass(self.PHASE_FILE)
         self.settle()
-        return snapshots.get(self.PHASE_FILE, {})
+        return {}
 
     def test_the_phase_branch_is_cut_in_the_application(self):
-        phases.start_phase(self.PHASE_FILE, "in-progress")
+        self.start_phase()
         self.settle()
 
         branch = f"phase/{self.PHASE_FILE[:-3]}"
@@ -526,16 +533,17 @@ class ExternalPhase(Workspace):
         self.assertTrue((self.worktrees / self.PHASE_FILE[:-3]).is_dir())
 
     def test_the_phase_log_is_written_into_the_external_card(self):
-        phases.start_phase(self.PHASE_FILE, "in-progress")
+        self.start_phase()
         self.settle()
+        self.run_pass()
 
         body = self.body(self.PHASE_FILE)
         self.assertIn("## Phase log", body)
-        self.assertIn("run started on phase/60-ship-it", body)
+        self.assertIn("61 merged into phase/60-ship-it", body)
         self.assertEqual(list(self.app.glob("**/60-ship-it.md")), [])
 
     def test_a_member_branches_from_the_phase_tip_in_the_application(self):
-        phases.start_phase(self.PHASE_FILE, "in-progress")
+        self.start_phase()
         self.settle()
 
         self.assertEqual(self.stage_of(self.ONE), "review")
@@ -545,7 +553,7 @@ class ExternalPhase(Workspace):
                          "the member was cut from the phase's own branch")
 
     def test_the_run_works_the_whole_list_and_opens_one_pr(self):
-        phases.start_phase(self.PHASE_FILE, "in-progress")
+        self.start_phase()
         self.settle()
         for _ in range(5):
             snapshot = self.run_pass()
@@ -562,7 +570,7 @@ class ExternalPhase(Workspace):
                 f"{member} is in the phase branch")
 
     def test_finishing_the_phase_merges_in_the_application_and_sweeps_cards(self):
-        phases.start_phase(self.PHASE_FILE, "in-progress")
+        self.start_phase()
         self.settle()
         for _ in range(5):
             self.run_pass()

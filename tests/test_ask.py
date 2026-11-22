@@ -851,8 +851,10 @@ class ReadingsFromTheRealScheduler(Board):
         # chosen by the plan is a selection, not a run: nothing runs on it
         self.assertIn(plan["175"][0], ("chosen", "ready"))
         self.assertEqual(["49"], [r["card"] for r in readings["running"]])
-        # a phase the agreement does not name is said to be the runner's
-        self.assertEqual(plan["51"], ("unmanaged", "legacy-phase"))
+        # task 188: a phase the agreement does not name is its implicit
+        # scope's, never the retired runner's
+        self.assertNotIn(plan["51"][1], ("legacy-phase", "phase-not-adopted"))
+        self.assertNotEqual(plan["51"][0], "unmanaged")
 
     def test_occupied_capacity(self):
         self.in_force(capacity={"implementation": 1})

@@ -262,7 +262,9 @@ class PhaseScopesOnlyNarrow(Sandbox):
         self.assertEqual(orchestrator.authorize("implement", "7-card.md",
                                                 board=tasks)["code"], "slots-full")
 
-    def test_a_manual_run_no_scope_manages_still_counts(self):
+    def test_a_manual_run_still_counts(self):
+        # task 188: an unnamed phase is its implicit scope's, so a person's
+        # own runs on its member count there — and against the board's total
         self.own_execution()
         self.put_in_force(agreement())
         tasks = board(card("7"), card("50", "in-progress", phase="49"),
@@ -270,7 +272,7 @@ class PhaseScopesOnlyNarrow(Sandbox):
         self.running("50-card.md")
         self.running("50-card.md")
         found = orchestrator.usage(agreements.effective(), _tasks(tasks))
-        self.assertEqual(found["unscoped"]["implementation"], 2)
+        self.assertEqual(found["totals"]["implementation"], 2)
         self.assertEqual(orchestrator.authorize("implement", "7-card.md",
                                                 board=tasks)["code"], "slots-full")
         self.assertEqual(len(state.AGENTS), 2, "nothing was cancelled")
@@ -368,12 +370,19 @@ class PhaseScopesOnlyNarrow(Sandbox):
         self.assertTrue(orchestrator.authorize("implement", "7-card.md",
                                                board=tasks)["allowed"])
 
-    def test_a_phase_with_no_agreement_keeps_the_legacy_runner(self):
+    def test_a_phase_the_agreement_does_not_name_inherits_the_bench_scope(self):
+        # task 188: no legacy runner, no adoption — its implicit scope
         self.own_execution()
         self.put_in_force(agreement())
         tasks = board(card("49", is_phase=True), card("50", phase="49"))
-        self.assertEqual(orchestrator.authorize("implement", "50-card.md",
-                                                board=tasks)["code"], "legacy-phase")
+        answer = orchestrator.authorize("implement", "50-card.md", board=tasks)
+        self.assertEqual(answer["scope"], "phase:49")
+        self.assertNotEqual(answer["code"], "legacy-phase")
+        here = agreements.scope(agreements.effective(), "phase:49")
+        self.assertTrue(here["implicit"])
+        bench = agreements.scope(agreements.effective(), "bench")
+        self.assertEqual({w: v["allowed"] for w, v in here["authority"].items()},
+                         {w: v["allowed"] for w, v in bench["authority"].items()})
 
     def test_two_levels_only(self):
         resolved = agreements.resolve(self.with_phase(phases={"140": {}}))
