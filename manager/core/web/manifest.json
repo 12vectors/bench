@@ -296,8 +296,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 123773,
-   "sha256": "1c70a1f6a34a5edb4a796135cadb78cab59922a321b8ba876320471f7741450a",
+   "bytes": 124418,
+   "sha256": "638e2d50841f4ac23c7885a4f80181c3ae25178ccdeb392b6e41777616cd5134",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {

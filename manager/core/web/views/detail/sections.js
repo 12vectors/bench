@@ -95,7 +95,10 @@ function dsec(key, tab, html) {
 
 function dtabsHtml(t, tab, acc) {
   const count = {
-    acceptance: acc && acc.counts.total ? `${acc.counts.accepted}/${acc.counts.total}` : '',
+    // a count once there is something on record — ids or a run's results;
+    // a card nobody has reported on keeps a quiet tab, as before (task 190)
+    acceptance: acc && acc.counts.total && (acc.tracked || (acc.reporting || []).length)
+      ? `${acc.counts.accepted}/${acc.counts.total}` : '',
     reviews: acc && (acc.findingCounts.open + acc.findingCounts['fix-reported'])
       ? String(acc.findingCounts.open + acc.findingCounts['fix-reported']) : '',
     // required information that stops a launch, counted (task 132)
@@ -1342,10 +1345,16 @@ function criterionHtml(t, c, states) {
     ? `<p class="dnote">${c.skipped.length} later report${c.skipped.length === 1 ? ' was' : 's were'} set aside: ` +
       `a run's result does not overwrite ${c.by === 'person' ? "a person's decision" : "the independent review's result"} about the same commit. Each is in the history below.</p>` : '';
   const correctOpen = S.accOpen[`${t.file}:${key}:decide`] ?? false;
+  // each criterion leads with its first clause, so a long list scans by
+  // its leads and the rest reads after (task 149) — the whole wording is
+  // there, in order, and nothing is reworded
+  const m = String(c.text).match(/^(.{12,}?[.;:])\s+([\s\S]+)$/);
+  const words = m ? `<span class="alead">${esc(m[1])}</span> <span class="arest">${esc(m[2])}</span>`
+                  : `<span class="alead">${esc(c.text)}</span>`;
   return `<details class="arow ${esc(c.state)}" data-keep="${esc(key)}"${open ? ' open' : ''}>` +
     `<summary><span class="abox" aria-hidden="true">${ACC_GLYPH[c.state] || ''}</span>` +
     `<span class="amain"><span class="aword">${esc(c.word)}</span>` +
-    `<span class="afull">${esc(c.text)}</span>` +
+    `<span class="afull">${words}</span>` +
     (c.reason ? `<span class="areason">${esc(c.reason)}</span>` : '') +
     (by ? `<span class="aby">${by}</span>` : '') +
     `</span></summary>` +
@@ -1471,7 +1480,7 @@ function acceptanceBody(t, acc) {
     accReportingHtml(t, acc) +
     (items.length
       ? `<div class="acclist" role="list" aria-label="Acceptance criteria">` +
-        items.map(c => `<div role="listitem">${criterionHtml(t, c, acc.states)}</div>`).join('') + `</div>`
+        items.map(c => `<div role="listitem" class="aitem">${criterionHtml(t, c, acc.states)}</div>`).join('') + `</div>`
       : `<p class="dnote">This brief has no checklist criteria (lines like <code>- [ ] …</code>), so there is nothing to report against.</p>`) +
     how +
     (acc.removed.length || orphans.length
