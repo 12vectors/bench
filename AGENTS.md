@@ -9338,6 +9338,24 @@ or removes has its records marked for recheck. A person's request for a
 recheck is answered by the next independent review, at the same commit
 or a later one; an implementer's report does not answer it.
 
+**Promoting this change: a one-time new revision for cards that already
+carry ids.** A brief with no `<!-- ac:<id> -->` comment hashes exactly as
+it did before. A brief that already carries ids — criteria tracked by
+hand before task 190 — reads a different revision once, on the first
+board running this core, and nothing migrates it. So for those cards
+anything stored under the old revision stops matching: a waiting
+refinement proposal reads stale (**↻ Regenerate**), an open owner
+question needs re-evaluation, a relevance review reads as about an
+earlier brief, a work-base decision is decided again on the next pass,
+and the scheduler's "a run on this brief has ended" hold is lost, so an
+orchestrated card in To Do or In Progress whose last run ended without
+reaching Review may be launched again on the next pass. Before
+promoting, look for such cards on the live board — orchestrated, with
+criterion ids, in To Do or In Progress, their last run ended — and
+**Take over** or exclude any that must not start again until the first
+pass after the promotion has run. Nothing else changes, and it happens
+once: the new revision is stable from then on.
+
 ### How a run reports, and what bench keeps
 
 The work, repair (**↻ act on PR**) and PR-review prompts carry an
