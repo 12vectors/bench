@@ -467,7 +467,15 @@ class Changed(_Adoption):
         self.assertEqual(refused.extra["code"], "catalogue-stale")
 
 
-class OverHttp(_Adoption):
+class OverHttp(unittest.TestCase):
+    """The real server, on a disposable board of its own."""
+
+    def board(self) -> Board:
+        def seed(board):
+            (board.work / "reference").mkdir()
+            (board.work / "reference" / "api.md").write_text(GUIDE)
+            (board.work / "reference" / "screen.png").write_bytes(PNG)
+        return Board(self, prepare=seed)
 
     def call(self, board, method, path, body=None, headers=None):
         data = json.dumps(body).encode() if body is not None else None
@@ -481,36 +489,37 @@ class OverHttp(_Adoption):
             return err.code, json.loads(err.read() or b"{}")
 
     def test_the_whole_journey_and_the_old_address_keeps_serving(self):
-        with Board() as board:
-            status, out = self.call(board, "GET", "/api/brain/adoption")
-            self.assertEqual(status, 200)
-            self.assertEqual(len(out["adoption"]["items"]), 4)
-            status, out = self.call(board, "GET", "/api/brain/adoption/preview?name=api.md")
-            self.assertEqual(status, 200)
-            preview = out["preview"]
-            status, out = self.call(board, "POST", "/api/brain/adoption/apply", {
-                "request": "http-adopt-1", "op": "catalogue", "name": "api.md",
-                "source": preview["sha256"], "expected": "none", "title": "The API"})
-            self.assertEqual(status, 200, out)
-            entry_id = out["operation"]["id"]
-            status, out = self.call(board, "GET", f"/api/brain/entry?id={entry_id}")
-            self.assertEqual(out["entry"]["adoption"]["state"], "unchanged")
-            with urllib.request.urlopen(board.url + "/files/reference/api.md", timeout=10) as res:
-                self.assertEqual(res.read(), GUIDE.encode())
+        board = self.board()
+        status, out = self.call(board, "GET", "/api/brain/adoption")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(out["adoption"]["items"]), 2)
+        status, out = self.call(board, "GET", "/api/brain/adoption/preview?name=api.md")
+        self.assertEqual(status, 200)
+        preview = out["preview"]
+        status, out = self.call(board, "POST", "/api/brain/adoption/apply", {
+            "request": "http-adopt-1", "op": "catalogue", "name": "api.md",
+            "source": preview["sha256"], "expected": "none", "title": "The API"})
+        self.assertEqual(status, 200, out)
+        entry_id = out["operation"]["id"]
+        status, out = self.call(board, "GET", f"/api/brain/entry?id={entry_id}")
+        self.assertEqual(out["entry"]["adoption"]["state"], "unchanged")
+        with urllib.request.urlopen(board.url + "/files/reference/api.md", timeout=10) as res:
+            self.assertEqual(res.read(), GUIDE.encode())
 
     def test_a_foreign_page_cannot_adopt(self):
-        with Board() as board:
-            status, _ = self.call(board, "POST", "/api/brain/adoption/apply", {
-                "request": "http-foreign-1", **self.base()},
-                headers={"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"})
-            self.assertEqual(status, 403)
-        self.assertFalse((self.work / "brain").exists())
+        board = self.board()
+        status, _ = self.call(board, "POST", "/api/brain/adoption/apply", {
+            "request": "http-foreign-1", "op": "catalogue", "name": "api.md",
+            "source": sha(GUIDE.encode()), "expected": "none", "title": "T"},
+            headers={"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 403)
+        self.assertFalse((board.work / "brain").exists())
 
     def test_a_bad_name_is_400(self):
-        with Board() as board:
-            status, out = self.call(board, "GET", "/api/brain/adoption/preview?name=..%2Fx")
-            self.assertEqual(status, 400)
-            self.assertEqual(out["code"], "not-a-name")
+        board = self.board()
+        status, out = self.call(board, "GET", "/api/brain/adoption/preview?name=..%2Fx")
+        self.assertEqual(status, 400)
+        self.assertEqual(out["code"], "not-a-name")
 
 
 if __name__ == "__main__":
