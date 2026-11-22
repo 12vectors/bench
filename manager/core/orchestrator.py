@@ -136,7 +136,8 @@ def scope_of(task: dict, reading: dict) -> tuple[str | None, str | None]:
     # one model. The one exception is a phase the one-time upgrade held
     # back (work still running from before it, or a halt a person must
     # lift): scheduled by nobody until that clears.
-    if phase in agreements.phase_holds():
+    # An unreadable migration record holds every phase (fails closed).
+    if agreements.phase_hold(phase) is not None:
         return None, "phase-migrating"
     if agreements.scope(reading, sid) is None:
         return None, "off"
@@ -327,9 +328,9 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        action=action, card=filename)
     sid, why = scope_of(task, reading)
     if sid is None:
-        hold = agreements.phase_holds().get(
+        hold = agreements.phase_hold(
             taskfiles.canonical_number((task.get("phase") or {}).get("number")
-                                       or task.get("number") or "0"), {})
+                                       or task.get("number") or "0")) or {}
         return _refuse(why, {
             "phase-migrating": "this card's phase was held back by the "
                                "upgrade to the unified phase model: "

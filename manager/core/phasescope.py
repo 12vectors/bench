@@ -106,7 +106,7 @@ def mode(task: dict) -> str:
     number = _number(task) if task.get("isPhase") else (
         taskfiles.canonical_number((task.get("phase") or {}).get("number"))
         if (task.get("phase") or {}).get("number") else None)
-    if number and number in agreements.phase_holds():
+    if agreements.phase_hold(number) is not None:
         return "migrating"
     return "scoped"
 
@@ -307,10 +307,14 @@ def resume(filename: str, actor: str | None = None) -> dict:
     ownership line and a receipt on the card; launches nothing."""
     phase, tasks = _find(filename)
     number = _number(phase)
-    hold = agreements.phase_holds().get(number)
+    hold = agreements.phase_hold(number)
     if hold is None:
         raise Refused("not-held", f"{filename} is not held by the upgrade; "
                       f"nothing to resume")
+    if hold.get("kind") == "unreadable":
+        # resuming would write a fresh record over the unreadable one and
+        # lose every other phase's hold with it
+        raise Refused("model-unreadable", f"{filename}: {hold['reason']}")
     if hold.get("kind") != "held":
         raise Refused("hold-not-yours", f"{filename} is held because "
                       f"{hold.get('reason')}; that clears by itself once its "
@@ -544,6 +548,26 @@ def migrate_model(board: dict | None = None) -> dict:
                             "phase model: its phase scope owns it from here; "
                             "branch, log, members and receipts unchanged")
             summary.append(f"#{number} {words}")
+        # A `busy` hold whose phase card has left To Do, In Progress and
+        # Review (walked back, delivered, archived, deleted) is re-checked
+        # here, or it would never clear and every pass would migrate
+        # again: dropped once nothing of the old model works on it. Such a
+        # card is not scheduled by its stage anyway, and nothing is
+        # transferred for it — a card queued again later is its scope's,
+        # like any phase. A `held` hold is a person's and stays.
+        visited = {_number(t) for t in tasks
+                   if t.get("isPhase") and t["stage"] in ACTIVE}
+        by_number = {_number(t): t for t in tasks if t.get("isPhase")}
+        for number, hold in list(holds.items()):
+            if number in visited or (hold or {}).get("kind") != "busy":
+                continue
+            phase = by_number.get(number)
+            if phase is not None and quiescence(phase, tasks):
+                summary.append(f"#{number} held: {hold.get('reason')}")
+                continue
+            holds.pop(number, None)
+            summary.append(f"#{number} hold cleared: its card left the active "
+                           f"stages and nothing of the old model works on it")
         reading = agreements.effective()
         if reading.get("configured") and \
                 reading.get("capacityModel") == agreements.RESERVED:
@@ -567,21 +591,6 @@ def migrate_model(board: dict | None = None) -> dict:
                    else "partial", checked=_now())
         if doc["status"] == "complete" and not doc.get("completed"):
             doc["completed"] = _now()
-        _write_model(doc)
-        return doc
-
-
-def mark_fresh() -> dict:
-    """A fresh installation starts on the unified model: the record says
-    complete with nothing to move, and an existing record is left alone."""
-    with _MODEL_LOCK:
-        doc = agreements.phase_model()
-        if doc is not None:
-            return doc
-        doc = _new_model()
-        doc.update(status="complete", completed=_now(), fresh=True,
-                   summary=["a fresh installation: every phase is its phase "
-                            "scope's from the start"])
         _write_model(doc)
         return doc
 
@@ -1128,15 +1137,19 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
                     "members are queued", "you", "move the phase card into To "
                     "Do — that queues the phase and every unfinished member, "
                     "Backlog ones included")
-    hold = agreements.phase_holds().get(_number(phase) or "")
+    hold = agreements.phase_hold(_number(phase))
     if hold:
+        kind = hold.get("kind")
         return done("migrating", f"held by the upgrade to the unified phase "
                     f"model: {hold.get('reason')}",
-                    "you" if hold.get("kind") == "held" else "board",
-                    "resume it here (Orchestrator → Phases)"
-                    if hold.get("kind") == "held" else
-                    "it moves over by itself once that work ends",
-                    hold=hold.get("kind"))
+                    "board" if kind == "busy" else "you",
+                    {"held": "resume it here (Orchestrator → Phases)",
+                     "unreadable": "restore phase-model.json from "
+                                   "phase-model-backup.json's holds, or a "
+                                   "copy of your own, under manager/local/"
+                                   "state/orchestration/"}.get(
+                        kind, "it moves over by itself once that work ends"),
+                    hold=kind)
     if not valid or here is None:
         return done("orchestration-off", "queued, but orchestration is "
                     + ("off on this board: no operating agreement is in force"
@@ -1299,7 +1312,7 @@ def projection(board: dict | None = None,
                  "members": life.get("members") or [],
                  "delivered": phase["stage"] == "done",
                  "lifecycle": {k: v for k, v in life.items() if k != "members"}}
-        hold = agreements.phase_holds().get(_number(phase) or "")
+        hold = agreements.phase_hold(_number(phase))
         if hold:
             entry["hold"] = hold
             entry["resumable"] = hold.get("kind") == "held"

@@ -8063,9 +8063,14 @@ idempotent and restart-safe: a repeated upgrade, an interrupted run or a
 restart writes no second line and changes nothing more. A fresh
 installation starts on the unified model with nothing to move. A record
 that cannot be read (another version, a damaged file) is never written
-over: the migration stops there and says so in `GET /api/orchestration`
-(`schedule.phases.model`), and a person restores it from the recovery
-copy or removes it to migrate again.
+over, and it fails closed: which phases it held is not known, so **every**
+phase is held (`phase-migrating`, hold `unreadable`) and nothing schedules,
+prepares or resumes one. The migration stops there and says so in `GET
+/api/orchestration` (`schedule.phases.model`); a person restores it from
+the recovery copy, or removes it to migrate again — a phase the retired
+runner halted reads held again, since nothing wrote its ownership line
+meanwhile. A `busy` hold whose phase card leaves To Do, In Progress and
+Review is dropped once nothing of the old model works on it.
 
 **Older boards sharing the work state.** The ownership line is what an
 older bench reads to stand its runner down. If one still writes a

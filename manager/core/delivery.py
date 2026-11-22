@@ -829,7 +829,10 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
             sentence += " Checks are running."
         return ("agent-working", sentence, None, [hold])
 
-    # 5. a phase card is running a member
+    # 5. a phase card is running a member. Since task 188 no core module
+    # fills `phases.SNAPSHOTS` (the retired runner's pass did), so this row
+    # and the `halted` one below read nothing on a running board; they stay
+    # only while the vocabulary keeps `phase-running`.
     snap = ctx["phases"].get(filename) or {}
     if is_phase and snap.get("running"):
         working = next((m for m in snap.get("members") or []

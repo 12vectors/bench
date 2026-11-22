@@ -461,6 +461,72 @@ class UpgradeFixtures(Sandbox):
         self.tick()
         self.assertIn(("11-card.md", "in-progress"), self.launch.calls)
 
+    def test_an_unreadable_record_holds_every_phase(self):
+        """PR #190 review: a damaged or other-version migration record
+        fails closed. A phase the retired runner had halted must not be
+        scheduled — or have its ownership line written, which would lose
+        the hold for good — just because the record cannot be read."""
+        self.enable()
+        halted = self.legacy("9", "in-progress", "run started on phase/9-card",
+                             "halted at 11 — its CI is red", members=("11",))
+        fresh = self.legacy("6", "to-do", members=("41",))
+        self.assertEqual("held", phasescope.migrate_model()["holds"]["9"]["kind"])
+        written = self.owned(fresh)
+        path = agreements.phase_model_path()
+        path.write_text("{ not json", encoding="utf-8")
+        self.assertEqual({}, agreements.phase_holds())
+        for number in ("9", "6"):
+            self.assertEqual("unreadable",
+                             agreements.phase_hold(number)["kind"])
+        self.assertIsNone(agreements.phase_hold(None))
+        # every phase, held or not before, is scheduled by nobody
+        self.assertEqual("phase-migrating", self.item("11-card.md")["code"])
+        self.assertEqual("phase-migrating", self.item("41-card.md")["code"])
+        refused = orchestrator.authorize("implement", "11-card.md")
+        self.assertFalse(refused["allowed"])
+        self.assertIn("cannot be read", refused["reason"])
+        # the migration never writes over it, and nothing launches
+        self.assertEqual("unreadable", phasescope.migrate_model()["status"])
+        self.tick()
+        self.assertEqual([], [c for c in self.launch.calls
+                              if c[0] in ("11-card.md", "41-card.md")])
+        self.assertEqual("{ not json", path.read_text(encoding="utf-8"))
+        self.assertEqual((0, written), (self.owned(halted), self.owned(fresh)))
+        # nor can a resume write a fresh record over it
+        with mock.patch.object(phasescope, "_find", lambda f: (
+                next(t for s in self.board.collect()["stages"] for t in s["tasks"]
+                     if t["file"] == f),
+                [t for s in self.board.collect()["stages"] for t in s["tasks"]])):
+            with self.assertRaises(phasescope.Refused) as resumed:
+                phasescope.resume(halted, "ada")
+        self.assertEqual("model-unreadable", resumed.exception.code)
+        self.assertEqual("{ not json", path.read_text(encoding="utf-8"))
+        # another version is unreadable too, never complete
+        path.write_text('{"kind": "bench-phase-model", "v": 2, '
+                        '"status": "complete", "holds": {}}', encoding="utf-8")
+        self.assertEqual("phase-migrating", self.item("11-card.md")["code"])
+
+    def test_a_busy_hold_clears_once_its_card_leaves_the_active_stages(self):
+        """PR #190 review: a `busy` hold on a phase card walked back out of
+        To Do, In Progress and Review used to stay for ever, keeping the
+        record partial and every pass migrating again."""
+        self.enable()
+        busy = self.legacy("7", "in-progress", "run started on phase/7-card",
+                           members=("31",))
+        state.AGENTS["live"] = {"task": "31-card.md", "mode": "work",
+                                "status": "running", "started": time.time()}
+        self.assertEqual("partial", phasescope.migrate_model()["status"])
+        self.board.cards[busy]["stage"] = "backlog"
+        # still working: the hold stays
+        record = phasescope.migrate_model()
+        self.assertEqual(("partial", "busy"),
+                         (record["status"], record["holds"]["7"]["kind"]))
+        state.AGENTS["live"]["status"] = "finished"
+        record = phasescope.migrate_model()
+        self.assertEqual(("complete", {}), (record["status"], record["holds"]))
+        self.assertIn("hold cleared", " ".join(record["summary"]))
+        self.assertEqual(0, self.owned(busy), "nothing is transferred for it")
+
     def item(self, name):
         return next(i for i in scheduler.plan()["items"] if i["card"] == name)
 

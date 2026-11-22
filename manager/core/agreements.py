@@ -685,10 +685,36 @@ def phase_model() -> dict | None:
 
 
 def phase_holds() -> dict[str, dict]:
-    """Phase number → hold, for every phase the migration held back."""
+    """Phase number → hold, for every phase the migration held back. An
+    unreadable record names no phase here: `phase_hold` is the reading
+    that holds every phase for it, and what a scheduler must ask."""
     doc = phase_model()
+    if (doc or {}).get("status") == "unreadable":
+        return {}
     holds = (doc or {}).get("holds")
     return holds if isinstance(holds, dict) else {}
+
+
+UNREADABLE_HOLD = (
+    "the phase-model migration record (manager/local/state/orchestration/"
+    "phase-model.json) cannot be read, so which phases the upgrade held back "
+    "is not known; every phase is held until a person restores it from "
+    "phase-model-backup.json or a copy of their own")
+
+
+def phase_hold(number: str | None) -> dict | None:
+    """The hold on one phase, or None. Fails closed: while the migration
+    record is unreadable — damaged, or another version — every phase is
+    held (`kind: unreadable`), because the holds it recorded (a halt a
+    person must lift) cannot be told apart from no hold at all."""
+    if not number:
+        return None
+    doc = phase_model()
+    if (doc or {}).get("status") == "unreadable":
+        return {"kind": "unreadable", "reason": UNREADABLE_HOLD,
+                "problem": doc.get("problem")}
+    holds = (doc or {}).get("holds")
+    return (holds if isinstance(holds, dict) else {}).get(number)
 
 
 def compare(before: dict, after: dict) -> list[dict]:

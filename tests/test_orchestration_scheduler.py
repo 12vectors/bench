@@ -182,7 +182,10 @@ class Sandbox(unittest.TestCase):
         self.launch = Launcher()
         # a fresh installation: on the unified phase model from the start
         # (task 188); the upgrade itself is tests/test_phase_queue.py's
-        phasescope.mark_fresh()
+        # (a fresh board gets its record from migrate_model at start; here
+        # the record is written directly so no migration pass runs)
+        phasescope._write_model(dict(phasescope._new_model(),
+                                     status="complete"))
 
     def _note(self, filename, stage, kind, fields, *, key, **_):
         self.notes.append({"file": filename, "kind": kind, "key": key, **fields})
