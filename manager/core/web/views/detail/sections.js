@@ -1712,7 +1712,7 @@ function wireFiling(t) {
   $('#drawerbody').querySelectorAll('[data-rfop]').forEach(btn => {
     const op = btn.dataset.rfop;
     const action = btn.dataset.rfaction;
-    wireAction(btn, `rf:${op}:${action}`, {
+    wireAction(btn, `${t.file}::rf:${op}:${action}`, {
       label: action === 'file' ? 'Retry filing' : 'Retry commit', confirm: true,
       run: async () => {
         const res = await post('/api/reports/filing/retry', { operation: op, action });
