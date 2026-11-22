@@ -146,7 +146,9 @@ function restoreTask(state, task, to) {
 /* No answer, or a success that says nothing about what happened, is not
    a confirmation: the reply must name the card it moved. */
 function unconfirmed(r) {
-  return r.status === 0 || (r.ok && !(r.data && r.data.file));
+  // ⌘Z after Archive all (task 187) names the set it brought back instead
+  return r.status === 0 ||
+    (r.ok && !(r.data && (r.data.file || Array.isArray(r.data.batch))));
 }
 
 function archiveCard(file, from) {

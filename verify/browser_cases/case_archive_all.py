@@ -175,7 +175,8 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
                " {key: 'z', ctrlKey: true, bubbles: true}))")
         self.assertTrue(b.wait("document.querySelector('#toastmsg').textContent"
                                ".includes('brought back to done/')", 10),
-                        "⌘Z did not bring the set back")
+                        "⌘Z did not bring the set back: " +
+                        str(b.eval("document.querySelector('#toastmsg').textContent")))
         for name in CARDS:
             self.assertEqual("done", self.where(name))
         self.assertTrue(b.wait(f"!!document.querySelector('#board article.card"
