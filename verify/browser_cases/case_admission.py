@@ -21,7 +21,16 @@ is launched, and everything is put back.
   *Target changed* with **Update against target and verify** as its
   primary action, the armed click updating its own branch on the
   fixture, and the combined head needing its own check and a fresh
-  review.
+  review. Then (review round 2): the target moving again while the review
+  is still to come offers the update first, with the review beside it; an
+  update refused for uncommitted work is said in an alarm toast and
+  changes nothing; and the combined head's check reads *Integration check
+  running*, then *Integration check failed*.
+
+Not drawn here: the Orchestrator's admission queue (a card waiting on
+another's admission into the same target) and the brief *Updating*
+state, which lasts only while git merges; both are held by the backend
+tests in `tests/test_admission.py` and `tests/test_orchestration_delivery.py`.
 """
 
 import hashlib
@@ -430,6 +439,131 @@ class UpdatingAgainstTheTarget(unittest.TestCase):
         self.assertEqual("review-needed", found["status"]["word"],
                          "the approval of the old head is not this head's")
         self.assertTrue(found["integration"]["fresh"])
+
+    def land(self, name: str) -> None:
+        """Accepted work lands on the target the card does not hold."""
+        backend = S["backend"]
+        git, app = backend._git, backend.app
+        git(app, "checkout", "-q", TARGET2)
+        (app / name).write_text("accepted\n", encoding="utf-8")
+        git(app, "add", name)
+        git(app, "commit", "-q", "-m", f"accepted: {name}")
+        git(app, "checkout", "-q", "main")
+        self.card.write_text(self.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    def toast(self) -> dict:
+        return S["browser"].eval("""(() => { const t = document.querySelector('#toast');
+          return { shown: t.classList.contains('show'), err: t.classList.contains('err'),
+                   text: document.querySelector('#toastmsg').innerText }; })()""")
+
+    def test_5_the_update_comes_first_and_a_refused_one_is_said(self):
+        """Review round 2: a card whose target moved while its review is
+        still to come is offered the update first — the review stays
+        offered beside it — and an update the server refuses is said in
+        an alarm toast, with the branch left exactly as it was."""
+        backend = S["backend"]
+        self.land("admission-accepted-2.txt")
+        found = read2()
+        self.assertEqual("target-changed", found["status"]["word"], found["status"])
+        self.assertEqual("update-target", found["primary"]["action"])
+        self.assertIn("review-pr", [o.get("action") for o in found.get("others") or []])
+        head = found["candidate"]["commit"]
+        # uncommitted work in the card's worktree: the update must refuse
+        stray = backend.trees / STEM2 / "stray-189.txt"
+        stray.write_text("not committed\n", encoding="utf-8")
+        try:
+            for width, height, dark in ((1280, 900, False), (390, 844, True)):
+                with self.subTest(width=width, dark=dark):
+                    b = self.load("target-changed", width, height, dark)
+                    self.open(b)
+                    got = self.overview()
+                    self.assertEqual("target-changed", got["word"])
+                    self.assertIn("Update against target", got["primary"])
+                    self.assertIn("still to come", b.eval(
+                        "document.querySelector('#drawer.open #dsec-overview .dstatus').innerText"))
+                    button = "#drawer.open #dsec-overview .dstatus .dsacts button[data-dslot]"
+                    b.click(button)
+                    b.click(button)
+                    if not b.wait("document.querySelector('#toast').classList.contains('show')"
+                                  " && document.querySelector('#toast').classList.contains('err')", 15):
+                        raise bv.CheckFailed(f"no alarm toast after a refused update: {self.toast()}")
+                    said = self.toast()
+                    self.assertIn("uncommitted", said["text"])
+                    shot(f"admission-update-refused-{width}-{'night' if dark else 'day'}")
+                    self.assertEqual(head, read2()["candidate"]["commit"],
+                                     "a refused update changed the branch")
+                    b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        finally:
+            stray.unlink(missing_ok=True)
+
+    def test_6_the_combined_check_running_then_failed(self):
+        """The update's combined head: its required check running is
+        *Integration check running*, and its failure there is *Integration
+        check failed*, with the repair as the next step."""
+        backend = S["backend"]
+        head = read2()["candidate"]["commit"]
+        status, body = backend.post("/api/card/integration/update",
+                                    {"file": f"{STEM2}.md", "head": head}, timeout=60)
+        self.assertEqual(200, status, body[:300])
+        self.card.write_text(self.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        self.assertEqual("integration-check-needed", read2()["integration"]["state"])
+        # the check now waits on a sentinel, then fails: the combination broke
+        sentinel = backend.base / "admission-hold-189"
+        sentinel.write_text("hold\n", encoding="utf-8")
+        check = backend.base / "admission-check.py"
+        check.write_text(
+            "import pathlib, sys, time\n"
+            f"p = pathlib.Path({str(sentinel)!r})\n"
+            "end = time.time() + 90\n"
+            "while p.exists() and time.time() < end:\n"
+            "    time.sleep(0.2)\n"
+            "print('combined behaviour broken')\n"
+            "sys.exit(1)\n", encoding="utf-8")
+        import threading
+        answer: dict = {}
+        asking = threading.Thread(target=lambda: answer.update(r=backend.post(
+            "/api/verify", {"file": f"{STEM2}.md", "stage": "review", "check": "unit"},
+            timeout=150)), daemon=True)
+        asking.start()
+        try:
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                if read2()["integration"]["state"] == "integration-check-running":
+                    break
+                time.sleep(0.5)
+            found = read2()
+            self.assertEqual("integration-check-running", found["integration"]["state"],
+                             found["integration"])
+            self.assertEqual("checks-running", found["status"]["word"])
+            b = self.load(None, 1280, 900, True)
+            self.open(b)
+            if not b.wait("(document.querySelector('#drawer.open #dsec-overview .dint') || {})"
+                          ".dataset?.integration === 'integration-check-running'", 20):
+                raise bv.CheckFailed(f"the Overview read {self.overview()}")
+            self.assertIn("Integration check running", self.overview()["text"])
+            shot("admission-check-running-1280-night")
+            self.assertEqual([], b.eval("window.__posts"), "reading posted something")
+            b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        finally:
+            sentinel.unlink(missing_ok=True)
+            asking.join(timeout=120)
+        self.card.write_text(self.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        found = read2()
+        self.assertEqual("integration-check-failed", found["integration"]["state"],
+                         found["integration"])
+        self.assertEqual("check-failed", found["status"]["word"])
+        for width, height, dark in ((390, 844, False), (1280, 900, False)):
+            with self.subTest(width=width, dark=dark):
+                b = self.load(None, width, height, dark)
+                self.open(b)
+                if not b.wait("(document.querySelector('#drawer.open #dsec-overview .dint') || {})"
+                              ".dataset?.integration === 'integration-check-failed'", 20):
+                    raise bv.CheckFailed(f"the Overview read {self.overview()}")
+                got = self.overview()
+                self.assertEqual("check-failed", got["word"])
+                self.assertIn("Integration check failed", got["text"])
+                shot(f"admission-check-failed-{width}-{'night' if dark else 'day'}")
+                b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
 
 
 if __name__ == "__main__":
