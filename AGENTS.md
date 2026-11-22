@@ -394,13 +394,16 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   two writes it owns — a person's decision about an area and a proposed
   setup card — held to a revision and a request identity. It composes
   `readiness`, `previews` and `setuptasks`, so it sits right of all three
-- `phases.py` — a phase run: its own branch, its cards merged into it one
-  at a time. A beat, not an agent; it holds no registry of where a phase is
-- `phasescope.py` — a phase run by its scoped sub-orchestrator (task
-  143, D6): explicit adoption from the phase runner (refused until it is
-  quiescent), which member may start under the phase's strategy, and the
-  phase branch cut, a member integrated and the phase finished through
-  `phases`' own mechanics, each with an intent and a receipt. It launches
+- `phases.py` — a phase's integration branch and log: the mechanics its
+  phase scope rides (cut, merge a checked member, freshen, finish) and
+  the log's readers. The phase runner that once lived here is retired
+  (task 188); `start_phase`/`stop_phase` refuse with `Retired`
+- `phasescope.py` — every phase run by its scoped sub-orchestrator (task
+  143, D6; task 188): which member may start under the phase's strategy,
+  the phase branch cut, a member integrated and the phase finished
+  through `phases`' own mechanics, each with an intent and a receipt; the
+  lifecycle every surface reads; and the one-time move to the unified
+  phase model (`migrate_model`) with its holds and `resume`. It launches
   nothing (see "Phase scopes: one scheduler per phase")
 - `refine.py` — refining a card on the board: comments, the one
   refinement job a person asks for, its validated proposal, and the
@@ -2546,10 +2549,11 @@ there, and firing it is the deliberate reassignment. An unclaimed card
 claims itself on launch. One agent per task at a time, and a work agent's
 worktree must not already exist when it starts.
 
-It also refuses a **phase card**, and the refusal names **▸ run phase** —
+It also refuses a **phase card**, and the refusal says it is queued by
+moving it into To Do (task 188: the Orchestrator then runs its members) —
 a phase card's body is a list of other cards, so a work agent handed one
-implements the table of contents. The board's own page offers one action
-or the other and never both, but a UI layer can be stale or bypassed, so
+implements the table of contents. The board's own page never offers ▸
+start work on a phase card, but a UI layer can be stale or bypassed, so
 the rule lives where every other launch refusal lives: with the stage
 check, ahead of the claim and well ahead of the worktree, costing nothing
 and leaving nothing to clean up. Which headless kinds a phase card may
@@ -3058,7 +3062,7 @@ ignores the new keys.
 The reading offers, and a person acts (task 119). A stacked card's
 **Stack** block carries a button for each action its edge makes worth a
 look — and only on an ordinary card stacked on a card: a phase member's
-relation to its phase is the phase runner's, and a phase card lands as a
+relation to its phase is its phase scope's, and a phase card lands as a
 whole. A button opens the action's **sheet** (`POST
 /api/card/stack/preview`): the identities it is bound to — this card's
 head, the parent's tip, what it targets now and would target, the
@@ -7026,12 +7030,15 @@ still written in the reserved model is refused
 reservations back.
 
 **One scope per card.** A standalone card is the Bench scope's; a phase
-card and its members are their phase scope's when the agreement names
-the phase **and** a person has adopted it (task 143, see "Phase scopes:
-one scheduler per phase"). A phase the agreement does not name
-(`legacy-phase`), or names but nobody adopted (`phase-not-adopted`), stays
-with the existing phase runner and no orchestrator scope schedules it, so
-two schedulers never share members. Backlog and Done are never managed.
+card and its members are their phase scope's, always (task 188, see
+"Phase scopes: one scheduler per phase"). A phase the agreement does not
+name is an *implicit* scope that inherits the Bench scope whole — its
+authority, pause and enablement and the default phase ceiling; a named
+entry only narrows. Nobody adopts a phase and there is no phase runner,
+so two schedulers never share members; a phase the upgrade held back is
+scheduled by nobody (`phase-migrating`) until its hold clears. Backlog
+and Done are never managed — except a Backlog member of a queued phase,
+which is queued with it (`taskfiles.queue_state`).
 
 **Pause, exclusion and hand-back** (`POST /api/orchestration/scope`) are
 a person's direct changes under the same revision guard. A Bench pause
@@ -7098,7 +7105,8 @@ Bench-Mover-Kind: person
 
 `person` is a move made through the page (or a merge & clean up a person
 clicked); `automated` is the board's own bookkeeping — an agent's run
-moving its card to review or back, the phase runner, a launch walked
+moving its card to review or back, a phase scope's step (a queued
+member's launch moving it out of Backlog included), a launch walked
 back, a phase's sweep. A move that was not committed (`BOARD_COMMIT_MOVES`
 off, or a commit that failed) is one line in the machine-local journal
 `manager/local/state/movements/journal.jsonl` instead, naming the
@@ -7142,8 +7150,9 @@ scope, whoever moved the card there.
 
 **Phases delegate, members stay their own.** A phase's members are
 delegated by the phase card's own qualifying move, inside the phase
-scope only — the Bench scope never acquires them, and a phase the
-agreement does not name stays the phase runner's whatever its movement.
+scope only — the Bench scope never acquires them, and a phase card
+someone else moved last keeps its members theirs, named in the agreement
+or not.
 A member someone else holds (`member-held`) or whose own latest move was
 someone else's or ambiguous (`member-unreconciled`) needs reconciling —
 take it over, or move it yourself — before a child execution touches it.
@@ -7880,33 +7889,68 @@ launches nothing.
 
 ### Phase scopes: one scheduler per phase
 
-A phase can be run by the phase runner (see "A phase runs itself, on a
-branch of its own") or by its own **phase scope** — the same orchestration
-engine as the Bench scope, narrowed by the phase's entry in the agreement
-(task 143, `phasescope.py`). Never by both: every phase has exactly one
-scheduling owner, and which one is written on the phase card itself.
+Every phase is run by its own **phase scope** — the same orchestration
+engine as the Bench scope (tasks 143 and 188, `phasescope.py`). There is
+one execution model and one scheduler. The historical phase runner (a
+beat with its own **▸ run phase** and phase **‖ hold**) and the adoption
+step that handed a phase from it to its scope are **retired**.
 
-**Adoption is explicit, and waits for quiet.** Naming a phase in the
-agreement does not take it from the runner. A person adopts it (`POST
-/api/orchestration/phase`, `{"card", "action": "adopt"}`), and adoption is
-refused, naming what is still working, while the runner has a run in
-force (‖ hold it first), an agent runs on the phase card or a member, or
-an operation on any of them has no receipt. It also needs the agreement
-to name the phase and this installation to be the one that executes.
-Adoption writes one line to the phase log — `scope adopted by <name> —
-…` — and changes nothing else: the phase branch, its worktree, the
-members' branches, the log and every member the runner already
-integrated stay exactly as they were, and an integrated member is never
-run again. The runner reads that line where it reads everything else and
-stands down (its state reads `scoped`): its beat advances nothing, **▸ run
-phase** is refused, and its **‖ hold** is refused with the two acts it
-used to combine named apart. `"action": "release"`, under the same
-quiescence, hands the phase back; the runner does not resume until a
-person runs it. A phase that is never adopted runs exactly as it always
-did — which is also why the phase building this feature is not migrated
-mid-flight: nothing adopts a phase by itself.
+**Queueing a phase is one move (task 188).** Moving the phase card from
+Backlog into **To Do** is the person's queue and delegation (D1): it
+queues the phase and every unfinished member with it, Backlog members
+included. Nothing else is needed — no agreement entry for the phase, no
+adoption, no per-phase allocation, no member moved by hand:
 
-**What the phase entry says.** Beside `enabled`, `paused`, `authority`,
+1. A teammate writes a phase card listing three cards, all in Backlog.
+2. You drag the phase card into To Do.
+3. On its next pass the Orchestrator moves the phase card into In
+   Progress, cuts `phase/<stem>` and writes one ownership line to its log.
+4. The first member whose turn it is (and whose dependencies are
+   integrated) starts through ▸ start work's own path; that launch is
+   what moves it from Backlog to In Progress, as an automated move.
+5. It is reviewed and integrated; the next member starts; when every
+   member is integrated the phase card moves to Review with its one PR.
+
+Queueing guarantees nothing about *when*: a queued member still waits for
+its turn, its dependencies, its required information, the board's
+authority, pause and capacity, exactly as any card does — and says which.
+With no agreement in force the phase reads `orchestration-off` and waits.
+
+**Stored stage and effective queue.** A member's file stays where it is:
+its *stored* stage is the directory, and it is never moved, rewound or
+relaunched by queueing. Its *effective* queue state is read by one
+resolver (`taskfiles.queue_state`, carried on every card as `queue`) that
+the scheduler, `orchestrator.authorize`, the Board and Phases faces, the
+Orchestrator and the API all read:
+
+| stored stage | phase card in To Do or In Progress | otherwise |
+| --- | --- | --- |
+| Backlog | `queued`, **inherited** — shown as *queued with phase* | `not-queued` (`blocked` when its membership does not resolve) |
+| To Do | `queued` | `queued` |
+| In Progress, Review, Done, Archived | as they are: never rewound, re-queued or relaunched | the same |
+
+A member in Backlog of a phase still in Backlog is not queued; one of a
+phase past In Progress queues nothing new. A card two phases both list,
+or a phase whose `## Cards` names a card that is not there, is `blocked`
+with the reason: nothing is cut, moved or started until the lists are
+fixed.
+
+**Pause, dequeue, requeue.** Pausing a phase (Orchestrator → Phases, any
+phase, named in the agreement or not — the entry written is only
+`{"enabled": true, "paused": true}`) stops new starts in it; pausing the
+Bench scope stops them everywhere. Neither cancels a run in flight: its
+ending is observed, and cancelling one member's run is that card's own ‖
+hold. Moving the phase card back to Backlog dequeues its Backlog members
+(they read `not-queued` again); moving it to To Do again requeues them.
+Editing `## Cards` changes membership on the next read: an added Backlog
+member of a queued phase is queued, a removed one is not, and nothing in
+flight is cancelled either way. A repeated move, a restart and a replica
+reading the same cards change nothing: launches are keyed operations in
+the ledger (one per decision), the branch is cut once, and only the
+designated execution installation acts.
+
+**What the phase entry says.** An entry is optional and only narrows.
+Beside `enabled`, `paused`, `authority`,
 `limits` (its own ceilings at once and per day, which reserve nothing;
 `allocation` in a legacy reserved agreement), `ceilings`, `exclusions`
 and `handback` (authority and ceilings only narrowing the Bench scope's),
@@ -7914,28 +7958,31 @@ a phase names its `strategy`:
 
 | strategy | which member may start |
 | --- | --- |
-| `sequential` (default) | the runner's rule: one at a time, in the order `## Cards` lists them, each after the one before it is **integrated** into the phase branch |
+| `sequential` (default) | one at a time, in the order `## Cards` lists them, each after the one before it is **integrated** into the phase branch |
 | `dependencies` | any member whose in-phase `**Depends on:**` are integrated, side by side up to the phase's ceiling and the board's free slots |
 
 Membership stays the phase card's `## Cards` list, and members still
-inherit the phase branch: no member names a base of its own. A member in
-Backlog is never pulled out of it — a sequential phase waits on it, and
-says so. A member someone else holds, or whose own latest move was
-another person's, is `not-eligible` with the remedy until it is taken
-over or moved (see "Last mover, not last editor").
+inherit the phase branch: no member names a base of its own. A member
+already integrated (the log's `<n> merged into` line, the retired
+runner's merges included) is never launched again, whatever its stage. A
+member someone else holds, or whose own latest move was another person's,
+is `not-eligible` with the remedy until it is taken over or moved (see
+"Last mover, not last editor").
 
-**How a pass runs a scoped phase.** Each step has an intent and a receipt
-in the operation ledger and its record on the card it is about:
+**How a pass runs a phase.** Each step has an intent and a receipt in the
+operation ledger and its record on the card it is about:
 
-1. **Prepare** — a phase card the owner moved into To Do is put
-   in-progress (an automated move; the delegation stands) and its branch
-   cut through the runner's own `ensure_branch`; main is merged into it on
-   the beat while no member runs, a conflict a blocker on the phase card.
+1. **Prepare** — a phase card the owner moved into To Do gets the
+   ownership line in its log, is put in-progress (an automated move; the
+   delegation stands) and has its branch cut through
+   `phases.ensure_branch`; main is merged into it on the beat while no
+   member runs, a conflict a blocker on the phase card. An empty or
+   unresolvable list is a blocker instead, with nothing cut.
 2. **Start members** — the scheduler, through ▸ start work's own path,
    under the strategy and the phase's own slots and starts.
 3. **Integrate** — a member in review/ gets its required *member* checks
    and, where the phase delegates `review`, an independent review, then
-   is merged into the phase branch through the runner's own merge (the
+   is merged into the phase branch through `phases.merge_member` (the
    member gate read again, the validated commit merged, never a rebase).
    Exactly the head that was checked and reviewed is merged — under an
    ungated member rule too — and a member branch that moved on since is
@@ -7945,7 +7992,7 @@ in the operation ledger and its record on the card it is about:
    `integrated` — **in the phase branch, not delivered**: it stays in
    review/ and is not in the application base.
 4. **Finish** — once every member is integrated: the branch published,
-   the phase card into review/ and its PR opened, as the runner does.
+   the phase card into review/ and its PR opened.
 5. **Deliver** — the phase card is delivered like any card, under the
    **integration** merge rule: its checks run and its review is read at
    the *integrated head*, never a member's, and an independent review
@@ -7968,43 +8015,78 @@ ending is observed. Cancelling is the member run's own **‖ hold**.
 git — the phase branch holds the head (integrated) or does not (nothing
 merged) — and preparing and finishing are idempotent, so an unconfirmed
 one is simply asked again. `schedule.phases` in `GET /api/orchestration`
-lists every phase with its owner, strategy, integrated members and, for a
-scoped phase, each member's state; for a named but unadopted phase,
-whether it is adoptable now and what still works it. Reading it launches,
-merges and writes nothing. The event wording of a phase on a non-default
-base is card 61's, not repeated here.
+lists every phase with its owner, strategy, integrated members, each
+member's state with its stored and effective stage, any upgrade hold,
+and the migration record (`model`). Reading it launches, merges and
+writes nothing. The event wording of a phase on a non-default base is
+card 61's, not repeated here.
+
+### Upgrading to the unified phase model
+
+Boards from before task 188 may hold phases the retired runner was
+running, halted or held, and phases a person adopted. The first start of
+an upgraded board (and the start of every scheduler pass until nothing is
+held) runs a one-time, versioned migration, `phasescope.migrate_model`.
+It is the same on vendored, source-hosted and external installs, because
+it runs inside the board rather than in an install script. Only the
+designated execution installation (or a board with no designation)
+migrates; a replica writes nothing to the shared cards.
+
+| found on a phase card in To Do, In Progress or Review | what the migration does |
+| --- | --- |
+| adopted already | nothing: it was its scope's |
+| never run by the runner, or run to the end, or running with nothing working now | moved over: one ownership line in its log (`scope adopted by the Orchestrator — unified phase model …`) and a receipt on the card |
+| halted, or held by a person, under the runner | **held** (`held`) until a person resumes it in Orchestrator → Phases (`POST /api/orchestration/phase`, `{"card", "action": "resume"}`): carrying on after a halt was a person's decision and stays one |
+| an agent or an unsettled operation the runner started is still on it | **held** (`busy`): that live worker is kept, never cancelled, and the transfer finishes by itself on the first pass after it ends |
+
+Nothing is launched, merged, moved, rewound or cancelled by it. Branches,
+worktrees, logs, members, receipts and every run's frozen permissions stay
+as they are, and a member the runner integrated is never run again. The
+agreement is not rewritten: an existing phase entry keeps narrowing
+(pause, enablement, authority, limits) exactly as before. A held phase is
+scheduled by nobody (`phase-migrating`), and its card says why and who
+holds the next step. Under a reserved-capacity agreement an unnamed phase
+has no slot of its own, and the summary says to migrate to shared
+capacity. Before any change a recovery copy is written once —
+`manager/local/state/orchestration/phase-model-backup.json`: the
+agreement, the designation, each phase's log and mode and the open
+operations — and the record, `phase-model.json` beside it, says
+`complete` only after every transfer is durable on its card. It is
+idempotent and restart-safe: a repeated upgrade, an interrupted run or a
+restart writes no second line and changes nothing more. A fresh
+installation starts on the unified model with nothing to move.
+
+**Older boards sharing the work state.** The ownership line is what an
+older bench reads to stand its runner down. If one still writes a
+`run started` or `scope released` line after it, this board ignores it —
+the phase stays its scope's — and the phase says *an older bench wrote …*
+until that board is upgraded. **▸ run phase** and its ‖ hold
+(`/api/phase/run`, `/api/phase/stop`) and adoption and release answer
+`410` with the way forward; nothing they could do is done.
 
 ### A phase's owner, its state, and recovering from a mistaken move
 
-A phase has two supported ways to run (task 160), and the card says
-which one it is on:
-
-| path | how it starts | who advances it | the face says |
-| --- | --- | --- | --- |
-| **the phase runner** | move the phase card into In Progress, then **▸ run phase** | the runner's beat, one member at a time | `not started`, the member in flight, `held` or `halted` |
-| **its phase scope** | name the phase in the operating agreement (it inherits the default ceiling), move it into To Do, then **adopt** it in Orchestrator → Phases | the scheduler's passes, under the agreement | the phase scope's lifecycle word and its next step |
-
-Naming a phase in the agreement does not adopt it: until a person does,
-it reads `not adopted` and the runner still owns it. Once adopted, the
-runner's ▸ run phase and its ‖ hold are not offered on the phase card;
-the card offers **⟶ orchestrator** instead, and each member run is
+There is one way to run a phase (task 188; task 160 had two): move its
+card into To Do. The Orchestrator owns it from there, and the card says
+where it stands. An in-progress phase card offers **⟶ orchestrator**;
+there is no ▸ run phase and no phase ‖ hold, and each member run is
 cancelled on its own card.
 
 **One reading for every surface.** `phasescope.lifecycle` is the one
 answer, carried by `/api/state` as `phaseLifecycle` and by `GET
 /api/orchestration` as each phase's `lifecycle`. The Board's phase face,
 the Phases lane and Orchestrator → Phases draw it word for word: the
-owner (`phase runner` or `phase scope`), a word, a sentence and the one
-next step with who holds it. An adopted phase is never read off the
-runner's snapshot, so a scoped phase whose member is running reads
-`phase scope — on #157 …`, never "not started".
+owner (`phase scope`), a word, a sentence and the one next step with who
+holds it, and which members are queued with the phase while stored in
+Backlog (`inherited`).
 
 | word | means | next step |
 | --- | --- | --- |
-| `not-configured` | the agreement names no scope for it: the runner's | ▸ run phase |
-| `not-adopted` | named, not adopted: still the runner's | adopt it, or what still works it |
-| `preparing` | adopted; its branch is cut on the next pass | wait |
-| `queue-needed` | the next member is in Backlog | move it into To Do. Nothing pulls a card out of Backlog |
+| `not-queued` | the phase card is in Backlog: neither it nor its members are queued | move the phase card into To Do |
+| `orchestration-off` | queued, but no valid agreement is in force | apply one in Orchestrator → Operating agreement |
+| `migrating` | held by the upgrade to the unified model | resume it in Phases (`held`), or wait for the work it names (`busy`) |
+| `blocked` | its `## Cards` list, or a member's membership, does not resolve | fix the lists |
+| `preparing` | queued; its branch is cut on the next pass | wait |
 | `ready` | a member is queued and may start | the next pass starts it |
 | `waiting` | a dependency, a slot (its ceiling or the board's), today's launches, or a ceiling of 0 | the reason says whose |
 | `working` | a run is on a member | the agent's; integration follows review |
@@ -8016,8 +8098,9 @@ runner's snapshot, so a scoped phase whose member is running reads
 
 A member's readiness in Orchestrator → Phases is the scheduler's own
 plan — authorization, capacity, dependencies and the operation ledger —
-never the strategy alone, and a member in Backlog reads `in-backlog`,
-never `ready`.
+never the strategy alone. A Backlog member of a queued phase reads its
+plan state like any other, marked *queued with its phase*; one of an
+unqueued phase reads `not-queued`, never `ready`.
 
 **Budgets in plain words.** Each phase lists how many runs it has now
 against its ceiling (the default phase ceiling or its own limit), how
@@ -8030,8 +8113,7 @@ launch is one agent run: an implementation, an independent review, a
 repair or a diagnosis. So a budget of one launch a day is named as
 covering one of those, not a member's whole lifecycle. A ceiling of
 zero, or today's launches used up, is said as what is missing and where
-to change it. Nothing here raises a limit, queues a member or adopts a
-phase.
+to change it. Nothing here raises a limit or queues a member.
 
 **In flight means worked, never staged.** Under the sequential strategy
 a member is held while another member of the phase is in flight. In
@@ -8261,8 +8343,9 @@ the rule.
   their options and answer; reasoning results are labelled
   agent-reported, with proposed actions said to be proposals; a phase
   card lists its members' questions, each answered on its member.
-- **Phases** — every phase card: its scheduling owner (phase runner or
-  phase scope), strategy, integrated members (*in the phase branch, not
+- **Phases** — every phase card: its scheduling owner (its phase scope,
+  always), any upgrade hold with **Resume**, strategy, which members are
+  queued with it while stored in Backlog, integrated members (*in the phase branch, not
   delivered*), members and their states, and the phase scope's effective
   authority and capacity (parent ∩ phase).
 - **Recovery** — the circuit breaker, operations held for a person (an
@@ -8286,7 +8369,7 @@ it fires: pause and resume of the Bench scope (reaching every phase
 scope) or of one phase scope (that phase only); take over manually and
 reclaim; exclude and include; **cancel** one named run (‖ hold: that run
 and the checks it asked for, branch, worktree and history kept, nothing
-else paused or retried); adopt or release a phase; designate this
+else paused or retried); resume a phase the upgrade held; designate this
 installation or hand execution over; settle an unknown outcome as
 launched or not, or release a refused launch; mark an incident handled;
 reset the circuit breaker; answer or withdraw a question. A refusal is
@@ -8463,13 +8546,14 @@ passing journey is evidence about bench's own lifecycle, not about the
 agents it launches.
 
 **Maintenance boundaries.** Turning orchestration on, designating the
-installation that executes, handing execution over, adopting a phase
-from the phase runner and resetting the circuit breaker are each a
-person's act. Promoting a new bench into the installation that serves
-the board, publishing a release and deploying the website are separate
-again: no orchestrator, journey or test does any of them. A phase
-already running under the phase runner is never switched to its scope
-mid-flight; it is adopted, explicitly, once it is quiet.
+installation that executes, handing execution over, resuming a phase
+the upgrade held and resetting the circuit breaker are each a person's
+act; queueing a phase is a person's move of its card. Promoting a new
+bench into the installation that serves the board, publishing a release
+and deploying the website are separate again: no orchestrator, journey
+or test does any of them. A phase the retired runner still had work
+running on is moved over only once that work has ended (see "Upgrading
+to the unified phase model").
 
 ## Pull requests
 
@@ -9483,16 +9567,24 @@ in `to-do/` are offered — one in `in-progress/` is running, its members
 being worked in the order the list had when it started — and with no phase
 waiting there the action is absent rather than present and empty.
 
-### A phase runs itself, on a branch of its own
+### A phase runs on a branch of its own
+
+**Queue it by moving its card into To Do** (task 188). That one move
+queues the phase and every unfinished member, Backlog ones included, and
+the Orchestrator owns it from there: there is no per-phase scope to set
+up, nothing to adopt, no **▸ run phase** and no member to move by hand
+(see "Phase scopes: one scheduler per phase" for the queue states, and
+"Upgrading to the unified phase model" for boards that ran the retired
+phase runner).
 
 Running a phase works its list into a single integration branch. Starting
 one cuts `phase/<task-stem>` from the newest `origin/main` it can see — the
 same rule and the same timeout a task branch is cut by — and gives it a
 worktree beside the task worktrees. From there each member is branched
 **from the phase's tip**, run headless exactly as **▸ start work** runs any
-card, and merged back into the phase branch when its checks are green;
-then the next one starts. At the end one PR, from the phase branch into
-`main`, for a human.
+card, and merged back into the phase branch once its checks and review
+are satisfied; then the next one starts. At the end one PR, from the
+phase branch into `main`, for a human.
 
 That is why the branch exists. Members of a phase are related by
 definition, so card two branched from `main` could not see card one's work
@@ -9504,114 +9596,73 @@ card to the phase boundary, and the promise survives intact: the board
 merges into a branch it created, inside a scope you opened, and `main`
 still waits for your click.
 
-**The runner is a beat, not an agent.** Everything it decides is already
-structured state — a card's stage, a PR's CI verdict, whether one branch is
-contained in another — so an agent paid to poll would be the wrong tool at
-the wrong price. It is a plain thread (`BOARD_PHASE_INTERVAL`, 30s), silent
-when no phase is running.
+**The Orchestrator decides; nothing here is a second scheduler.** Which
+member starts, when, and under what authority and capacity is the phase
+scope's (see "Phase scopes: one scheduler per phase"). The phase runner
+— a beat with its own **▸ run phase** and phase **‖ hold** that used to
+make those decisions — is **retired** (task 188): one execution model,
+and its old routes answer `410` with the way forward.
 
-**The beat is stateless.** Each pass recomputes which members are finished,
-which is first unfinished and what that one needs; it holds no registry of
-where a phase *is*. Two durable things carry the memory instead, and both
+**Nothing is a registry.** Each pass recomputes which members are
+finished and what is next. Two durable things carry the memory, and both
 are things the board already writes: **git**, where a member is finished
 when its branch is contained in the phase branch, and **the phase card**,
-which grows a `## Phase log` section the runner adds one line to per
-decision — a run started, a member started, a member merged, a halt. The
-log is the record a person reads, and the only thing that can tell "this
-member has run and it ended badly" from "the phase has not reached it yet";
-without it a restarted board would relaunch a run that died. So a restart
-resumes a phase by looking, and the same logic answers "what now?" whether
-the last event was a launch, a merge or a crash.
+whose `## Phase log` records each member merged into the branch, the
+ownership line and — history from before task 188 — the old runner's
+runs and halts, read and never acted on. Every launch, integration and
+finish is also an operation in the ledger with its receipt on the card.
 
-**Advance on green.** A member is finished when its card reaches `review/`
-and its checks are not against it. Green is read from the same PR poll the
-board already runs: red halts the phase, running holds it, and a member
-with no checks at all advances — a project without CI must not deadlock
-every phase it runs. A member with no branch at all that is already in
-`review/` or `done/` is simply finished; there is nothing to bring.
+**And then the member gate, where one is declared.** On a board that
+declares one, a member also has to carry bench's own passing evidence for
+the commit about to be merged — read immediately before the merge. An
+unmet gate refuses the merge with the gate's own sentence and nothing
+merged; a required check still running holds it. A board that declares
+no gate resolves `ungated`. The whole of it is "Gates: nothing merges on
+a report".
 
-**And then the member gate, where one is declared.** "No CI result"
-advancing is exactly the case a configured gate exists to stop, so on a
-board that declares one the member also has to carry bench's own passing
-evidence for the commit about to be merged — read immediately before the
-merge as well as on the pass that chose it. An unmet gate halts the
-phase like any other condition, with the gate's own sentence as the
-reason; a required check still running holds it. A board that declares
-no gate resolves `ungated` and advances exactly as it always did. The
-whole of it is "Gates: nothing merges on a report".
-
-**Halt, never skip.** Five conditions stop a phase, each already a visible
-state on the card: a member that exits `NOT READY`, a run that exits
-non-zero, a clean exit that committed nothing, CI red, and a merge into the
-phase branch that is not mechanical. A phase that stepped over a failed
-card would build the rest on a foundation that never landed. The halt is
-written into the log and then held — said once, not once a beat — and
-nothing retries by itself. Running the phase again is a person's decision,
-and it is what appends the line that clears the halt. A member whose
-`**Depends on:**` names something unfinished is a *wait*, not a halt: the
-phase idles until the dependency lands (merged, for a card inside the
-phase; `done/`, for one outside).
+**Refuse, never skip.** A merge into the phase branch that is not
+mechanical, a member gate unmet when read again, or a member branch that
+moved off the checked head is refused with nothing merged, and the
+phase card carries the blocker; a member whose `**Depends on:**` names
+something unfinished waits. A phase that stepped over a failed card would
+build the rest on a foundation that never landed.
 
 **Merges are additive, always.** Nothing here rebases and nothing
-force-pushes. `main` is merged into the phase branch on every beat, so a
-phase that runs for hours does not drift into one enormous conflict at the
-end; a conflict there halts the phase like any other, aborted cleanly, with
-the colliding files named. When every member is in, the branch is pushed, a
-PR into `main` is opened with the member list as its body, the `**PR:**`
-line is written into the phase card and the card moves to `review/` — where
-the existing apparatus applies unchanged: the CI chip, **◔ review PR**,
-**⚑ copilot**, and drag-to-`done/` for **merge & clean up**.
+force-pushes. `main` is merged into the phase branch on the beat while no
+member runs, so a phase that runs for hours does not drift into one
+enormous conflict at the end; a conflict there is a blocker, aborted
+cleanly, with the colliding files named. When every member is in, the
+branch is pushed, a PR into `main` is opened with the member list as its
+body, the `**PR:**` line is written into the phase card and the card moves
+to `review/` — where the existing apparatus applies unchanged: the CI
+chip, **◔ review PR**, **⚑ copilot**, and drag-to-`done/` for **merge &
+clean up**.
 
-**One board runs it.** State syncs; reactions don't, so the phase card's
-**Assignee** is where "who runs it" is written down — the same claim that
-gates starting work. A replica renders the phase and advances nothing.
+**One board runs it.** Only the designated execution installation acts
+(see "Operating agreements, scopes and one installation"); a replica
+renders the phase and advances nothing.
 
-Members run one at a time. Running independent members in parallel is a
-separate card.
-
-### Watching one run, and watching it stop
+### Watching a phase, and what it waits on
 
 A phase card is a card, so the PR chip, CI, the review actions and the
-merge-and-clean-up sheet all reach it by inheritance. Three things do not,
-and they are the phase's own interface:
+merge-and-clean-up sheet all reach it by inheritance. What is its own:
 
-- **▸ run phase**, on an `in-progress/` phase card, in the slot **▸ start
-  work** occupies on an ordinary one — arming and firing like every other
-  launch, and reading **▸ take over** on a card someone else holds. Moving
-  the card to `in-progress/` stays the commitment; this is the second half
-  of it. **‖ hold** replaces it while the phase runs and means what it
-  means everywhere else: the run stops and the member agent in flight
-  stops with it, while the phase branch, every card already merged into it
-  and every worktree are left exactly as they were. A hold is not an undo,
-  and a held member's card keeps its own work — so running the phase again
-  may halt on it, which is the honest reading of a run that ended without
-  reaching `review/`.
-- **A chip in the header while a phase runs**, beside the agents chip and
-  present on the same terms as the sync chip — only when there is
-  something to say. It breathes in `--accent` and names the phase, how far
-  it has got and the card in flight: `⟶ Ship the site · 2/5 · on #33`.
-  Progress is what has landed on the phase branch, which is a different
-  fact from which card is running, so both are there. Two phases could in
-  principle run on one board, and two phases get two chips — a chip that
-  silently showed one of them would be worse than none.
-- **The halt, in `--alarm`, holding.** `⟶ Ship the site · halted at #35 —
-  it is not ready` stays in the header until the phase is run again or
-  held, rather than scrolling away; a toast fires with it, because a halt
-  is rare and actionable; and the ticker keeps the line. The member card
-  wears its own failure independently — a phase you started and stopped
-  watching is only trustworthy if its halt is impossible to miss, so it is
-  told three times at three altitudes, exactly as a dead run is.
-
-**And the card itself says which state it is in.** The header chip only
-appears while there is something to say, so it cannot tell "the phase has
-not been started" from "there is no phase here at all" — which left an
-`in-progress/` phase card nobody had run looking exactly like one mid-run.
-So the card carries the distinction quietly, in the pill and the line
-under it: `not started` (`▸ run phase` cuts its branch and starts the
-first card), `held`, the accent and the member in flight while it runs,
-and `halted` in `--alarm`. Only a run wears the working vocabulary — the
-breathing mark, the accent border, the caret — because only a run is work
-happening.
+- **⟶ orchestrator** on an `in-progress/` phase card, where ▸ start work
+  sits on an ordinary one: the phase's members, why each waits, its
+  budget and the next step, in Orchestrator → Phases. There is no ▸ run
+  phase and no phase ‖ hold (task 188): pause the phase there, and hold
+  one member's run on its own card.
+- **The card says where it stands**, in the pill and the line under it,
+  from the server's lifecycle reading: `not-queued` (in Backlog — move it
+  into To Do), `preparing`, `ready`, `waiting` with whose step it is,
+  `working` (the accent and the member in flight), `orchestration-off`,
+  and `migrating` or `blocked` in `--alarm`. Only a run wears the working
+  vocabulary — the breathing mark, the accent border, the caret — because
+  only a run is work happening.
+- **A member stored in Backlog of a queued phase** carries a *queued with
+  phase* chip beside its phase chip, so Backlog never reads as "not
+  runnable"; one whose membership does not resolve carries *not queued*
+  with the reason.
 
 **And the card does not move while its work runs.** A phase card stands
 for cards the Board no longer draws, so dragging it to another stage — or
@@ -9619,25 +9670,23 @@ onto the archive tray, which is a move like any other — while a member has
 an agent in it would leave the card in one place and a live run, a
 worktree and a branch in another. That move is refused, and the refusal
 names the way through rather than the wall: which member is working, and
-that **‖ hold** stops the phase and the agent it has in flight while
-leaving the phase branch, everything merged into it and every worktree
-exactly as they are. The card stays where it was and the reason is in the
-toast. The answer is the server's — `/api/move`, `/api/archive` and
+that **‖ hold** on that member's own card stops its run (pause the phase
+in Orchestrator → Phases so nothing new starts) while leaving the phase
+branch, everything merged into it and every worktree exactly as they
+are. The card stays where it was and the reason is in the toast. The
+answer is the server's — `/api/move`, `/api/archive` and
 merge-and-clean-up all ask it, so a stale page cannot get past a rule the
 drag alone would enforce. What is refused is narrow on purpose: a phase
-*between* members has nothing in flight and moves freely, a halted one has
-nothing running by construction and moves freely — which is exactly when
-walking it back is the thing to do — and "running" is read from the runs
-themselves rather than from what the log says was once started, so a
-member's run that died cannot lock its phase card. An ordinary card never
-reaches the question.
+*between* members has nothing in flight and moves freely — which is
+exactly when walking it back (dequeueing it) is the thing to do — and
+"running" is read from the runs themselves rather than from what the log
+says was once started, so a member's run that died cannot lock its phase
+card. An ordinary card never reaches the question.
 
-Every advance is narrated in the ticker as it happens: the member that
-came up green, the merge into the phase branch, the member starting next.
-And the phase card's sheet lists its members in run order with each one's
-stage — and, while a phase is in flight, the runner's own reading of each
-(merged in, working, checking, stopped here) — so the card answers "where
-is this up to" without a hunt across five columns.
+Every merge into the phase branch is narrated in the ticker as it
+happens. And the phase card's sheet lists its members in run order with
+each one's stage, so the card answers "where is this up to" without a
+hunt across five columns.
 
 ### Finishing a phase finishes its cards
 
@@ -9782,20 +9831,18 @@ card on this board has (an archived member included), or wears any other
 for you. Closing is presentation only: it moves, merges, archives and
 launches nothing, and is remembered nowhere but the page.
 
-**A halted lane says so at the top of itself**: the reason, the card it
-stopped on, and **▸ run again** beneath them. That action lives here and
-not on the Board, because clearing a halt should mean having read what
-caused it — the Board's halted phase card offers **⟶ phases** in its place,
-and **‖ hold**, which needs nothing read.
+**A lane says where its phase stands** with the same lifecycle reading
+as the card (task 188): queued, waiting and on whose step, working, or —
+in `--alarm` — held by the upgrade or blocked by its lists. There is no
+▸ run again and no phase ‖ hold: a phase the upgrade held is resumed in
+Orchestrator → Phases, and a member's run is held on its own card. A
+Backlog member of a queued phase sits in the Backlog column wearing
+*queued with phase*, because that is where its file is.
 
-The crossing matters more than the lane: a person on the Board has to
-learn that a phase halted without being on this view, and a person here
-has to be able to get back to the card that owns it. So the Phases tab
-carries the running count and, in `--alarm`, a mark when something has
-halted, and the primary **Board** carries the same mark — on every
-destination, holding until the phase is run again or held,
-alongside the toast and the ticker line that already fire. And the lane
-head's title and its `card ↗` chip open the phase card.
+The crossing matters more than the lane: a person here has to be able to
+get back to the card that owns it, and to the Orchestrator that runs it.
+The lane head's title and its `card ↗` chip open the phase card, and its
+**Coordinate** link opens the phase in Orchestrator → Phases.
 
 ## Stages
 

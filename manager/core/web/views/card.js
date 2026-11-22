@@ -875,6 +875,14 @@ function cardSpec(task) {
       pre: '⟶', cls: '', phase: task.phase.file,
       title: `Card ${task.phase.index} of ${task.phase.total} in phase `
            + `${task.phase.number ? '#' + task.phase.number + ' — ' : ''}${task.phase.title}` });
+    // stored in Backlog, queued with its phase (task 188): the server's
+    // queue reading says so, so Backlog never reads as "not runnable"
+    const queue = task.queue || {};
+    if (queue.inherited || queue.state === 'blocked') {
+      chips.push({ label: queue.inherited ? 'queued with phase' : 'not queued',
+        pre: queue.inherited ? '◷' : '✕', cls: queue.inherited ? '' : 'bad',
+        phase: task.phase.file, title: queue.reason || '' });
+    }
   }
   // where this card's work starts and what its PR targets, when that is
   // not simply the application default — a destination like the rest of

@@ -134,6 +134,57 @@ def card(title: str, *, status: str = "Backlog", kind: str | None = None,
     return text
 
 
+def _launch_next(phase_file: str) -> None:
+    phase = phases.cards()[0][phase_file]
+    done = set(phases.merged_members(phase))
+    for listed in phase["members"]:
+        number = taskfiles.canonical_number(listed["number"])
+        stage = taskfiles.find_stage_of(listed["file"])
+        if number in done or stage in ("review", "done"):
+            continue
+        if phases.branch_exists(f"task/{listed['file'][:-3]}"):
+            return                            # started: wait for it
+        if stage != "in-progress":
+            taskfiles.move_task(listed["file"], stage, "in-progress",
+                                actor="phase")
+        agents.start_agent(listed["file"], "in-progress")
+        return
+
+
+def drive_start(phase_file: str) -> None:
+    """Fixture: the phase branch cut and the first member launched, by the
+    mechanics the phase scope rides (task 188) — no scheduling decision."""
+    phases.ensure_branch(phases.cards()[0][phase_file])
+    _launch_next(phase_file)
+
+
+def drive_pass(phase_file: str) -> None:
+    """Fixture: main merged in, every member in review/ merged into the
+    phase branch in list order, then the next member launched or, with all
+    of them in, the phase finished. Raises `phases.Halt` as the mechanics
+    do (a conflict, an unmet member gate)."""
+    phase = phases.cards()[0][phase_file]
+    phases.freshen(phase)
+    done = set(phases.merged_members(phase))
+    for listed in phase["members"]:
+        number = taskfiles.canonical_number(listed["number"])
+        if number in done:
+            continue
+        member = phases.cards()[0][listed["file"]]
+        if member["stage"] != "review":
+            break
+        phases.merge_member(phases.cards()[0][phase_file],
+                            {**member, "number": number})
+        done.add(number)
+    phase = phases.cards()[0][phase_file]
+    if phase["members"] and all(taskfiles.canonical_number(m["number"]) in done
+                                for m in phase["members"]):
+        if phase["stage"] != "review":
+            phases.finish(phase)
+    else:
+        _launch_next(phase_file)
+
+
 class PhaseCase(unittest.TestCase):
     """One repo, one phase card, two members — and an adapter whose
     behaviour each test writes."""
@@ -234,53 +285,13 @@ class PhaseCase(unittest.TestCase):
     # work's own path, merged by `phases.merge_member` and finished by
     # `phases.finish`. They decide nothing a scheduler decides.
 
-    def _phase(self) -> dict:
-        return phases.cards()[0][PHASE]
-
-    def _launch_next(self) -> None:
-        phase = self._phase()
-        done = set(phases.merged_members(phase))
-        for listed in phase["members"]:
-            number = taskfiles.canonical_number(listed["number"])
-            stage = self.stage_of(listed["file"])
-            if number in done or stage in ("review", "done"):
-                continue
-            if self.branch_exists(f"task/{listed['file'][:-3]}"):
-                return                        # started: wait for it
-            if stage != "in-progress":
-                taskfiles.move_task(listed["file"], stage, "in-progress",
-                                    actor="phase")
-            agents.start_agent(listed["file"], "in-progress")
-            return
-
     def start(self) -> dict:
-        phases.ensure_branch(self._phase())
-        self._launch_next()
+        drive_start(PHASE)
         self.settle()
         return {}
 
     def advance(self) -> dict:
-        phase = self._phase()
-        phases.freshen(phase)
-        done = set(phases.merged_members(phase))
-        by_file = phases.cards()[0]
-        for listed in phase["members"]:
-            number = taskfiles.canonical_number(listed["number"])
-            if number in done:
-                continue
-            member = by_file[listed["file"]]
-            if member["stage"] != "review":
-                break
-            phases.merge_member(self._phase(), {**member, "number": number})
-            done.add(number)
-        phase = self._phase()
-        if phase["members"] and all(
-                taskfiles.canonical_number(m["number"]) in done
-                for m in phase["members"]):
-            if phase["stage"] != "review":
-                phases.finish(phase)
-        else:
-            self._launch_next()
+        drive_pass(PHASE)
         self.settle()
         return {}
 

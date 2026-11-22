@@ -145,7 +145,7 @@ function launchActionFor(task, intent) {
     if (task.stage !== 'in-progress')
       return { why: 'Implementation launches from in-progress/. Move the card there first.' };
     if (task.isPhase)
-      return { why: 'A phase card is run with ▸ run phase; its work belongs to its members.' };
+      return { why: 'A phase card is queued by moving it into To Do; the Orchestrator runs its members, whose work it is.' };
     const held = task.assignee && S.state.me && task.assignee !== S.state.me
       ? task.assignee : null;
     return { act: held
