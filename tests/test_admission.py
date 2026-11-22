@@ -34,7 +34,8 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_delivery_status import DeliveryCase, PR_URL  # noqa: E402
-from test_integration_gates import git  # noqa: E402
+from test_delivery_status import STATUS  # noqa: E402
+from test_integration_gates import card, git  # noqa: E402
 
 import agents  # noqa: E402
 import completion  # noqa: E402
@@ -563,6 +564,169 @@ class OneSequencePerTarget(unittest.TestCase):
             coordinate._owners(items, ops, tasks)
         self.assertEqual(items[0]["code"], "admission-queued")
         self.assertIn("unknown", items[0]["reason"])
+
+
+class TheUpdateComesFirst(AdmissionCase):
+    """Review round 2, finding 1: a card whose target moved while its
+    checks or review are still to come is offered the update first — the
+    checks and the review stay offered beside it — so nothing is spent on
+    a head that cannot be admitted."""
+
+    def setUp(self):
+        super().setUp()
+        self.card_with(A, "a.txt", "renamed: new_name\n")
+        self.b_head = self.card_with(B, "b.txt", "calls new_name\n")
+        self.review_stage(A, "81 — Card A")
+        self.review_stage(B, "82 — Card B")
+        self.checked(A, "run-a")
+        self.reviewed(A)
+        completion.complete_task(A, "review")
+
+    def others(self, found: dict) -> list[str]:
+        return [o.get("action") for o in found.get("others") or []]
+
+    def test_checks_still_to_come(self):
+        found = delivery.for_card(B)
+        self.assertEqual(found["status"]["word"], "target-changed")
+        self.assertEqual(found["primary"]["action"], "update-target")
+        self.assertIn("run-required-checks", self.others(found))
+        self.assertIn("still to come", found["status"]["sentence"])
+
+    def test_a_review_still_to_come(self):
+        self.assertEqual(self.checked(B, "run-b")["outcome"], "passed")
+        found = delivery.for_card(B)
+        self.assertEqual(found["status"]["word"], "target-changed")
+        self.assertEqual(found["primary"]["action"], "update-target")
+        self.assertIn("review-pr", self.others(found))
+
+    def test_after_the_update_checks_then_review_follow(self):
+        result = coordinate.update_against_target(B, {"head": self.b_head})
+        self.assertEqual(result["outcome"], "merged")
+        self.assertEqual(self.word(B), "checks-needed")
+        self.checked(B, "run-b2")
+        self.assertEqual(self.word(B), "review-needed")
+
+
+class ALocalTargetAheadOfTheRemote(AdmissionCase):
+    """Review round 2, finding 4: admission holds a candidate to this
+    checkout's target as well as the remote's, so the reading does too —
+    a local merge not yet published is what an update brings in, and two
+    copies that diverged are not read as either."""
+
+    def test_ahead_then_diverged(self):
+        bare = self.origin()
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        git(self.repo, "fetch", "-q", "origin")
+        self.assertEqual(self.word(B), "ready-to-merge")
+        local = self.write(self.repo, "local.txt", "merged here, unpushed\n")
+        found = delivery.for_card(B)
+        self.assertEqual(found["integration"]["authority"], "local-ahead")
+        self.assertEqual(found["integration"]["targetTip"], local)
+        self.assertEqual(found["status"]["word"], "target-changed")
+        # (the guard agrees: this checkout's main is not held)
+        with self.assertRaises(integration.Stale):
+            integration.require_current(B, gates.evaluate(B, "acceptance"),
+                                        b_head, "main", ask_remote=False)
+        # a replica publishes something else: the two copies diverged
+        other = self.tmp / "replica"
+        git(self.tmp, "clone", "-q", str(bare), str(other))
+        git(other, "config", "user.email", "r@r")
+        git(other, "config", "user.name", "replica")
+        self.write(other, "replica.txt", "landed elsewhere\n")
+        git(other, "push", "-q", "origin", "main")
+        git(self.repo, "fetch", "-q", "origin")
+        delivery.forget_cached()
+        found = delivery.for_card(B)
+        self.assertEqual(found["integration"]["state"], "unknown")
+        self.assertIn("diverged", found["integration"]["sentence"])
+        with self.assertRaises(coordinate.UpdateRefused) as said:
+            coordinate.update_against_target(B, {"head": b_head})
+        self.assertEqual(said.exception.code, "target-diverged")
+        self.assertEqual(git(self.repo, "rev-parse",
+                             f"task/{B[:-3]}").stdout.strip(), b_head,
+                         "nothing was changed")
+
+    def test_an_update_brings_in_the_local_tip(self):
+        self.origin()
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        git(self.repo, "fetch", "-q", "origin")
+        local = self.write(self.repo, "local.txt", "merged here, unpushed\n")
+        result = coordinate.update_against_target(B, {"head": b_head})
+        self.assertEqual(result["outcome"], "merged")
+        self.assertTrue(gates.contained(local, result["head"]))
+        delivery.forget_cached()
+        self.assertTrue(delivery.for_card(B)["integration"]["fresh"])
+
+
+PHASE = "80-ship-the-site.md"
+PHASE_BRANCH = "phase/80-ship-the-site"
+
+
+class PhaseTargetsOnRealGit(AdmissionCase):
+    """Review round 2, finding 3: a phase member is read and updated
+    against its phase branch, and a phase card against the application
+    base, through the same reading, update and guard — on real git."""
+
+    def phase(self, stage: str, members=("82",), pr=None) -> None:
+        body = "## Cards\n\n" + "\n".join(f"- {m} — a member" for m in members)
+        text = card("80 — Ship the site", status=STATUS[stage], type="Phase",
+                    body=body)
+        if pr:
+            text = text.replace("**Priority:** High",
+                                f"**Priority:** High\n**PR:** {pr}", 1)
+        (self.tasks / stage / PHASE).write_text(text, encoding="utf-8")
+
+    def advance(self, branch: str, name: str, text: str) -> str:
+        path = self.tmp / f"adv-{branch.replace('/', '-')}"
+        if not path.is_dir():
+            git(self.repo, "worktree", "add", "-q", str(path), branch)
+        return self.write(path, name, text)
+
+    def test_a_member_against_its_phase_branch(self):
+        self.gated(scope="member", body=COMBINED)
+        git(self.repo, "branch", PHASE_BRANCH, "main")
+        self.phase("in-progress")
+        wt = self.worktree(B[:-3], base=PHASE_BRANCH)
+        head = self.write(wt, "b.txt", "calls new_name\n")
+        self.review_stage(B, "82 — Card B")
+        task = coordinate._card(B)
+        self.assertEqual(integration.target_for(task), PHASE_BRANCH)
+        decision = gates.evaluate(B, "member", task=task)
+        fit = integration.reading(task, head=head, decision=decision)
+        self.assertTrue(fit["fresh"])
+        # another member lands in the phase branch; main moves too
+        landed = self.advance(PHASE_BRANCH, "a.txt", "renamed: new_name\n")
+        on_main = self.write(self.repo, "main-only.txt", "not the phase's\n")
+        fit = integration.reading(task, head=head, decision=decision)
+        self.assertEqual((fit["state"], fit["targetTip"]),
+                         ("target-changed", landed))
+        with self.assertRaises(integration.Stale):
+            integration.require_current(B, decision, head, PHASE_BRANCH,
+                                        ask_remote=False)
+        result = coordinate.update_against_target(B, {"head": head})
+        self.assertEqual(result["outcome"], "merged")
+        self.assertTrue(gates.contained(landed, result["head"]))
+        self.assertFalse(gates.contained(on_main, result["head"]),
+                         "a member is updated against its phase branch only")
+        self.assertTrue(integration.require_current(
+            B, decision, result["head"], PHASE_BRANCH,
+            ask_remote=False)["applies"])
+
+    def test_a_phase_card_against_the_application_base(self):
+        self.gated(scope="integration", body=COMBINED)
+        git(self.repo, "branch", PHASE_BRANCH, "main")
+        phase_head = self.advance(PHASE_BRANCH, "b.txt", "calls new_name\n")
+        self.phase("review", members=(), pr=PR_URL)
+        task = coordinate._card(PHASE)
+        self.assertEqual(integration.target_for(task), "main")
+        decision = gates.evaluate(PHASE, "integration", task=task)
+        on_main = self.write(self.repo, "a.txt", "renamed: new_name\n")
+        fit = integration.reading(task, head=phase_head, decision=decision)
+        self.assertEqual((fit["state"], fit["targetTip"]),
+                         ("target-changed", on_main))
+        with self.assertRaises(integration.Stale):
+            integration.require_current(PHASE, decision, phase_head, "main",
+                                        ask_remote=False)
 
 
 class ReconcilingAnUpdate(AdmissionCase):

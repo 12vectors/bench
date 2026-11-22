@@ -3925,8 +3925,8 @@ holds this table to the module's own list.
 | `checks-needed` | Checks needed | neutral | 14 |
 | `review-needed` | Review needed | neutral | 15 |
 | `signoff-needed` | Sign-off needed | neutral | 16 |
-| `target-changed` | Target changed — integration check needed | attention | 22 (read before 18) |
-| `target-conflicts` | Conflicts with target — repair needed | alarm | 22 (read before 18) |
+| `target-changed` | Target changed — integration check needed | attention | 22 (read before 14–16 and 18) |
+| `target-conflicts` | Conflicts with target — repair needed | alarm | 22 (read before 14–16 and 18) |
 | `ready-to-merge` | Ready to merge | calm | 18 |
 | `ready-overridden` | Ready — overridden | alarm | 18 |
 | `review` | Review | neutral | 19 |
@@ -7931,11 +7931,19 @@ board:
 | Target changed — integration check needed | the target moved past the head | **Update against target and verify** |
 | Conflicts with target — repair needed | updating conflicts (recorded), or the provider reports a conflict for this head | **Update against target and verify** (a repair run) |
 | Integration check running / failed / needed | the head holds the target; its required check is running, did not pass, or has not run on it | wait; ↻ act on PR; Run required checks |
-| Integration unknown | the target cannot be read here | Check the remote |
+| Integration unknown | the target cannot be read here, or this checkout's copy and the remote's have diverged | Check the remote; settle the divergence by hand |
 
-A card whose requirements are met at a head that does not hold the target
-reads **`target-changed`** or **`target-conflicts`** instead of *Ready to
-merge* (delivery row 22, read before 18). A board with no required check
+A card whose head does not hold the target reads **`target-changed`** or
+**`target-conflicts`** instead of *Ready to merge* (delivery row 22, read
+before 18) — and instead of *Checks needed*, *Review needed* or *Sign-off
+needed* (read before 14–16): checks and a review still to come would be
+spent on uncombined work and asked for again after the update, so the
+update comes first and they stay offered beside it. A check already
+running, or a failed check or request for changes at the head, keeps its
+own reading. The orchestrator follows the same order: a stale head is
+updated before its checks and review are asked for. The target is this
+checkout's copy where it is ahead of the remote's (a local merge not yet
+published), since admission holds a candidate to both. A board with no required check
 — ungated, or review-only — merges exactly as before; its cards still say
 the target moved, as information.
 

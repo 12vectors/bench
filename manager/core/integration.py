@@ -143,15 +143,28 @@ def target_tip(target: str, remote_tips: dict | None = None) -> dict:
     copy as last fetched, else the local branch — the reading
     `basechoice` and the launch use for a branch. A read."""
     remote = config.app_remote()
+    local = _rev(f"refs/heads/{target}")
     if remote:
         tip = (remote_tips or {}).get(target) if remote_tips is not None \
             else _rev(f"refs/remotes/{remote}/{target}")
         if tip:
+            if local and local != tip:
+                # admission holds a candidate to this checkout's copy as
+                # well as the remote's (`require_current`), so the reading
+                # does too: a local target ahead of the remote's is the one
+                # an update must bring in; two copies that diverged are not
+                # one target, and nothing here chooses between them
+                if gates.contained(tip, local):
+                    return {"commit": local, "ref": target,
+                            "authority": "local-ahead", "remoteTip": tip}
+                if not gates.contained(local, tip):
+                    return {"commit": "", "ref": target,
+                            "authority": "diverged", "remoteTip": tip,
+                            "localTip": local}
             return {"commit": tip, "ref": f"{remote}/{target}",
                     "authority": "remote-tracking"}
-    tip = _rev(f"refs/heads/{target}")
-    if tip:
-        return {"commit": tip, "ref": target, "authority": "local"}
+    if local:
+        return {"commit": local, "ref": target, "authority": "local"}
     return {"commit": "", "ref": target, "authority": "unknown"}
 
 
@@ -310,6 +323,13 @@ def reading(task: dict, *, head: str | None, decision: dict | None,
     if not head:
         return _word(out, "no-candidate", "there is no implementation commit "
                      "on this board to integrate", None)
+    if tip["authority"] == "diverged":
+        return _word(out, "unknown", f"{target} here ({tip['localTip'][:12]}) "
+                     f"and {config.app_remote()}/{target} "
+                     f"({tip['remoteTip'][:12]}) have diverged, so which is "
+                     f"the accepted target is not known — bring this "
+                     f"checkout's {target} back in line with the remote by "
+                     f"hand", "check-remote")
     if not tip["commit"]:
         return _word(out, "unknown", f"{target} cannot be read in this "
                      f"checkout, so whether {head[:12]} holds it is not "

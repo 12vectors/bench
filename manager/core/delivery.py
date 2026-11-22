@@ -144,6 +144,11 @@ ROWS = (
     (12, "review, a current-commit failure or change request",
      ("check-failed", "cannot-run-check", "changes-requested")),
     (13, "review, a required check is running", ("checks-running",)),
+    # read before 14-16 and 18 (task 189): a head that does not hold the
+    # target it lands in, where the merge rule requires a check — checks or
+    # a review still to come would be about work not yet combined with it
+    (22, "review, a head that does not hold the current target",
+     ("target-changed", "target-conflicts")),
     (14, "review, a required check is needed", ("checks-needed",)),
     (15, "review, the required review is not met", ("review-needed",)),
     (16, "review, sign-off pending", ("signoff-needed",)),
@@ -152,10 +157,6 @@ ROWS = (
     # on has (task 117)
     (21, "review, stacked on a card whose work has not landed",
      ("waiting-for-parent",)),
-    # read before 18 (task 189): requirements met at a head that does not
-    # hold the target it lands in, where the merge rule requires a check
-    (22, "review, met at a head that does not hold the current target",
-     ("target-changed", "target-conflicts")),
     (18, "review, every requirement met or overridden",
      ("ready-to-merge", "ready-overridden")),
     (19, "review, an ungated board", ("review",)),
@@ -1028,6 +1029,23 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                 f"{_names(running)} {'is' if len(running) == 1 else 'are'} "
                 f"running on {here}.", None, rest)
 
+    # 22, read before 14–16 (task 189). The target moved past this head
+    # while its checks or review are still to come: they would be spent on
+    # work not yet combined with the accepted target, and asked for again
+    # once it is. So the update comes first; the checks and the review stay
+    # offered beside it, never hidden.
+    if decision and decision.get("decision") == "blocked":
+        later = []
+        if any(r["class"] == "needed" for r in checks):
+            later.append(action("run-required-checks", "Run required checks"))
+        if review_pr:
+            later.append(review_pr)
+        stale = _stale_target(task, ctx, fit, here, filename, alive,
+                              "its checks or review are still to come",
+                              later)
+        if stale:
+            return stale
+
     # 14. needed
     needed = [r for r in checks if r["class"] == "needed"]
     if needed:
@@ -1108,33 +1126,13 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                     action("open-pr-url", "Open the PR", url=pr_url), rest)
         return ("waiting-for-parent", sentence, None, rest)
 
-    # 22 (read before 18, task 189). Met at a head that does not hold the
-    # target it lands in, where the merge rule requires a check: its checks
-    # are about work not yet combined with the accepted target, so it is
-    # not ready — whatever a provider says about mergeability. A card on a
-    # named base no card owns (it lands through its PR) is read the same
-    # way; one stacked on another card keeps its stack edge's own reading
-    # (`parent-moved` and **Update from <parent>**, task 119).
-    on_card = bool((_stack(task, ctx) or {}).get("parent"))
-    if decision and decision.get("decision") in ("allowed", "overridden") \
-            and integration.stale(fit) and not on_card:
-        word = ("target-conflicts" if fit["state"] == "conflicts"
-                else "target-changed")
-        if fit["state"] == "unknown":
-            return (word, f"Requirements met for {here}, but "
-                    f"{fit['sentence']}.",
-                    _check_remote_action(ctx, candidate)
-                    or action("gates", "⚖ merge rules"), [])
-        busy = filename in ctx.get("updating", ())
-        update = action("update-target", integration.UPDATE_ACTION,
-                        enabled=not busy and not alive,
-                        why=("an update or a run is already working on it"
-                             if busy or alive else None),
-                        target=fit["target"])
-        lead = ("Conflicts with target" if word == "target-conflicts"
-                else "Target changed")
-        return (word, f"{lead}: requirements are met for {here}, but "
-                f"{fit['sentence']}", update, [])
+    # 22 (read before 18, task 189; and before 14-16, above). Met at a
+    # head that does not hold the target it lands in: see `_stale_target`.
+    if decision and decision.get("decision") in ("allowed", "overridden"):
+        stale = _stale_target(task, ctx, fit, here, filename, alive,
+                              "requirements are met")
+        if stale:
+            return stale
 
     # 18. met or overridden
     if decision and decision.get("decision") in ("allowed", "overridden"):
@@ -1197,6 +1195,37 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
             f"Cannot assess: the gate reads {decision.get('decision')} — "
             f"{decision.get('summary')}", action("gates", "⚖ merge rules"),
             [])
+
+
+def _stale_target(task: dict, ctx: dict, fit: dict | None, here: str,
+                  filename: str, alive, said: str,
+                  rest: list | None = None):
+    """Row 22 (task 189): a head that does not hold the target it lands in,
+    where the merge rule requires a check. Its checks are about work not
+    yet combined with the accepted target, so it is not ready — whatever a
+    provider says about mergeability — and its next step is the update. A
+    card on a named base no card owns (it lands through its PR) is read
+    the same way; one stacked on another card keeps its stack edge's own
+    reading (`parent-moved` and **Update from <parent>**, task 119)."""
+    if not integration.stale(fit) or (_stack(task, ctx) or {}).get("parent"):
+        return None
+    word = ("target-conflicts" if fit["state"] == "conflicts"
+            else "target-changed")
+    if fit["state"] == "unknown":
+        return (word, f"{said[0].upper()}{said[1:]} for {here}, but "
+                f"{fit['sentence']}.",
+                _check_remote_action(ctx, {})
+                or action("gates", "⚖ merge rules"), list(rest or []))
+    busy = filename in ctx.get("updating", ())
+    update = action("update-target", integration.UPDATE_ACTION,
+                    enabled=not busy and not alive,
+                    why=("an update or a run is already working on it"
+                         if busy or alive else None),
+                    target=fit["target"])
+    lead = ("Conflicts with target" if word == "target-conflicts"
+            else "Target changed")
+    return (word, f"{lead}: {said} for {here}, but {fit['sentence']}",
+            update, list(rest or []))
 
 
 def _names(rows: list[dict]) -> str:

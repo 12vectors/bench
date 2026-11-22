@@ -754,6 +754,35 @@ class AgainstTheCurrentTarget(Sandbox):
         self.assertEqual([(CARD, "review", B, "orchestrator")],
                          self.calls["merge"])
 
+    def test_a_stale_head_is_refreshed_before_its_checks_are_asked(self):
+        """Review round 2, finding 1: checks asked at a head that does not
+        hold the target would be spent on uncombined work and asked again
+        after the update, so the update comes first."""
+        self.enable()
+        self.gate = gate("blocked", checks=[("unit", "unmet", "not-run", None)])
+        self.stale()
+        self.assertEqual("refresh", self.item()["code"])
+        self.tick()
+        self.assertEqual(1, len(self.updates))
+        self.assertEqual([], self.ops("verify"), "no check asked at the old head")
+
+    def test_a_stale_head_is_refreshed_before_its_review(self):
+        self.enable()
+        self.verdicts.clear()
+        self.gate = gate("blocked", checks=[("unit", "met", "passed", "ev-1")])
+        self.stale()
+        self.assertEqual("refresh", self.item()["code"])
+        self.tick()
+        self.assertEqual(1, len(self.updates))
+        self.assertEqual([], self.ops("review"), "no review of the old head")
+
+    def test_a_stale_head_whose_check_failed_is_repaired_first(self):
+        # a failure at the head is the repair's to answer, as before
+        self.enable()
+        self.gate = gate("blocked", checks=[("unit", "unmet", "failed", "ev-1")])
+        self.stale()
+        self.assertEqual("repair", self.item()["action"])
+
     def test_refreshing_is_the_users_without_the_repair_word(self):
         self.enable(authority=("review", "merge"))
         self.stale()

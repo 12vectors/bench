@@ -541,6 +541,12 @@ def assess(task: dict, reading: dict, ops: list[dict],
         return _set(item, "check-unmet", f"{other[0].get('name')}: "
                     f"{other[0].get('why') or other[0].get('reason')}")
     if needed and not failed:
+        # task 189: checks asked at a head that does not hold the target
+        # would be about uncombined work and asked again after the update,
+        # so a stale head is brought up to date first
+        stale = _stale_step(item, task, here, head, mine, ops, fit)
+        if stale:
+            return stale
         return _checks_needed(item, filename, head, mine)
     if failed:
         first = failed[0]
@@ -565,6 +571,10 @@ def assess(task: dict, reading: dict, ops: list[dict],
                            f"the review at {head[:12]} asked for changes")
         reviewed = counted["independent"]
     if not reviewed:
+        # task 189: likewise a review — of the combined head, not this one
+        stale = _stale_step(item, task, here, head, mine, ops, fit)
+        if stale:
+            return stale
         if not review_granted:
             if "bench" in (gate.get("reviews") or []) and not verdict:
                 return _set(item, "review-not-delegated", "your merge rule "
@@ -605,20 +615,9 @@ def assess(task: dict, reading: dict, ops: list[dict],
     # requires a check, a head that does not hold the accepted target is
     # brought up to date on its own branch first; its new head is then
     # checked and reviewed afresh, and only that combined head is admitted.
-    if integration.stale(fit):
-        if fit["state"] == "unknown":
-            return _set(item, "integration-unknown", fit["sentence"])
-        if fit["state"] == "conflicts":
-            item["repairIntegration"] = True
-            return _repair(item, task, here, head, mine, ops,
-                           "target-conflicts", fit["sentence"])
-        if not here["authority"]["repair"]["allowed"]:
-            return _set(item, "refresh-not-delegated", f"{fit['sentence']} — "
-                        f"the agreement does not delegate repair, so "
-                        f"{integration.UPDATE_ACTION} is yours")
-        return _set(item, "refresh", f"{fit['sentence']} — update "
-                    f"{head[:12]} against {fit['target']} at "
-                    f"{(fit.get('targetTip') or '')[:12]}, then verify")
+    stale = _stale_step(item, task, here, head, mine, ops, fit)
+    if stale:
+        return stale
     if fit.get("unpushed") and not member:
         # its own clean update was merged here and the remote refused the
         # push: the PR does not show this head, so it is pushed (plainly)
@@ -660,6 +659,30 @@ def assess(task: dict, reading: dict, ops: list[dict],
         return _set(item, "merge-not-delegated", f"ready to merge ({label}); "
                     f"merging is yours — the agreement does not delegate it")
     return _set(item, "merge", f"merge {head[:12]} — {label}")
+
+
+def _stale_step(item: dict, task: dict, here: dict, head: str,
+                mine: list[dict], ops: list[dict], fit: dict) -> dict | None:
+    """Step 3a (task 189), asked as soon as checks or a review would come
+    next and again before the merge: where the merge rule requires a check,
+    a head that does not hold the accepted target is brought up to date on
+    its own branch first; its new head is then checked and reviewed
+    afresh, and only that combined head is admitted."""
+    if not integration.stale(fit):
+        return None
+    if fit["state"] == "unknown":
+        return _set(item, "integration-unknown", fit["sentence"])
+    if fit["state"] == "conflicts":
+        item["repairIntegration"] = True
+        return _repair(item, task, here, head, mine, ops,
+                       "target-conflicts", fit["sentence"])
+    if not here["authority"]["repair"]["allowed"]:
+        return _set(item, "refresh-not-delegated", f"{fit['sentence']} — "
+                    f"the agreement does not delegate repair, so "
+                    f"{integration.UPDATE_ACTION} is yours")
+    return _set(item, "refresh", f"{fit['sentence']} — update "
+                f"{head[:12]} against {fit['target']} at "
+                f"{(fit.get('targetTip') or '')[:12]}, then verify")
 
 
 def public_integration(found: dict) -> dict:
@@ -1572,6 +1595,12 @@ def _update(filename: str, expected: dict, actor: str, operation: str | None,
     if remote:
         gitrepo.fetch_branch(remote, target, timeout=config.FETCH_TIMEOUT)
     tip = integration.target_tip(target)
+    if tip["authority"] == "diverged":
+        raise UpdateRefused("target-diverged", f"{target} here "
+                            f"({tip['localTip'][:12]}) and {remote}/{target} "
+                            f"({tip['remoteTip'][:12]}) have diverged — bring "
+                            f"this checkout's {target} back in line with the "
+                            f"remote by hand; nothing was changed")
     if not tip["commit"]:
         raise UpdateRefused("target-unreadable", f"{target} cannot be read here "
                             f"— Check the remote, then try again; nothing was "
