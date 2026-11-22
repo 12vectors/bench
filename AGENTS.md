@@ -9327,6 +9327,17 @@ writes nothing, assigns nothing and launches nothing. Before a criterion
 has an id it is still listed, with its state, and a result reported
 against its revision still finds it.
 
+**An id is not a requirement change.** The brief's revision — what a
+refinement proposal, an owner's question, a relevance review and the
+scheduler's "a run on this brief has ended" hold are bound to — ignores
+`<!-- ac:<id> -->` comments, so the write that gives criteria their ids
+stales none of them and launches nothing again. A refinement drafted
+before the ids existed keeps them on Apply: each unchanged criterion
+gets back the id its exact wording carries, and a criterion it rewords
+or removes has its records marked for recheck. A person's request for a
+recheck is answered by the next independent review, at the same commit
+or a later one; an implementer's report does not answer it.
+
 ### How a run reports, and what bench keeps
 
 The work, repair (**↻ act on PR**) and PR-review prompts carry an
