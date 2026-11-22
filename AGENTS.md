@@ -7957,7 +7957,19 @@ its required checks (bench runs them on the combination) and, by the
 existing exact-head rules, a fresh review. The action accepts nothing and
 merges nothing into the target. A second request while one runs — a
 double click, the orchestrator beside a person — is refused, and a run
-already working on the card refuses it too.
+already working on the card refuses it too. A person's request names the
+head the card showed (`head`); one that names none is refused
+(`400 head-required`) with nothing updated. While a review or an ordinary
+repair runs on the card it reads as that run, never as *Updating*: only
+the update itself, and the repair run it handed a conflict to, are.
+
+**A push the remote refused** is said, not hidden: the update answers
+`ok: false`, the merge stays on the card's branch here, and the card reads
+that its pull request does not show the head yet, with **Update against
+target and verify** as its primary action — which, on a head that already
+holds the target, only pushes it again (plainly; nothing is forced). Under
+orchestration that push is tried once; a second refusal holds the card as
+`update-not-pushed` for a person.
 
 **One admission per target.** Merge & clean up — a person's click and the
 orchestrator's delegated merge alike — holds the admission of its target
@@ -7990,7 +8002,12 @@ combined head is checked and reviewed afresh; and only then merged, where
 included, until a person settles it), else a card whose head is its own
 update against the current target, else the lowest card number — and the
 others read `admission-queued`, naming the card they wait for. Reviews,
-checks and repairs of other cards go on in parallel. An update left
+checks and repairs of other cards go on in parallel. A merge, integration
+or update refused because another admission held the target's lock
+(`admission-busy`) or because the target moved past the head
+(`target-changed`, `target-moved` — the target is then fetched) is a
+transient answer, not a hold: the next pass reads the target again and
+offers the update. An update left
 without a receipt is reconciled from its recorded attempt, or as nothing
 having run when the branch never moved, else held `unknown`; it is never
 repeated blind. A phase member's target is its phase branch and a phase
