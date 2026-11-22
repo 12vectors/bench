@@ -209,6 +209,19 @@ async function sendUnarchive() {
     return false;
   }
   const d = r.data;
+  if (Array.isArray(d.batch)) {
+    // the last archive was an Archive all (task 187): ⌘Z brought its set
+    // back, each card through the single restore door; the reading that
+    // follows draws them, since this page never held their cards
+    lastRemoved = null;
+    afterWrite(null);
+    const n = d.batch.length, refused = (d.refused || []).length;
+    toast(`${n} card${n === 1 ? '' : 's'} brought back to done/` +
+          (refused ? `; ${refused} could not be — the activity log says why` : '') +
+          (d.committed === false ? '; committing failed — the activity log says why' : ''),
+          !!(refused || d.committed === false));
+    return true;
+  }
   const known = lastRemoved && lastRemoved.file === d.file ? lastRemoved.task : null;
   lastRemoved = null;
   afterWrite(d, (state) => {
