@@ -328,6 +328,10 @@ class BrainLibrary(unittest.TestCase):
         b.eval("document.querySelector('#bshell .b-title').focus(); true")
         b.key("Tab")
         self.assertEqual("ag-new", b.eval("document.activeElement?.dataset?.bact || null"))
+        # the handbook's five Organize buttons (task 171) precede the library
+        for _ in range(5):
+            b.key("Tab")
+            self.assertEqual("hb-organize", b.eval("document.activeElement?.dataset?.bact || null"))
         b.key("Tab")
         self.assertEqual("q", b.eval("document.activeElement?.dataset?.bfind || null"))
         order = []
@@ -403,8 +407,9 @@ class BrainLibrary(unittest.TestCase):
                                        "document.querySelector('#bshell .b-results')) & Node.DOCUMENT_POSITION_FOLLOWING)"),
                                 f"{label}: the sidebar comes first in the document")
                 b.eval("document.querySelector('#bshell .b-title').focus(); true")
-                b.key("Tab")
-                b.key("Tab")
+                # New entry, then the handbook's five Organize buttons (task 171)
+                for _ in range(7):
+                    b.key("Tab")
                 self.assertEqual("q", b.eval("document.activeElement?.dataset?.bfind || null"),
                                  f"{label} {theme}: after New entry, Tab reaches the left-hand search")
                 b.key("Tab")
