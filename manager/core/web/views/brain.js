@@ -38,7 +38,7 @@ const FRESH_MS = 4000;
 // key -> {data, status, at, error}. `reviews` is the reviews filed on the
 // board's cards (task 168); `entries` holds both entries (`e:<id>`) and
 // reviews (`r:<card>/<review>`) as one page each
-const cache = { index: null, reviews: null, entries: {}, revisions: {} };
+const cache = { index: null, reviews: null, handbook: null, entries: {}, revisions: {} };
 const inflight = new Set();
 let painted = '';
 let paintedKey = null;
@@ -66,6 +66,7 @@ const reviewHref = (card, id) => `/brain/r/${encodeURIComponent(card)}/${encodeU
 function urlOf(k) {
   if (k === 'index') return '/api/brain';
   if (k === 'reviews') return '/api/brain/reviews';
+  if (k === 'handbook') return '/api/brain/handbook';
   if (k.startsWith('r:')) {
     const [card, id] = k.slice(2).split('/');
     return '/api/brain/review?card=' + encodeURIComponent(card) + '&id=' + encodeURIComponent(id);
@@ -74,7 +75,8 @@ function urlOf(k) {
 }
 
 function slotOf(k) {
-  return k === 'index' ? cache.index : k === 'reviews' ? cache.reviews : cache.entries[k];
+  return k === 'index' ? cache.index : k === 'reviews' ? cache.reviews
+    : k === 'handbook' ? cache.handbook : cache.entries[k];
 }
 function newRequest() {
   return 'bw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
@@ -91,6 +93,7 @@ async function load(k) {
     const data = await res.json().catch(() => ({}));
     slot = { status: res.status,
              data: k === 'index' ? data.brain : k === 'reviews' ? data.reviews
+               : k === 'handbook' ? data.handbook
                : k.startsWith('r:') ? data.review : data.entry,
              error: data.error || null, at: Date.now() };
   } catch (e) {
@@ -102,8 +105,9 @@ async function load(k) {
   if (!slot.data && old && old.data) slot = { ...old, error: slot.error, at: slot.at };
   if (k === 'index') cache.index = slot;
   else if (k === 'reviews') cache.reviews = slot;
+  else if (k === 'handbook') cache.handbook = slot;
   else cache.entries[k] = slot;
-  if (k === 'reviews') {
+  if (k === 'reviews' || k === 'handbook') {
     if (S.view === 'brain' && key() === 'index') renderBrain();
     return;
   }
@@ -172,6 +176,7 @@ async function loadOp(id) {
 function forget() {
   if (cache.index) cache.index.at = 0;
   if (cache.reviews) cache.reviews.at = 0;
+  if (cache.handbook) cache.handbook.at = 0;
   Object.values(cache.entries).forEach(slot => { slot.at = 0; });
   cache.revisions = {};
 }
@@ -576,7 +581,7 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) {
-    return head + stale + requestsHtml() + emptyGuidance(index.directory) + filingHtml() +
+    return head + stale + requestsHtml() + handbookHtml() + emptyGuidance(index.directory) + filingHtml() +
       diagnosticsBlock(index) + reviewsNote();
   }
   const t = tally(index);
@@ -596,7 +601,8 @@ function listHtml(slot) {
   const results = !t.visible.length && !emptyKind
     ? noResults(index, t)
     : kinds.map(k => kindSection(index, k, t)).join('');
-  return head + stale + requestsHtml() + `<div class="b-lib">` + navHtml(index, t) +
+  return head + stale + requestsHtml() + handbookHtml() +
+    '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
@@ -629,17 +635,316 @@ function sourceItem(s) {
 
 const back = '<p class="b-back"><a href="/brain" data-route>All Brain entries</a></p>';
 
+/* ── the curated handbook (task 171) ──────────────────────────────────
+
+   Five sections linking existing entries by their stable ids, read from
+   `GET /api/brain/handbook` and drawn above the library, which stays as
+   it was. Linking an entry never classifies it: each link is drawn as
+   what its own record says — the operative Current explanation, a
+   convention, a Historical source, or missing with its remedy — beside
+   the source authority the entry records. Organizing is one section at a
+   time, one Save, bound to the record's revision and a request identity
+   like every Brain write. */
+
+const HB_STATE = {
+  operative: ['Current — operative', 'b-c-current'],
+  convention: ['Convention — not approved policy', 'b-c-unclassified'],
+  historical: ['Historical — a source, not operative', 'b-c-historical'],
+  superseded: ['Superseded', 'b-c-superseded'],
+  unassessed: ['Unclassified — not assessed', 'b-c-unclassified'],
+  retired: ['Retired', 'b-c-superseded'],
+  missing: ['Missing', 'b-c-superseded'],
+  duplicate: ['Duplicate id', 'b-c-superseded'],
+  invalid: ['Invalid entry file', 'b-c-superseded'],
+};
+const COVER = { empty: 'Not covered yet', 'not-covered': 'No operative explanation',
+                partial: 'Partly covered', covered: 'Covered' };
+const STANDING = { implemented: 'Implemented', deployed: 'Deployed',
+                   'agreed-future': 'Agreed future work', unresolved: 'Unresolved' };
+const AUTH = { current: 'bound sources unchanged', stale: 'a bound source has moved',
+               contradictory: 'sources disagree', unsourced: 'no source revision bound',
+               unchecked: 'not every binding was checked' };
+const BINDING = { current: 'unchanged since', stale: 'changed since', missing: 'gone now',
+                  'absent-at-revision': 'not there at', 'off-branch': 'not in this history',
+                  'unknown-revision': 'unknown revision', 'no-repository': 'no repository',
+                  'not-checked': 'not checked', present: 'card on this board',
+                  recorded: 'recorded by a person, not verified' };
+let hb = null;   // organizing one section: {section, draft, base, reason, add, request, busy, error, conflict, lostReply}
+
+function hbTitle(id, section) {
+  const it = section && section.items.find(i => i.id === id);
+  if (it && it.title) return it.title;
+  const idx = cache.index && cache.index.data;
+  const e = idx && idx.entries.find(x => x.id === id);
+  return e ? e.title || id : id;
+}
+
+function authorityLine(a) {
+  if (!a) return '';
+  const parts = [
+    a.standing ? `<strong>${esc(STANDING[a.standing] || a.standing)}</strong>`
+      : '<span>standing not stated</span>',
+    esc(a.deployment.message),
+    `<span class="b-auth b-auth-${esc(a.state)}">${esc(AUTH[a.state] || a.state)}</span>`,
+    a.assessed ? `assessed ${esc(a.assessed)}` : 'assessment date not recorded',
+  ];
+  return `<p class="b-meta">${parts.join(' · ')}</p>` +
+    (a.contradictions.length ? '<ul class="b-hbprob">' + a.contradictions.map(c =>
+      `<li>${esc(c)}</li>`).join('') + '</ul>' : '');
+}
+
+function hbItemHtml(i) {
+  const [label, cls] = HB_STATE[i.state] || [i.state, ''];
+  const name = i.address
+    ? `<a href="${esc(i.address)}" data-route data-brain-id="${esc(i.id)}">${esc(i.title || i.id)}</a>`
+    : `<span class="mono">${esc(i.id)}</span>`;
+  return `<li class="b-hbitem b-hb-${esc(i.state)}"><div class="b-rowhead">${name} ${chip(cls, label)}` +
+    (i.kind ? ` <span class="b-meta">${esc(i.kind)}</span>` : '') + '</div>' +
+    (i.state !== 'operative' ? `<p class="b-note">${esc(i.message)}` +
+      (i.remedy ? ` <span class="b-remedy">Remedy: ${esc(i.remedy)}.</span>` : '') + '</p>' : '') +
+    (i.summary ? `<p class="b-sum">${esc(i.summary)}</p>` : '') + authorityLine(i.authority) + '</li>';
+}
+
+function hbOrganizeHtml(s) {
+  const idx = cache.index && cache.index.data;
+  const all = idx ? idx.entries.filter(e => !e.tombstone) : [];
+  const n = hb.draft.length;
+  const options = (value, except) => '<option value="">— choose an entry —</option>' +
+    all.filter(e => !except.includes(e.id) || e.id === value).map(e =>
+      `<option value="${esc(e.id)}"${e.id === value ? ' selected' : ''}>${esc(e.title || e.id)} · ` +
+      `${esc(e.classification)} (${esc(e.id)})</option>`).join('');
+  const rows = hb.draft.map((id, k) => {
+    const t = hbTitle(id, s);
+    const small = (act, label, aria, disabled) =>
+      `<button type="button" class="b-btn" data-bact="${act}" data-barg="${k}" aria-label="${esc(aria)}"` +
+      `${disabled || hb.busy ? ' disabled' : ''}>${label}</button>`;
+    return `<li class="b-hborg"><span class="b-hbpos mono">${k + 1}</span>` +
+      `<span class="b-hbname">${esc(t)} <span class="b-meta mono">${esc(id)}</span></span>` +
+      '<span class="b-hbctl">' +
+      small('hb-up', '↑ Up', `Move ${t} up`, k === 0) + small('hb-down', '↓ Down', `Move ${t} down`, k === n - 1) +
+      `<label class="b-hbrep"><span class="b-note">Replace with</span> <select data-hbrep="${k}" ` +
+      `aria-label="Replace ${esc(t)} with"${hb.busy ? ' disabled' : ''}>${options('', hb.draft)}</select></label>` +
+      small('hb-remove', 'Remove', `Remove ${t} from ${s.title}`, false) + '</span></li>';
+  }).join('');
+  const conflict = hb.conflict ? (() => {
+    const cur = (hb.conflict.current && hb.conflict.current.sections || []).find(x => x.id === s.id);
+    const now = cur ? cur.items.map(i => i.id) : [];
+    const list = (ids) => ids.length ? '<ol>' + ids.map(id => `<li>${esc(hbTitle(id, cur || s))} ` +
+      `<span class="mono b-meta">${esc(id)}</span></li>`).join('') + '</ol>' : '<p class="b-none">No links.</p>';
+    return '<div class="b-panel b-bad b-conflict" role="alert" tabindex="-1"><h3>Not saved: the handbook changed</h3>' +
+      `<p>${esc(hb.conflict.error)}</p><p>Your order is kept. Compare, then save again on the current ` +
+      'version; nothing is retried for you.</p><div class="b-compare">' +
+      `<div><h4>What you tried to save</h4>${list(hb.draft)}</div>` +
+      `<div><h4>${esc(s.title)} on disk now <span class="mono b-note">` +
+      `${esc((hb.conflict.current && hb.conflict.current.record || {}).revision || 'unknown')}</span></h4>${list(now)}</div></div>` +
+      `<div class="b-actions">${button('hb-rebase', 'Use the current version and keep my order', { primary: true })}` +
+      `${button('hb-cancel', 'Discard my change')}</div></div>`;
+  })() : '';
+  return `<div class="b-hbedit" role="group" aria-label="Organize ${esc(s.title)}">` + conflict +
+    (n ? `<ol class="b-hborglist">${rows}</ol>` : '<p class="b-none">No entries linked in this section.</p>') +
+    '<div class="b-field b-hbadd"><label for="hb-add">Add an existing entry</label>' +
+    `<div class="b-hbaddrow"><select id="hb-add" data-hb="add"${hb.busy ? ' disabled' : ''}>${options(hb.add, hb.draft)}</select>` +
+    button('hb-add', 'Add to section', { disabled: hb.busy || !hb.add }) + '</div>' +
+    (all.length ? '' : '<p class="b-note">There are no entries to link yet: write one with New entry.</p>') +
+    '<p class="b-note">Linking an entry does not classify it. A Historical or Unclassified entry stays what it ' +
+    'is, and is shown here as not the operative explanation.</p></div>' +
+    '<div class="b-field"><label for="hb-reason">Why this change</label>' +
+    `<input id="hb-reason" data-hb="reason" type="text" value="${esc(hb.reason)}" autocomplete="off" ` +
+    'aria-describedby="hb-reason-h" required>' +
+    '<p class="b-note" id="hb-reason-h">Required. Kept with your name in the handbook\'s history.</p></div>' +
+    (hb.lostReply ? '<p class="b-warn" role="alert">No answer came back, and nothing is known to have been ' +
+      'saved. Save again sends the same request; the board answers it from its record.</p>' : '') +
+    (hb.error ? `<p class="b-warn" role="alert">Not saved: ${esc(hb.error)}</p>` : '') +
+    '<div class="b-actions">' + button('hb-save', hb.busy ? 'Saving…' : `Save ${s.title}`,
+      { primary: true, busy: hb.busy, disabled: hb.busy }) +
+    button('hb-cancel', 'Cancel', { disabled: hb.busy }) + '</div></div>';
+}
+
+function hbSectionHtml(s, editable) {
+  const c = s.coverage;
+  const open = hb && hb.section === s.id;
+  return `<section class="b-hbsec b-hbsec-${esc(c.state)}" aria-labelledby="hbh-${esc(s.id)}" data-hbsec="${esc(s.id)}">` +
+    `<div class="b-headrow"><h3 id="hbh-${esc(s.id)}">${esc(s.title)}</h3> ` +
+    `${chip(c.state === 'covered' ? 'b-c-current' : c.state === 'partial' ? 'b-c-unclassified'
+      : 'b-c-superseded', COVER[c.state] || c.state)}` +
+    (!open && editable ? button('hb-organize', 'Organize', { arg: s.id, disabled: !!hb }) : '') + '</div>' +
+    `<p class="b-note">For ${esc(s.purpose)}.</p>` +
+    (open ? hbOrganizeHtml(s)
+      : (s.items.length ? '<ol class="b-list b-hblist">' + s.items.map(hbItemHtml).join('') + '</ol>'
+        : `<p class="b-none">${esc(c.message)}</p>`) +
+        (c.state !== 'empty' && c.state !== 'covered' ? `<p class="b-note">${esc(c.message)}</p>` : '') +
+        (c.notes.length ? '<ul class="b-hbnotes">' + c.notes.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '')) +
+    '</section>';
+}
+
+function handbookHtml() {
+  const slot = cache.handbook;
+  const head = '<h2 id="hb-h">Project handbook</h2>';
+  if (!slot) return `<section class="b-panel b-hb" aria-labelledby="hb-h">${head}<p class="b-loading" role="status" ` +
+    'aria-busy="true">Reading the handbook…</p></section>';
+  const h = slot.data;
+  if (!h) return `<section class="b-panel b-hb b-bad" aria-labelledby="hb-h">${head}<p role="alert">` +
+    `${esc(slot.error || 'the handbook could not be read')}</p></section>`;
+  const rec = h.record;
+  const editable = rec.state === 'record' || rec.state === 'missing';
+  const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading.</p>` : '';
+  const recNote = rec.state === 'refused'
+    ? `<p class="b-warn" role="alert"><code>${esc(rec.file)}</code> was not read: ${esc(rec.why)}. Organizing is off until it is fixed.</p>`
+    : rec.state === 'invalid' || rec.state === 'unsupported'
+      ? `<div class="b-warn" role="alert"><p><code>${esc(rec.file)}</code> does not follow the handbook format, so the ` +
+        'board will not write over it. Fix it by hand:</p><ul>' + rec.problems.map(p => `<li>${esc(p)}</li>`).join('') + '</ul></div>'
+      : '';
+  const sum = h.summary;
+  const history = h.history.length
+    ? `<details class="b-hbhist"><summary>Handbook history (${h.history.length})</summary><ol class="b-history">` +
+      h.history.slice().reverse().map(x => `<li>${esc(x.replace(/^-\s+/, ''))}</li>`).join('') + '</ol></details>' : '';
+  return `<section class="b-panel b-hb" aria-labelledby="hb-h">${head}` +
+    '<p class="b-lede">The curated landing: five sections linking maintained entries by their stable ids. ' +
+    'A link does not classify an entry, and Current is not shipped: each entry says what it stands for and ' +
+    'which source revisions back it, as a person recorded them. Reading this runs no check and reads no ' +
+    'file content — only brain/ and local git history.</p>' +
+    `<p class="b-note" role="status">${sum.covered} of ${sum.sections} sections covered · ${sum.empty} empty · ` +
+    `<span class="mono">${esc(rec.file)}</span> revision <span class="mono">${esc(rec.revision)}</span></p>` +
+    stale + recNote + writeStatus('handbook') +
+    `<div class="b-hbsecs">${h.sections.map(s => hbSectionHtml(s, editable)).join('')}</div>${history}</section>`;
+}
+
+/* An entry's own source authority, from its record (task 171): what it
+   stands for, its policy, its bindings and what local git says of each,
+   and every gap and contradiction — and the handbook sections that link it. */
+function authorityHtml(e) {
+  const a = e.authority;
+  if (!a) return '';
+  const binding = (b) => {
+    const where = b.type === 'review'
+      ? `<a href="${esc(b.address)}" data-route>review ${esc(b.target)}</a>`
+      : `<span class="mono">${esc(b.type)}:${esc(b.target)}</span>`;
+    return `<li>${where} <span class="mono b-meta">@${esc((b.revision || '').slice(0, 12))}</span> ` +
+      `<span class="b-auth b-auth-${esc(b.state)}">${esc(BINDING[b.state] || b.state)}</span>` +
+      (b.message ? `<span class="b-note"> — ${esc(b.message)}</span>` : '') + '</li>';
+  };
+  const member = (e.handbook || []).length
+    ? '<ul class="b-links">' + e.handbook.map(m => `<li>${esc(m.title)} — ${m.position} of ${m.of}</li>`).join('') + '</ul>'
+    : '<span class="b-none">Not linked from the handbook.</span>';
+  return '<div class="b-panel b-authority"><h2>Source authority</h2><dl class="b-facts">' +
+    `<dt>Standing</dt><dd>${a.standing ? esc(STANDING[a.standing] || a.standing)
+      : '<span class="b-none">not stated — Current is not a claim that it shipped</span>'}</dd>` +
+    `<dt>Deployment</dt><dd>${esc(a.deployment.message)}</dd>` +
+    `<dt>Policy</dt><dd>${a.policy === 'approved' ? 'Approved working policy' : a.policy === 'inferred'
+      ? 'Inferred convention — not approved policy' : '<span class="b-none">not stated</span>'}` +
+      (a.policyNote ? ` <span class="b-note">— ${esc(a.policyNote)}</span>` : '') + '</dd>' +
+    `<dt>Assessed</dt><dd>${a.assessed ? esc(a.assessed) : '<span class="b-none">not recorded</span>'}</dd>` +
+    `<dt>Bindings</dt><dd>${a.bindings.length ? '<ul class="b-links">' + a.bindings.map(binding).join('') + '</ul>'
+      : '<span class="b-none">None. A plain source or link proves no revision.</span>'}</dd>` +
+    `<dt>Reading</dt><dd><span class="b-auth b-auth-${esc(a.state)}">${esc(AUTH[a.state] || a.state)}</span></dd>` +
+    `<dt>Handbook</dt><dd>${member}</dd></dl>` +
+    (a.contradictions.length ? '<p class="b-warn" role="note">Disagreement, not resolved by bench:</p><ul>' +
+      a.contradictions.map(c => `<li>${esc(c)}</li>`).join('') + '</ul>' : '') +
+    (a.gaps.length ? '<ul class="b-hbnotes">' + a.gaps.map(g => `<li>${esc(g)}</li>`).join('') + '</ul>' : '') +
+    '</div>';
+}
+
+async function hbSave() {
+  if (!hb || hb.busy) return;
+  hb.busy = true;
+  hb.error = null;
+  hb.lostReply = false;
+  renderBrain(true);
+  const mine = hb;
+  const res = await post('/api/brain/handbook', { request: mine.request, expected: mine.base,
+    section: mine.section, entries: mine.draft, reason: mine.reason });
+  mine.busy = false;
+  if (hb !== mine) return;
+  if (res.ok) {
+    const op = res.data.operation;
+    ops.handbook = { request: mine.request, op, at: Date.now() };
+    hb = null;
+    forget();
+    toast(op.duplicate ? 'Already saved — this request was answered from the record.'
+      : `Saved: ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
+      !!(op.commit && op.commit.state === 'failed'));
+    renderBrain(true);
+    $(`#bshell [data-bact="hb-organize"][data-barg="${CSS.escape(mine.section)}"]`)?.focus();
+    return;
+  }
+  if (res.status === 0) {
+    mine.lostReply = true;
+    try {
+      const r = await fetch('/api/brain/operation?request=' + encodeURIComponent(mine.request));
+      const data = await r.json().catch(() => ({}));
+      if (data.operation && data.operation.saved) {
+        ops.handbook = { request: mine.request, op: data.operation, at: Date.now() };
+        hb = null;
+        forget();
+        toast('The save had landed — the board\'s record says so.');
+      }
+    } catch (e) { /* the warning stands */ }
+    renderBrain(true);
+    return;
+  }
+  mine.request = newRequest();
+  if (res.data && res.data.stale) mine.conflict = { error: res.error, current: res.data.current };
+  else mine.error = res.error;
+  renderBrain(true);
+  $('#bshell .b-hbedit .b-conflict, #bshell .b-hbedit [role="alert"]')?.focus();
+}
+
+function hbAct(name, arg) {
+  const h = cache.handbook && cache.handbook.data;
+  if (name === 'hb-organize' && h) {
+    const s = h.sections.find(x => x.id === arg);
+    if (!s) return;
+    hb = { section: s.id, draft: s.items.map(i => i.id), base: h.record.revision, reason: '', add: '',
+           request: newRequest(), busy: false, error: null, conflict: null, lostReply: false };
+    if (!cache.index) load('index');
+    renderBrain(true);
+    $('#bshell .b-hbedit select, #bshell .b-hbedit input')?.focus();
+    return;
+  }
+  if (!hb) return;
+  const k = Number(arg);
+  if (name === 'hb-save') { hbSave(); return; }
+  if (name === 'hb-cancel') {
+    const was = hb.section;
+    hb = null;
+    renderBrain(true);
+    $(`#bshell [data-bact="hb-organize"][data-barg="${CSS.escape(was)}"]`)?.focus();
+    return;
+  }
+  if (name === 'hb-up' && k > 0) [hb.draft[k - 1], hb.draft[k]] = [hb.draft[k], hb.draft[k - 1]];
+  else if (name === 'hb-down' && k < hb.draft.length - 1) [hb.draft[k + 1], hb.draft[k]] = [hb.draft[k], hb.draft[k + 1]];
+  else if (name === 'hb-remove') hb.draft.splice(k, 1);
+  else if (name === 'hb-add' && hb.add && !hb.draft.includes(hb.add)) { hb.draft.push(hb.add); hb.add = ''; }
+  else if (name === 'hb-rebase' && hb.conflict) {
+    // the current version becomes the base; the person's order stays
+    const cur = hb.conflict.current;
+    hb.base = cur && cur.record ? cur.record.revision : hb.base;
+    hb.conflict = null;
+    if (cur) cache.handbook = { status: 200, data: cur, error: null, at: Date.now() };
+  }
+  renderBrain(true);
+  // focus follows the item that moved, or the control in its place
+  const to = name === 'hb-up' ? k - 1 : name === 'hb-down' ? k + 1 : k;
+  const again = $(`#bshell [data-bact="${CSS.escape(name)}"][data-barg="${to}"]:not([disabled])`) ||
+    $(`#bshell .b-hborg:nth-child(${Math.max(1, Math.min(to + 1, hb ? hb.draft.length : 1))}) button:not([disabled])`) ||
+    $('#bshell #hb-add');
+  again?.focus();
+}
+
 /* ── writing ───────────────────────────────────────────────────────── */
 
 function draftOf(mode, e) {
   if (mode === 'create') {
     return { title: '', kind: 'Guide', summary: '', sources: '', related: '', body: '',
-             classification: 'Unclassified', reason: '' };
+             classification: 'Unclassified', reason: '',
+             standing: '', policy: '', policyNote: '', bindings: '', assessed: '' };
   }
   if (mode === 'edit') {
     return { title: e.title || '', kind: e.entryKind || 'Guide', summary: e.summary || '',
              sources: (e.sources || []).map(s => s.text).join('\n'),
-             related: (e.related || []).map(r => r.id).join(', '), body: e.body || '' };
+             related: (e.related || []).map(r => r.id).join(', '), body: e.body || '',
+             standing: e.standing || '', policy: e.policy || '', policyNote: e.policyNote || '',
+             bindings: (e.bindings || []).map(b => b.text).join('\n'), assessed: e.assessed || '' };
   }
   if (mode === 'classify') {
     return { classification: e.classification, reason: '',
@@ -675,6 +980,32 @@ function entryOptions(exceptId, value) {
   const items = (idx ? idx.entries : []).filter(x => x.id !== exceptId && !x.tombstone);
   return `<option value="">— choose an entry —</option>` + items.map(x =>
     `<option value="${esc(x.id)}"${x.id === value ? ' selected' : ''}>${esc(x.title || x.id)} (${esc(x.id)})</option>`).join('');
+}
+
+/* What the entry stands for and what backs it (task 171): a person's
+   record, never inferred — a fold, so the ordinary edit stays short. */
+function authorityFields(d) {
+  const opts = (name, value, pairs) => `<select id="bf-${name}" data-bf="${name}">` + pairs.map(([v, l]) =>
+    `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`).join('') + '</select>';
+  const open = d.standing || d.policy || d.bindings || d.assessed;
+  return `<details class="b-fieldset b-authfields"${open ? ' open' : ''}><summary>Source authority ` +
+    '<span class="b-note">— what it stands for, and which revisions back it</span></summary>' +
+    field('standing', 'Standing', opts('standing', d.standing, [['', 'Not stated'],
+      ['implemented', 'Implemented'], ['deployed', 'Deployed (record the deployment below)'],
+      ['agreed-future', 'Agreed future work, not built'], ['unresolved', 'Unresolved']]),
+      'Current is not shipped: say what this explains. Bench never infers it.') +
+    field('policy', 'Working policy', opts('policy', d.policy, [['', 'Not a working agreement'],
+      ['approved', 'Approved policy'], ['inferred', 'Inferred convention — not approved']]),
+      'Approved only if people actually approved it; say by whom and where below.') +
+    field('policyNote', 'Policy note', input('policyNote', d.policyNote, { spell: true })) +
+    field('bindings', 'Source bindings', textarea('bindings', d.bindings, 3,
+      'One per line: app:&lt;path&gt;@&lt;commit&gt;, work:&lt;path&gt;@&lt;commit&gt;, ' +
+      'review:#&lt;card&gt;/&lt;review&gt;, deploy:&lt;where&gt;@&lt;identity&gt;.'),
+      'One per line: app:&lt;path&gt;@&lt;commit&gt;, work:&lt;path&gt;@&lt;commit&gt;, ' +
+      'review:#&lt;card&gt;/&lt;review&gt;, deploy:&lt;where&gt;@&lt;identity&gt;. A deployment identity is ' +
+      'your record; bench does not verify it.') +
+    field('assessed', 'Assessed on', input('assessed', d.assessed), 'The date you checked these bindings, YYYY-MM-DD.') +
+    '</details>';
 }
 
 function classifyFields(d, selfId) {
@@ -737,6 +1068,7 @@ function formHtml(e) {
         'One per line: a card (#148), plans/… or reference/…, a web address (never fetched), or plain text.') +
       field('related', 'Related entries', input('related', d.related),
         'Entry ids, separated by commas. Each must be an entry on this board.') +
+      authorityFields(d) +
       `<div class="b-field"><span class="b-label">Body</span>${tabs}${bodyField}</div>`;
     if (ed.mode === 'create') {
       body += classifyFields(d, null).replace(/<input type="radio" name="bf-classification" data-bf="classification" value="Superseded"[^>]*>/,
@@ -924,7 +1256,7 @@ function entryHtml(slot, id) {
     writeStatus(e.id) + entryActions(e) + editing + removed + superseded +
     `<div class="b-read"><div class="b-prose">${md(e.body, { base: 2 }) ||
       '<p class="b-none">This entry has no body.</p>'}</div>` +
-    `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>` +
+    `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>${authorityHtml(e)}` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
     warnings + '</article>';
 }
@@ -1613,6 +1945,14 @@ function payloadOf() {
     const p = { ...base, title: d.title, kind: d.kind, summary: d.summary,
                 sources: d.sources.split('\n').map(s => s.trim()).filter(Boolean),
                 related: d.related.split(',').map(s => s.trim()).filter(Boolean), body: d.body };
+    // the source-authority fields go only from a draft that has them: a
+    // draft seeded elsewhere (the Brain Agent's) keeps what the entry has
+    if (d.standing !== undefined) {
+      Object.assign(p, { standing: d.standing || '', policy: d.policy || '',
+        policyNote: d.policy ? (d.policyNote || '') : '',
+        bindings: (d.bindings || '').split('\n').map(s => s.trim()).filter(Boolean),
+        assessed: (d.assessed || '').trim() });
+    }
     if (ed.mode === 'create') { p.classification = d.classification; p.reason = d.reason; }
     else { p.id = ed.id; p.expected = ed.base; }
     return p;
@@ -1716,6 +2056,7 @@ function act(name, arg) {
     return;
   }
   if (name.startsWith('rf-')) { rfAct(name, arg); return; }
+  if (name.startsWith('hb-')) { hbAct(name, arg); return; }
   if (name.startsWith('rv-')) {
     // a filed review's classification (task 168): a mode of its page
     const slot = cache.entries[key()];
@@ -1844,6 +2185,22 @@ function wire(el) {
       } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
       return;
     }
+    if (hb && f.dataset && (f.dataset.hb || f.dataset.hbrep)) {
+      // organizing a handbook section: kept here, sent nothing until Save
+      if (f.dataset.hb === 'reason') hb.reason = f.value;
+      else if (f.dataset.hb === 'add') {
+        hb.add = f.value;
+        const add = el.querySelector('[data-bact="hb-add"]');
+        if (add) add.disabled = hb.busy || !hb.add;
+      } else if (f.dataset.hbrep && ev.type === 'change' && f.value) {
+        // replacing a link keeps its place in the order
+        const k = Number(f.dataset.hbrep);
+        if (!hb.draft.includes(f.value)) hb.draft[k] = f.value;
+        renderBrain(true);
+        $(`#bshell [data-hbrep="${k}"]`)?.focus();
+      }
+      return;
+    }
     if (f.dataset && f.dataset.rfreason) {
       // why a report is left unfiled: kept here, sent only with Close
       rfReasons[f.dataset.rfreason] = f.value;
@@ -1933,6 +2290,7 @@ function renderBrain(force) {
   // draft away (navigation never writes, and never carries a draft along)
   if (ed && ((ed.mode === 'create') !== (k === 'index') || (ed.id && k !== 'e:' + ed.id))) ed = null;
   if (red && red.key !== k) red = null;
+  if (hb && k !== 'index') hb = null;
   // held while a person types, and while a pointer is down on the view
   // `live` (the Brain Agent's preflight arriving) paints under a person's
   // typing — the caret is kept below — but never under a pressed pointer
@@ -1962,6 +2320,12 @@ function renderBrain(force) {
     const slot = k === 'index' ? cache.index : cache.entries[k];
     if (!slot || Date.now() - slot.at > FRESH_MS) load(k);
     if (k === 'index' && (!cache.reviews || Date.now() - cache.reviews.at > FRESH_MS)) load('reviews');
+    // the handbook is not re-read under a person organizing it: the Save is
+    // held to the revision it started from, and a newer one is the server's
+    // to refuse, with both orders shown
+    if (k === 'index' && !hb && (!cache.handbook || Date.now() - cache.handbook.at > FRESH_MS)) {
+      load('handbook');
+    }
     if (k !== 'index') {
       const id = k.slice(2);
       const o = ops[id];
@@ -1996,7 +2360,8 @@ function renderBrain(force) {
     // the caret is kept in the search box and in a draft's text fields (a
     // forced repaint — the current version read in — lands while typing)
     const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
-      ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf) &&
+      ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf ||
+        active.dataset.hb) &&
         (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
@@ -2008,8 +2373,11 @@ function renderBrain(force) {
         : active.dataset.ag ? `[data-ag="${CSS.escape(active.dataset.ag)}"]`
         : active.dataset.agq ? `[data-agq="${CSS.escape(active.dataset.agq)}"]`
         : active.dataset.age && active.type !== 'radio' ? `[data-age="${CSS.escape(active.dataset.age)}"]`
+        : active.dataset.hb ? `[data-hb="${CSS.escape(active.dataset.hb)}"]`
+        : active.dataset.hbrep ? `[data-hbrep="${CSS.escape(active.dataset.hbrep)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
-        : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]`
+        : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]` +
+          (active.dataset.barg ? `[data-barg="${CSS.escape(active.dataset.barg)}"]` : '')
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +
             (active.type === 'radio' ? `[value="${CSS.escape(active.value)}"]` : '') : null) : null;
     el.innerHTML = `<div class="b-main">${html}</div>`;
@@ -2026,7 +2394,9 @@ function renderBrain(force) {
     // a new destination: focus its heading, or, back on the list, the
     // entry the reader came from
     paintedKey = k;
-    const target = (k === 'index' && returnTo && el.querySelector(`.b-list [data-brain-id="${CSS.escape(returnTo)}"]`))
+    // the library's row first; a handbook link where the library hides it
+    const target = (k === 'index' && returnTo && (el.querySelector(`.b-lib .b-list [data-brain-id="${CSS.escape(returnTo)}"]`) ||
+      el.querySelector(`.b-list [data-brain-id="${CSS.escape(returnTo)}"]`)))
       || el.querySelector('.b-title');
     if (target && document.activeElement !== target) target.focus();
     if (k !== 'index') { el.scrollTop = 0; returnTo = k.slice(2); }
