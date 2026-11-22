@@ -881,7 +881,10 @@ def read_text(text: str, filename: str, head: str | None = None) -> dict:
         history = [r for r in mine if r.get("id")] + theirs
         row = {**item, **found, "key": item["id"] or f"@{item['rev']}",
                "tracked": bool(item["id"]), "word": STATES[found["state"]],
-               "basis": (found["decision"] or {}).get("id"),
+               # what a person's next decision is held to: the newest
+               # record in the card's acceptance record, whatever a run
+               # reported since (a report never makes a decision stale)
+               "basis": next((r["id"] for r in reversed(mine) if r.get("id")), None),
                "history": list(reversed(_ordered(history)))}
         every.append(row)
         if item["id"]:
