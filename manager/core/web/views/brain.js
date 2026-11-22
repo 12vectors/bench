@@ -499,6 +499,9 @@ function filingHtml() {
   const idx = f.index || {};
   const attention = f.attention || [];
   const missing = f.missingSources || [];
+  // a board with no review on any card and nothing to recover has nothing
+  // to say here, and no control to offer
+  if (!attention.length && !missing.length && !(d.reviews || []).length) return '';
   const parts = [];
   if (attention.length) {
     parts.push(`<h3>Reports that need you (${attention.length})</h3><ul class="b-rflist">` +
@@ -522,7 +525,9 @@ function filingHtml() {
     '<p class="b-note">Rebuilding reads every card and writes this board\'s index again. It changes no card ' +
     'and no classification record, and keeps a lost source marked rather than dropping it.</p>' +
     `<div class="b-actions">${rebuild}</div>`;
-  const open = attention.length || missing.length || idx.state !== 'present';
+  // open on its own only when a person is needed; an index that is merely
+  // missing or behind hides nothing, so its fold waits to be opened
+  const open = attention.length || missing.length;
   const counts = (attention.length ? `${attention.length} need you` : 'nothing needs you') +
     (unindexed ? ` · ${unindexed} not indexed` : '') + (missing.length ? ` · ${f.missingCount} source${f.missingCount === 1 ? '' : 's'} gone` : '');
   return `<details class="b-panel b-filing"${open ? ' open' : ''}><summary>Report filing and the review index — ` +

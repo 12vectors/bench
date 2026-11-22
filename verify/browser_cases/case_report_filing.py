@@ -214,10 +214,20 @@ class ReportFiling(unittest.TestCase):
         self.assertIn("Retry filing", banner)
         shot("report-filing-card-activity")
         sel = "#drawerbody .dfiling [data-rfop]"
-        b.eval(f"document.querySelector({json.dumps(sel)}).focus(); true")
-        b.key("Enter")
-        if not b.wait(f"document.querySelector({json.dumps(sel)})?.classList.contains('armed')", 5):
-            raise bv.CheckFailed("Retry filing on the card did not arm")
+        # the drawer is redrawn as its readings land; focus the button as
+        # it stands now, immediately before each key
+        focus = f"(() => {{ const x = document.querySelector({json.dumps(sel)}); x?.focus();" \
+                " return document.activeElement === x; })()"
+        armed = f"!!document.querySelector({json.dumps(sel)})?.classList.contains('armed')"
+        for _ in range(5):
+            b.wait(focus, 3)
+            b.key("Enter")
+            if b.wait(armed, 2):
+                break
+        else:
+            raise bv.CheckFailed("Retry filing on the card did not arm: "
+                                 + str(b.eval(f"document.querySelector({json.dumps(sel)})?.outerHTML")))
+        b.wait(focus, 3)
         b.key("Enter")
         deadline = time.time() + 10
         while time.time() < deadline and self.copies(self.card8, REL8) == 0:
