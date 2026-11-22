@@ -223,10 +223,13 @@ class WhichKindsAPhaseCardMayHost(LaunchCase):
 
         agent = agents.start_review(PHASE, "in-progress")
         self.assertTrue(wait_for(lambda: not self.running()))
+        # The run reads ended (`finish`) before its reaper files the report,
+        # and filing is a durable operation since task 169: wait for the
+        # report itself, not for the status that precedes it.
+        self.assertTrue(wait_for(lambda: "Relevance review" in self.text(PHASE)))
 
         self.assertEqual(agent["mode"], "review")
         self.assertIsNone(agent["worktree"], "read-only: nothing is cut for it")
-        self.assertIn("Relevance review", self.text(PHASE))
 
     def test_reviewing_the_phase_pr_is_allowed_and_names_the_phase_branch(self):
         """The prompt asks GitHub for the diff by branch, and a phase's PR
