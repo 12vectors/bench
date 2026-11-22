@@ -480,7 +480,7 @@
     "text": "Teams reporting on progress copy cards out of the board by hand every week. The table view already has the rows and columns they want; nothing writes them out."
    },
    "questions": null,
-   "rev": "ec3d03f2cb3d",
+   "rev": "884d65ca0620",
    "scope": {
     "from": "What to build",
     "items": [
@@ -792,7 +792,7 @@
     "text": "Reports filed by runs carry UTC stamps; comments carry the reader's local time. Both appear in one list with no zone, and the order looks wrong across midnight."
    },
    "questions": null,
-   "rev": "cd4eaa2f5c8c",
+   "rev": "d330524a5ab7",
    "scope": {
     "from": "What to build",
     "items": [
