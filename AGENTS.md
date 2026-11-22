@@ -1583,14 +1583,10 @@ card's **Tools** come first on every tab — the same group as its **⋯**
 menu, labelled once — and then the open section's text.
 
 - **Overview** — four sections in the order a busy reader asks their
-  questions (task 149), then everything else. **The work**: what the
-  card is and why, quoted from the brief as it reads now — its opening
-  paragraph, the first paragraph of its problem section (`Context`,
-  `Problem`, `Background`…), the headings or leading bullets of its scope
-  section (`What to build`, `Scope`…) and its boundaries (`Out of
-  scope`…), each labelled with the section it came from, clipped at a
-  sentence and marked when it continues, with the brief's revision and a
-  link to the whole brief; open questions in the brief are raised there.
+  questions (task 149), then everything else. Where the card stands comes
+  first, with the work directly after it (task 186): the status and the
+  next action are read before the work's narrative. The card's head, its
+  tabs and its **Tools** stay above all four.
   **Where it stands · what happens next**: the delivery status — its
   word as a heading, its sentence (announced as an alert only in the
   alarm tone), the one primary action and who holds it, and every other
@@ -1606,7 +1602,15 @@ menu, labelled once — and then the open section's text.
   or done with none says its result is not stated), the orchestration
   line and, where one is recorded, the **Work base** (which code the
   work starts from, and a held new start kept in view as the blocker it
-  is). **What is required**, in two halves: *to do the work* — the
+  is). **The work**: what the
+  card is and why, quoted from the brief as it reads now — its opening
+  paragraph, the first paragraph of its problem section (`Context`,
+  `Problem`, `Background`…), the headings or leading bullets of its scope
+  section (`What to build`, `Scope`…) and its boundaries (`Out of
+  scope`…), each labelled with the section it came from, clipped at a
+  sentence and marked when it continues, with the brief's revision and a
+  link to the whole brief; open questions in the brief are raised there.
+  **What is required**, in two halves: *to do the work* — the
   card's information, its dependencies (each by number, with its stage,
   or *not on this board*) and its criteria — and *to merge it* —
   **Merge requirements**, `1 of 2 merge requirements met for <commit>`,
