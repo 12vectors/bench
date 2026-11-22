@@ -7888,6 +7888,121 @@ with its state, code, reason, head, check words, review independence and
 merge label — local records and local git only; it asks no remote and
 launches nothing.
 
+### Review is not admission: the current target
+
+Two cards, A and B, can both pass their checks and their review against
+the `main` they were cut from — in parallel, each against its own brief.
+Once A is admitted, B's results say nothing about the `main` that now
+holds A: git may report a conflict, or merge cleanly and still break the
+combined behaviour. So bench keeps two facts apart (task 189,
+`integration.py`):
+
+- **Review** — the card's work judged against its brief, at its own head.
+  Unchanged: reviews and checks still run in parallel, and nothing waits
+  because another unaccepted card overlaps.
+- **Admission** — the merge into the target as it is *now*. Where the
+  merge rule in force requires at least one check, the candidate head
+  must **hold the target's accepted tip** (contain it), so the required
+  check bench ran at that exact head ran on the combination. A pass at a
+  head that does not hold it is history about uncombined work, never
+  proof of the combination; a provider's "mergeable" is a textual reading
+  only, and is shown as that.
+
+**Accepted work only.** The target is the target branch as the remote's
+copy was last fetched, else this checkout's — never another pull
+request, and never a speculative combination of pending ones. Where the
+work state shares the application's repository (a vendored or
+source-hosted install), the board's own `board:` commits on `main` touch
+only `tasks/`, `plans/`, `reference/`, `brain/`, `setup/` and
+`orchestration/` under the work root; they are bookkeeping, not work a
+candidate must be combined with, so they never stale it.
+
+**What a Review card says.** Under its review line, a card whose merge
+rule requires a check wears its integration state, and the Overview and
+the merge dialog lead their merge requirements with an **Against the
+target** block — the target and the revision read, whether the head
+holds it, how far behind, the accepted commits it does not hold, the
+provider's mergeability with its limits, and the last update on this
+board:
+
+| state | means | next |
+| --- | --- | --- |
+| Ready to admit | the head holds the target and every requirement is met on it | merge & clean up — which reads it all again |
+| Target changed — integration check needed | the target moved past the head | **Update against target and verify** |
+| Conflicts with target — repair needed | updating conflicts (recorded), or the provider reports a conflict for this head | **Update against target and verify** (a repair run) |
+| Integration check running / failed / needed | the head holds the target; its required check is running, did not pass, or has not run on it | wait; ↻ act on PR; Run required checks |
+| Integration unknown | the target cannot be read here | Check the remote |
+
+A card whose requirements are met at a head that does not hold the target
+reads **`target-changed`** or **`target-conflicts`** instead of *Ready to
+merge* (delivery row 22, read before 18). A board with no required check
+— ungated, or review-only — merges exactly as before; its cards still say
+the target moved, as information.
+
+**Update against target and verify** (the card's primary action, armed;
+`POST /api/card/integration/update`, `GET /api/card/integration` to read
+what it would do) works on the card's **existing** branch, worktree and
+pull request, in Review: it fetches the target, merges its accepted tip
+into the card's branch additively — no rebase, no force-push, no other
+branch — and
+
+- **clean:** pushes the branch so the same PR updates. No agent runs.
+- **conflict:** aborts (the branch is exactly as it was), records the
+  conflicting files, and starts one **↻ act on PR** run told which
+  accepted commits came in, what conflicted and that a clean merge is not
+  proof the combination works. A card with no PR is told to open one.
+
+Either way the card stays in Review with its history; the new head needs
+its required checks (bench runs them on the combination) and, by the
+existing exact-head rules, a fresh review. The action accepts nothing and
+merges nothing into the target. A second request while one runs — a
+double click, the orchestrator beside a person — is refused, and a run
+already working on the card refuses it too.
+
+**One admission per target.** Merge & clean up — a person's click and the
+orchestrator's delegated merge alike — holds the admission of its target
+(per repository and branch) for the whole merge and publication; a second
+admission into the same target is refused with nothing merged, and a
+different target never waits. Immediately before the merge the target is
+read again, here and on the remote (`git ls-remote`): a target that moved
+(another admission, a replica, a merge made outside the board), or a
+remote that cannot be read, refuses with nothing merged and names the way
+on.
+
+**What the guards promise, said apart.**
+
+| guard | guarantee |
+| --- | --- |
+| local merge | published by a plain push, which git refuses if the remote target moved since it was read — a compare-and-set on the target |
+| merge on the host | pinned to the head (`--match-head-commit`); the target is read immediately before, but the host does not make the merge conditional on the target's tip. A target that moves in between is **detected** afterwards (the next reading reads it), not prevented. Branch protection's "require up to date" is the host's own guard where configured |
+| admission lock | one admission per target on this machine; another installation is held by the remote guard above, not by this lock |
+
+**Orchestrated.** In an orchestrator scope the same steps run under the
+authority already delegated: after a card's checks and review pass, a
+stale head is updated (`refresh`, delegated by the `repair` word; it
+launches no agent, takes no slot and spends no start); a conflict found
+there is repaired by an ordinary, queued **↻ act on PR** (a repair round,
+counted against `repairRounds`) told about the incoming changes; the
+combined head is checked and reviewed afresh; and only then merged, where
+`merge` is delegated. The final update → check → admission sequence is
+**serialized per target**: one card holds a target's admission — a
+`refresh`, `merge` or `integrate` operation in flight (an unknown outcome
+included, until a person settles it), else a card whose head is its own
+update against the current target, else the lowest card number — and the
+others read `admission-queued`, naming the card they wait for. Reviews,
+checks and repairs of other cards go on in parallel. An update left
+without a receipt is reconciled from its recorded attempt, or as nothing
+having run when the branch never moved, else held `unknown`; it is never
+repeated blind. A phase member's target is its phase branch and a phase
+card's is the application base, read the same way; the legacy phase
+runner (an unadopted phase) is not changed by this and still merges `main`
+into its phase branch on its own beat.
+
+Machine-local records: each card's update attempts under
+`manager/local/state/integration/<stem>.json` (bounded), and the lock
+files beside them. Reading any of it — the board, a card, the preview —
+fetches, merges and launches nothing.
+
 ### Phase scopes: one scheduler per phase
 
 A phase can be run by the phase runner (see "A phase runs itself, on a
