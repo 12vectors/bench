@@ -1343,6 +1343,27 @@
   #drawer .arow.reported .aword,#drawer .arow.fix-reported .aword{color:var(--accent)}
   #drawer .arow .abody{padding:4px 10px 10px 34px;display:flex;flex-direction:column;
     gap:8px;font-size:12.5px}
+  /* acceptance, outcome first (task 190): the aggregate, then each
+     criterion with its state in words, its whole text and its reason */
+  #drawer .accsum{border:1px solid var(--line);border-left:4px solid var(--border);
+    border-radius:8px;padding:10px 12px;margin:6px 0 12px}
+  #drawer .accsum.tone-alarm{border-left-color:var(--alarm)}
+  #drawer .accsum.tone-calm{border-left-color:var(--calm)}
+  #drawer .accsum h3{margin:0 0 4px;font-size:14px}
+  #drawer .accsum .acount{margin:0 0 6px}
+  #drawer .accnext{margin:0;font-size:12.5px;color:var(--text)}
+  #drawer .acclist{display:flex;flex-direction:column;gap:8px;margin:0 0 12px}
+  #drawer .arow .amain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  #drawer .arow .amain .aword{font-family:inherit;font-size:11.5px;font-weight:600;
+    letter-spacing:.01em;color:var(--muted)}
+  #drawer .arow .amain .afull{font-size:13px;line-height:1.45}
+  #drawer .arow .areason{color:var(--muted);font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+  #drawer .arow .aby{color:var(--dim);font-size:11px}
+  #drawer .arow.decision .aword{color:var(--alarm)}
+  #drawer .arow.needs-work .abox,#drawer .arow.decision .abox{border-color:var(--alarm);color:var(--alarm)}
+  #drawer .arow.reported .abox,#drawer .arow.recheck .abox{border-color:var(--accent);color:var(--accent)}
+  #drawer .arow.not-verified .abox{border-style:dashed}
+  #drawer .acorrect>summary{font-size:12px}
   #drawer .arow .afull{margin:0;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
   #drawer .arow .ameta,#drawer .dsec .ameta{font-family:var(--mono);font-size:10.5px;color:var(--dim);
     overflow-wrap:anywhere}

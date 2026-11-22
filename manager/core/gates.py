@@ -1490,9 +1490,10 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
     bench's evidence as it reads now, and the criterion's wording. Four
     things keep it from saying more than anyone established:
 
-    - **Tracked, all of it.** An untracked card, or criteria added since
-      tracking, have no identity a decision could be about — so the gate
-      asks for Track acceptance first, and tracking accepts nothing.
+    - **Identified, all of it.** A criterion with no id has no decision a
+      person could have recorded about it — so the gate asks for a
+      decision on each; the first one gives the criteria their ids (task
+      190), and an id accepts nothing.
     - **Every tracked criterion accepted.** `reported` (an agent's claim,
       or a tick by hand before tracking), `pending`, `needs work` and
       `needs recheck` are all unmet, each with its own sentence.

@@ -164,7 +164,7 @@ function deliveryRun(task, a) {
     case 'run-required-checks': return () => { requiredSheet(task); return true; };
     case 'evidence': return () => { verifySheet(task); return true; };
     // a merge rule asks for sign-off: open the Acceptance section, where
-    // Track acceptance and each criterion's decision already live. Opening
+    // each criterion's result and a person's decision already live. Opening
     // it changes nothing; every decision is still its own armed write
     case 'confirm-criteria': return () => {
       S.dtab[task.file] = 'acceptance';
