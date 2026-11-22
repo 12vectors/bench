@@ -162,6 +162,11 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   to it; `observe` writes a `stale` record when a stacked decision's
   parent moves, lands, goes back or vanishes (see "Choosing a work base:
   main, or committed work in Review")
+- `adoption.py` — legacy `reference/` material (task 172): the inventory
+  and one file's preview, read and written nowhere, and the freeze the
+  Brain's writer asks under its lock before an `adopt` write. It imports
+  `brain`, `config`, `gitrepo`, `redact` and `taskfiles` (see "Adopting
+  reference material")
 - `evidence.py` — the verification record: where it lives, how it is
   stored (through `records`, durably once its outcome is final) and read
   back, the reuse records, the outcome vocabulary every reader branches
@@ -1850,9 +1855,11 @@ Brain"), and a report whose filing failed is recovered from there or from
 its card (task 169, "Filing a report, and recovering one that was not
 filed"). A curated handbook of five sections links maintained entries
 and says what authority stands behind each (task 171, "The project
-handbook: curated, sourced, said as it is"). What it does not do yet,
-said so nobody looks for it: seeding a Brain from an application,
-adopting `reference/` files, and any agent classification. A run is given no
+handbook: curated, sourced, said as it is"). Existing `reference/` files
+can be catalogued or explained there, one at a time, with every original
+left at its address (task 172, "Adopting reference material"). What it
+does not do yet, said so nobody looks for it: seeding a Brain from an
+application, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -1909,9 +1916,11 @@ The body, in Markdown.
 | **Policy** | no | for a working agreement: `approved` or `inferred`, optionally `— <by whom, where>`. Only a person writes it |
 | **Bindings** | no | typed source bindings, comma-separated: `app:<path>@<commit>`, `work:<path>@<commit>`, `review:#<card>/<review>`, `deploy:<where>@<identity>` |
 | **Assessed** | no | the date the bindings were checked, `YYYY-MM-DD` |
+| **Adopted from** | no | the retained file an adopted entry came from: `reference/<file>@<sha256> · catalogue` or `· explanation` |
 
 **Invalidated** and **Override** were added by task 158 within version 1,
-and **Standing**, **Policy**, **Bindings** and **Assessed** by task 171:
+**Standing**, **Policy**, **Bindings** and **Assessed** by task 171, and
+**Adopted from** by task 172:
 a reader that predates them shows them as fields it ignores, and nothing
 else changes.
 
@@ -2214,8 +2223,71 @@ handbook and the entry's own page read them, and nothing else:
 no agent and no write. A missing record reads as five empty sections.
 
 **Not in this version:** seeding the handbook, generating or maintaining
-its prose, inferring a working agreement, retrieving a source, adopting
-`reference/` files, and any automatic classification or freshness repair.
+its prose, inferring a working agreement, retrieving a source, and any
+automatic classification or freshness repair.
+
+### Adopting reference material
+
+`reference/` is deprecated for new knowledge, and nothing in it moves
+(task 172). New explanations are written in the Brain; `plans/` stays
+planning material. **Review reference files**, on the Brain's landing,
+lists what is already there so a person can give a file a stable Brain
+identity, one file and one entry at a time.
+
+**What the list and the preview read.** Each name directly in
+`reference/`: its type (from its bytes), size, SHA-256, the cards, plans
+and entries that link it, and who last committed it (*unknown* for an
+untracked file). `GET /api/brain/adoption` and `GET
+/api/brain/adoption/preview?name=` read files and local git metadata.
+They write, fetch, launch and run nothing.
+
+**What cannot be adopted**, listed with why: a link, a non-regular file,
+a hidden file, a credential-shaped name (never opened), content that
+looks like a credential (its digest is withheld too), a file over 32 MiB,
+a name a source field cannot cite, a subdirectory, and bytes that
+contradict the name. Credential detection is pattern matching over the
+first 2 MiB: it lowers the risk and does not prove a file clean.
+
+**Three choices, each one entry.**
+
+| choice | writes | the file |
+| --- | --- | --- |
+| **Catalogue the retained file** (default) | one `Attachment` entry, id `a-ref-<hash of the name>`, linking the file | unchanged at `/files/reference/<name>` |
+| **Write a maintained explanation** | one separate entry, id `a-exp-<hash>`, citing the file and its catalogue entry; the text is a person's, starting from the file's own words only for Markdown or text, with the differences shown | unchanged; HTML, images, PDFs and prototypes are never converted |
+| **Record the new bytes** | on an adopted entry whose file changed: the recorded digest, its `work:` binding and one history line, with a required reason | unchanged |
+
+Every adopted entry starts **Unclassified**. A person classifies it
+afterwards with **Classify**, and a handbook section links it through
+**Organize**, as a separate write. Adopting grants no agent access and no
+policy authority. Being catalogued says where a file is and what its
+bytes were, never that it is right.
+
+**Held to what the preview showed.** Apply takes two presses and sends
+the exact source digest, destination revision and operation (`POST
+/api/brain/adoption/apply`, `{request, op, name, source, expected, title?,
+summary?, kind?, body?, reason?}`). Under the Brain's write lock both are
+read again:
+
+| found | answer, with nothing written |
+| --- | --- |
+| the file changed | `source-drift`: read the preview again |
+| the entry changed | `destination-changed` |
+| the file is already adopted in this role, or something holds that id | `already-adopted`, naming it; a person's entry is never overwritten |
+| no catalogue entry yet, or it records other bytes | `catalogue-first`, `catalogue-stale` |
+| the catalogue entry was retired | the id is not reused |
+
+It is the Brain's ordinary write, so it has the same request journal,
+scoped commit and sync: a double click, a lost reply or a restart ends in
+one entry; **Saved**, **Committed** and **Shared** are said apart; and
+**Retry commit** and **Retry push** finish what did not happen. There is
+no transaction across files, because each Apply is one file.
+
+An adopted entry's page shows **Adopted from**: the file, its role,
+whether the bytes still match and the catalogue or explanation beside it.
+
+**Not in this version:** batch adoption, renaming or removing a reference
+file, compatibility redirects, seeding and any automatic classification.
+No installer step, update or read adopts anything.
 
 ### Drafting with the Brain Agent
 
