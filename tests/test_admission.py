@@ -377,6 +377,32 @@ class GuardsAndDuplicates(AdmissionCase):
         self.assertFalse(found["applies"])
 
 
+class ATargetOtherThanMain(AdmissionCase):
+    """A card whose **Base branch:** names another branch is read against
+    that branch, and that branch moving changes its reading."""
+
+    def test_a_named_base_moving_reads_target_changed(self):
+        git(self.repo, "branch", "side", "main")
+        wt = self.worktree(B[:-3], base="side")
+        head = self.write(wt, "b.txt", "calls new_name\n")
+        self.place("review", filename=B, title="82 — Card B", pr=PR_URL,
+                   base_branch="side")
+        self.assertEqual(self.checked(B, "run-b")["outcome"], "passed")
+        self.reviewed(B)
+        found = delivery.for_card(B)
+        self.assertEqual(found["integration"]["target"], "side")
+        self.assertEqual(found["status"]["word"], "ready-to-merge")
+        git(self.repo, "checkout", "-q", "side")
+        self.write(self.repo, "side.txt", "accepted on side\n")
+        git(self.repo, "checkout", "-q", "main")
+        delivery.forget_cached()
+        found = delivery.for_card(B)
+        self.assertEqual(found["integration"]["state"], "target-changed",
+                         found["integration"])
+        self.assertEqual(found["status"]["word"], "target-changed")
+        self.assertTrue(head)
+
+
 class WhatTheCardSaysWhileSomethingRuns(AdmissionCase):
     """Review round 1, finding 1: a review or an ordinary repair running on
     the card is not an update against its target; only the update itself,

@@ -1111,9 +1111,13 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
     # 22 (read before 18, task 189). Met at a head that does not hold the
     # target it lands in, where the merge rule requires a check: its checks
     # are about work not yet combined with the accepted target, so it is
-    # not ready — whatever a provider says about mergeability.
+    # not ready — whatever a provider says about mergeability. A card on a
+    # named base no card owns (it lands through its PR) is read the same
+    # way; one stacked on another card keeps its stack edge's own reading
+    # (`parent-moved` and **Update from <parent>**, task 119).
+    on_card = bool((_stack(task, ctx) or {}).get("parent"))
     if decision and decision.get("decision") in ("allowed", "overridden") \
-            and integration.stale(fit) and not completion["stacked"]:
+            and integration.stale(fit) and not on_card:
         word = ("target-conflicts" if fit["state"] == "conflicts"
                 else "target-changed")
         if fit["state"] == "unknown":
