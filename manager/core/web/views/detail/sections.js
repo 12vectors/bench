@@ -29,7 +29,10 @@ import { ENDED_WORDS, fetchEvidence, fetchProgress, progressOf } from '../progre
    person or an agent wrote is drawn through esc(). */
 const DTABS = [['overview', 'Overview'], ['brief', 'Brief'], ['inputs', 'Inputs'],
                ['acceptance', 'Acceptance'], ['reviews', 'Reviews'], ['activity', 'Activity']];
-const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', reported: '·', pending: '' };
+const ACC_GLYPH = { accepted: '✓', 'needs-work': '✕', recheck: '↻', reported: '·', pending: '', 'not-verified': '?', decision: '!' };
+// who an acceptance result came from, and who acts next, in words (task 190)
+const ROLE_WORDS = { implementer: 'implementation agent', reviewer: 'independent review', person: 'a person' };
+const OWNER_WORDS = { you: 'you', agent: 'the implementation agent', reviewer: 'the independent review' };
 const STAGE_WORDS = { backlog: 'Backlog', 'to-do': 'To do', 'in-progress': 'In progress',
                       review: 'Review', done: 'Done' };
 
@@ -92,7 +95,10 @@ function dsec(key, tab, html) {
 
 function dtabsHtml(t, tab, acc) {
   const count = {
-    acceptance: acc && acc.tracked ? `${acc.counts.accepted}/${acc.counts.total}` : '',
+    // a count once there is something on record — ids or a run's results;
+    // a card nobody has reported on keeps a quiet tab, as before (task 190)
+    acceptance: acc && acc.counts.total && (acc.tracked || (acc.reporting || []).length)
+      ? `${acc.counts.accepted}/${acc.counts.total}` : '',
     reviews: acc && (acc.findingCounts.open + acc.findingCounts['fix-reported'])
       ? String(acc.findingCounts.open + acc.findingCounts['fix-reported']) : '',
     // required information that stops a launch, counted (task 132)
@@ -329,6 +335,9 @@ function standsHtml(t, d, acc, failBlock) {
     ovFact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
     ovFact('Progress', esc(progressFact(t))) +
     ovFact('Last result', lastResultHtml(t, acc)) +
+    // the acceptance conclusion and who acts next — the very reading the
+    // Acceptance section leads with (task 190), never worked out here
+    ovFact('Acceptance', accOutcomeHtml(acc, true)) +
     // the card's lead time and what is in flight (task 165), from the
     // same reading as "Time on this card" further down
     ovFact('Time', timingFact(t)) +
@@ -358,16 +367,13 @@ function dependencyHtml(n) {
    The merge requirements are the server's reading, as they always were. */
 function requiredHtml(t, d, full, acc) {
   const link = (tab, text) => `<button class="dlink" data-goto="${tab}">${esc(text)}</button>`;
-  const counts = acc ? acc.counts : null;
+  // the criteria are a requirement of the work; where they stand is the
+  // outcome under "Where it stands", one reading for both (task 190)
   const accFact = !acc ? 'reading…'
-    : !acc.tracked
-      ? (acc.untracked.length
-          ? `${acc.untracked.length} criteri${acc.untracked.length === 1 ? 'on' : 'a'} in the brief · ` +
-            link('acceptance', 'Acceptance results not recorded')
-          : `<span class="unknown">The brief has no checklist criteria.</span>`)
-    : `${link('acceptance', `${counts.accepted} of ${counts.total} accepted`)}` +
-      ['reported', 'pending', 'needs-work', 'recheck'].filter(k => counts[k])
-        .map(k => ` · ${counts[k]} ${esc(acc.states[k])}`).join('');
+    : acc.counts.total
+      ? `${acc.counts.total} criteri${acc.counts.total === 1 ? 'on' : 'a'} in the brief · ` +
+        link('acceptance', 'see each result')
+      : `<span class="unknown">The brief has no checklist criteria.</span>`;
   const deps = t.dependsOn || [];
   return ovSection('req', 'What is required',
     `<h4 class="ovsub">To do the work</h4><dl class="dfacts ovfacts">` +
@@ -944,7 +950,7 @@ function resultHtml(t) {
     : `<p class="dnote">Bench has run no check for this card.</p>`;
   const acc = d.acceptance
     ? `<button class="dlink" data-goto="acceptance">${d.acceptance.accepted} of ${d.acceptance.total} criteria accepted on record</button> — a demonstration accepts none of them.`
-    : `<button class="dlink" data-goto="acceptance">Acceptance results not recorded</button> — a demonstration records none.`;
+    : `<button class="dlink" data-goto="acceptance">No acceptance results yet</button> — a demonstration records none.`;
   const gaps = (d.gaps || []).length
     ? `<p class="dim">No current output is linked to: ${d.gaps.map(g => esc(g.text)).join('; ')}.</p>` : '';
   const pairHtml = pairs.map(p => {
@@ -1275,11 +1281,27 @@ function evidenceOptions(t, draft) {
       `${(r.source || {}).commit ? ' at ' + esc(r.source.commit.slice(0, 12)) : ''} · ${esc(r.id)}</option>`).join('');
 }
 
-function recordHtml(r) {
-  const word = { accepted: 'accepted', 'needs-work': 'needs work', recheck: 'recheck requested',
-                 pending: 'reset to pending', reported: 'reported' }[r.state] || r.state;
-  const src = { manual: 'confirmed by a person', evidence: 'mapped to bench evidence',
-                tracked: 'tracking started', 'legacy-tick': 'ticked by hand before tracking' }[r.source] || r.source;
+/* One result a run reported about a criterion, as its history shows it:
+   whose words (the role and the run), about which commit and revision,
+   the reason and the evidence it cited — read from the filed report's
+   board-written line, never from the report's prose (task 190). */
+function resultRecordHtml(r, states) {
+  return `<div class="arec"><b>${esc((states || {})[r.state] || r.state)}</b> · reported by the ` +
+    `${esc(ROLE_WORDS[r.role] || r.role)}${r.actor ? ' ' + esc(r.actor) : ''}` +
+    `${r.model ? ` <span class="ameta">(${esc(r.model)})</span>` : ''} · ${esc(r.report || '')}` +
+    ` · ${esc(stampOf(r.at))}` +
+    (r.reason ? `<br>${esc(r.reason)}` : '') +
+    ((r.evidenceIds || []).length ? `<br>evidence cited: ${r.evidenceIds.map(esc).join(', ')}` : '') +
+    `<br><span class="ameta">${r.commit ? 'about commit ' + esc(r.commit) + ' · ' : 'no commit recorded · '}` +
+    `criterion revision ${esc(r.rev || '')}</span></div>`;
+}
+
+function recordHtml(r, states) {
+  if (r.source === 'agent') return resultRecordHtml(r, states);
+  const word = { accepted: 'accepted', 'needs-work': 'not met', recheck: 'recheck requested',
+                 pending: 'reset to no result', reported: 'reported' }[r.state] || r.state;
+  const src = { manual: 'decided by a person', evidence: 'mapped to bench evidence by a person',
+                tracked: 'criterion identified', 'legacy-tick': 'ticked by hand — an unverified claim' }[r.source] || r.source;
   return `<div class="arec"><b>${esc(word)}</b> · ${esc(src)} · ${esc(r.actor || 'unattributed')}` +
     `${r.actorSource === 'os-user' ? ' (OS user)' : ''} · ${esc(stampOf(r.at))}` +
     (r.evidence ? `<br>evidence ${esc(r.evidence)} — ${esc(r.check || '')}${r.scope ? ' · ' + esc(r.scope) : ''}` : '') +
@@ -1291,35 +1313,121 @@ function recordHtml(r) {
     `</div>`;
 }
 
-function criterionHtml(t, c) {
-  const key = `${t.file}:${c.id}`;
-  const open = S.accOpen[key] ?? false;
+/* The element-id form of a criterion's key: an untracked criterion is
+   keyed by `@<revision>`, which is not a selector-safe id. */
+function accDom(key) {
+  return String(key || '').replace(/[^a-z0-9-]/gi, '_');
+}
+
+/* Who stands behind a criterion's state, in words. */
+function accBy(c) {
+  if (c.state === 'pending') return '';
+  if (c.by === 'person') return `decided by ${esc(((c.decision || {}).actor) || 'a person')}`;
+  if (c.result) return `${ROLE_WORDS[c.result.role] || c.result.role}${c.result.actor ? ' ' + esc(c.result.actor) : ''}`;
+  if (c.claim) return 'implementation agent, while working';
+  return '';
+}
+
+/* One criterion: the outcome in words, the whole requirement, and the
+   reason right under it; who said so, the evidence, every earlier result
+   and a person's correction fold away under it (task 190). */
+function criterionHtml(t, c, states) {
+  const key = c.key || c.id;
+  const dom = accDom(key);
+  const open = S.accOpen[`${t.file}:${key}`] ?? false;
   const v = (id) => esc(S.accDraft[id] || '');
   const ev = c.evidence;
   const claim = c.claim;
-  return `<details class="arow ${esc(c.state)}" data-keep="${esc(c.id)}"${open ? ' open' : ''}>` +
+  const by = accBy(c);
+  const evList = (c.evidenceList || []).map(e =>
+    `<div class="arec">evidence ${esc(e.id)}: ${e.found ? esc(e.check || '') + ' · <b>' + esc(e.outcome) + '</b>' +
+      (e.commit ? ' at ' + esc(e.commit) : '') + ' · read from bench\'s record now'
+      : '<b>not on this board</b> — cited, and bench has no such record for this card'}</div>`).join('');
+  const skipped = (c.skipped || []).length
+    ? `<p class="dnote">${c.skipped.length} later report${c.skipped.length === 1 ? ' was' : 's were'} set aside: ` +
+      `a run's result does not overwrite ${c.by === 'person' ? "a person's decision" : "the independent review's result"} about the same commit. Each is in the history below.</p>` : '';
+  const correctOpen = S.accOpen[`${t.file}:${key}:decide`] ?? false;
+  // each criterion leads with its first clause, so a long list scans by
+  // its leads and the rest reads after (task 149) — the whole wording is
+  // there, in order, and nothing is reworded
+  const m = String(c.text).match(/^(.{12,}?[.;:])\s+([\s\S]+)$/);
+  const words = m ? `<span class="alead">${esc(m[1])}</span> <span class="arest">${esc(m[2])}</span>`
+                  : `<span class="alead">${esc(c.text)}</span>`;
+  return `<details class="arow ${esc(c.state)}" data-keep="${esc(key)}"${open ? ' open' : ''}>` +
     `<summary><span class="abox" aria-hidden="true">${ACC_GLYPH[c.state] || ''}</span>` +
-    `<span class="alabel" title="${esc(c.text)}">${esc(c.label)}</span>` +
-    `<span class="aword">${esc(c.word)}</span></summary>` +
-    `<div class="abody"><p class="afull">${esc(c.text)}</p>` +
-    `<span class="ameta">id ${esc(c.id)} · revision ${esc(c.rev)}${c.legacyTick ? ' · ticked by hand in the brief' : ''}</span>` +
-    (c.reason ? `<p class="dnote${['recheck', 'needs-work'].includes(c.state) ? ' bad' : ''}">${esc(c.reason)}</p>` : '') +
+    `<span class="amain"><span class="aword">${esc(c.word)}</span>` +
+    `<span class="afull">${words}</span>` +
+    (c.reason ? `<span class="areason">${esc(c.reason)}</span>` : '') +
+    (by ? `<span class="aby">${by}</span>` : '') +
+    `</span></summary>` +
+    `<div class="abody">` +
+    `<span class="ameta">${c.id ? 'id ' + esc(c.id) : 'no id yet — given on the next saved brief, run report or decision'}` +
+    ` · revision ${esc(c.rev)}${c.legacyTick ? ' · ticked by hand in the brief' : ''}</span>` +
+    skipped +
     (ev ? `<div class="arec">supporting evidence ${esc(ev.id)}: ${esc(ev.check || '')} · <b>${esc(ev.outcome)}</b>` +
           `${ev.commit ? ' at ' + esc(ev.commit) : ''} · read from bench's record now</div>` : '') +
+    evList +
     (claim ? `<div class="arec">${esc(claim.agent)} reported it implemented, ${esc(ago(claim.at))} ago` +
-             ` — agent-reported, not a result${(claim.evidence || []).length ? ` · proposed evidence ${esc(claim.evidence.join(', '))}` : ''}</div>` : '') +
-    (c.history.length ? `<h3>Record</h3>` + c.history.map(recordHtml).join('') : '<p class="dnote">Nothing recorded about it yet.</p>') +
-    `<div class="aform" data-crit="${esc(c.id)}" data-rev="${esc(c.rev)}" data-basis="${esc(c.basis || '')}">` +
-    `<label>Decision<select id="acc-state-${esc(c.id)}">` +
-    [['accepted', 'Accept'], ['needs-work', 'Needs work'], ['recheck', 'Needs recheck'], ['pending', 'Back to pending']]
-      .map(([k, w]) => `<option value="${k}"${(S.accDraft[`acc-state-${c.id}`] || 'accepted') === k ? ' selected' : ''}>${w}</option>`).join('') +
+             ` — agent-reported while working, not a result${(claim.evidence || []).length ? ` · proposed evidence ${esc(claim.evidence.join(', '))}` : ''}</div>` : '') +
+    (c.history.length ? `<h4 class="ovsub">History</h4>` + c.history.map(r => recordHtml(r, states)).join('')
+                      : '<p class="dnote">Nothing recorded about it yet.</p>') +
+    `<details class="rpt acorrect" data-keep="${esc(key)}:decide"${correctOpen ? ' open' : ''}>` +
+    `<summary>Record your decision</summary>` +
+    `<div class="aform" data-crit="${esc(key)}" data-dom="${esc(dom)}" data-rev="${esc(c.rev)}" data-basis="${esc(c.basis || '')}">` +
+    `<p class="dnote">Only for a real correction or a decision that is yours: results are recorded by the runs and the independent review on their own. A decision is attributed to you and is never overwritten by a later report about the same commit.</p>` +
+    `<label>Decision<select id="acc-state-${dom}">` +
+    [['accepted', 'Accept'], ['needs-work', 'Not met'], ['recheck', 'Needs recheck'], ['pending', 'Clear to no result']]
+      .map(([k, w]) => `<option value="${k}"${(S.accDraft[`acc-state-${dom}`] || 'accepted') === k ? ' selected' : ''}>${w}</option>`).join('') +
     `</select></label>` +
-    `<label>Note — what you checked and how<textarea id="acc-note-${esc(c.id)}" rows="2">${v(`acc-note-${c.id}`)}</textarea></label>` +
-    `<label>Reference (optional) — a screenshot, URL or file<input id="acc-ref-${esc(c.id)}" value="${v(`acc-ref-${c.id}`)}"></label>` +
-    `<label>Supporting evidence (optional, for Accept)<select id="acc-ev-${esc(c.id)}">${evidenceOptions(t, `acc-ev-${c.id}`)}</select></label>` +
-    `<div class="racts"><button class="dact" data-decide="${esc(c.id)}">Record decision</button></div>` +
+    `<label>Note — what you checked and how<textarea id="acc-note-${dom}" rows="2">${v(`acc-note-${dom}`)}</textarea></label>` +
+    `<label>Reference (optional) — a screenshot, URL or file<input id="acc-ref-${dom}" value="${v(`acc-ref-${dom}`)}"></label>` +
+    `<label>Supporting evidence (optional, for Accept)<select id="acc-ev-${dom}">${evidenceOptions(t, `acc-ev-${dom}`)}</select></label>` +
+    `<div class="racts"><button class="dact" data-decide="${esc(key)}">Record decision</button></div>` +
     `<p class="dnote">Recorded as ${esc(accActor(t) || 'this board')}, against revision ${esc(c.rev)} of this criterion.</p>` +
-    `</div></div></details>`;
+    `</div></details></div></details>`;
+}
+
+/* The acceptance conclusion, as the server reads it: one headline, the
+   counts of the criteria listed, and who must do what next. Drawn by the
+   Acceptance section and, compact, by the Overview — never recomputed. */
+function accOutcomeHtml(acc, compact) {
+  if (!acc) return compact ? 'reading…' : `<p class="dnote">reading acceptance…</p>`;
+  const o = acc.outcome || {};
+  const counts = (o.parts || []).map(p => `${p.count} ${esc(p.word)}`).join(' · ');
+  const owner = o.owner ? OWNER_WORDS[o.owner] || o.owner : '';
+  const next = o.next ? `${owner ? `<b>Next — ${esc(owner)}:</b> ` : ''}${esc(o.next)}` : '';
+  if (compact) {
+    return `<button class="dlink" data-goto="acceptance">${esc(o.headline || 'Acceptance')}</button>` +
+      (counts ? ` <span class="ovfrom">${counts}</span>` : '') +
+      (next ? `<br><span class="accnext">${next}</span>` : '');
+  }
+  return `<div class="accsum tone-${esc(o.tone || 'neutral')}" id="accSummary" role="status">` +
+    `<h3>${esc(o.headline || 'Acceptance')}</h3>` +
+    (counts ? `<p class="acount">${counts}${o.total ? ` <span class="ameta">of ${o.total} criteri${o.total === 1 ? 'on' : 'a'}</span>` : ''}</p>` : '') +
+    (next ? `<p class="accnext">${next}</p>` : '') + `</div>`;
+}
+
+/* What the newest filed report's reporting amounted to, when it left
+   something to say: lines it could not use, criteria it skipped. Shown,
+   never filled in; a person's decision and the next run are the ways on. */
+function accReportingHtml(t, acc) {
+  const latest = (acc.reporting || [])[0];
+  if (!latest) return '';
+  const problems = latest.problems || [];
+  if (!problems.length && !latest.missing) return '';
+  const key = `${t.file}:reporting`;
+  return `<details class="rpt accprob" data-keep="reporting"${(S.accOpen[key] ?? true) ? ' open' : ''}>` +
+    `<summary>The latest report recorded ${latest.count} result${latest.count === 1 ? '' : 's'}` +
+    `${latest.missing ? ` and left ${latest.missing} without one` : ''}` +
+    `${problems.length ? ` · ${problems.length} problem${problems.length === 1 ? '' : 's'}` : ''}</summary>` +
+    `<div style="padding:6px 10px">` +
+    `<p class="dnote">${esc(latest.kind)} by the ${esc(ROLE_WORDS[latest.role] || latest.role)}` +
+    `${latest.by ? ' ' + esc(latest.by) : ''}, ${esc(latest.at)}${latest.commit ? ' at ' + esc(latest.commit) : ''}. ` +
+    `Nothing below was recorded as a result; the criteria it does not cover read as they did.</p>` +
+    (problems.length ? `<ul class="chain">${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : '') +
+    `<p class="dnote">The way on: the next work run or independent review reports again (its report is read the same way), ` +
+    `or record your decision on a criterion below. A report that could not be filed at all is retried from the card's Activity.</p>` +
+    `</div></details>`;
 }
 
 function accActor(t) {
@@ -1343,18 +1451,7 @@ function acceptanceBody(t, acc) {
     return c && c.error ? `<p class="dnote bad">${esc(c.error)}</p>` : `<p class="dnote">reading acceptance…</p>`;
   }
   const counts = acc.counts;
-  // each criterion leads with its first clause, so a long list scans by
-  // its leads and the rest reads after (task 149) — the whole wording is
-  // there, in order, and nothing is reworded
-  const legacy = acc.untracked.map(c => {
-    const m = String(c.text).match(/^(.{12,}?[.;:])\s+([\s\S]+)$/);
-    const words = m ? `<span class="alead">${esc(m[1])}</span> <span class="arest">${esc(m[2])}</span>`
-                    : `<span class="alead">${esc(c.text)}</span>`;
-    return `<li class="aitem">${c.legacyTick ? '<b>[x]</b> ' : '[ ] '}${words}` +
-      `${c.legacyTick ? ' <span class="ameta">ticked by hand — a legacy claim, not an acceptance</span>' : ''}</li>`;
-  }).join('');
-  const trackBtn = (word) => `<div class="racts"><button class="dact" id="accTrack">` +
-    `${actLabel(word, 'click again — adds ids to the brief', 'tracking…')}</button></div>`;
+  const items = acc.items || acc.criteria;
   // Only where a merge rule asks for sign-off is it a requirement, and
   // then it says so here in words, with what it reads now (design #94
   // §8.3). Without one, nothing on this card asks anyone to confirm
@@ -1366,33 +1463,37 @@ function acceptanceBody(t, acc) {
       `${esc(so.plain || so.why || '')}.` +
       (so.state !== 'met' && so.remedy ? ` ${esc(so.remedy)}` : '') + `</p>`
     : '';
-  if (!acc.tracked) {
-    return signoffLine + `<h3>Acceptance results not recorded</h3>` +
-      (acc.untracked.length
-        ? `<p class="dnote">Nothing on record says whether these criteria were met. The card's stage says nothing about it either, and nothing here is inferred from it.</p>` +
-          `<ul class="chain" style="list-style:none">${legacy}</ul>` +
-          trackBtn('Track acceptance') +
-          `<p class="dnote">Tracking gives each criterion a stable id on its own line in the brief and records it as pending — hand-written ticks are kept, and recorded as legacy claims awaiting confirmation. It changes no wording, and it is the only thing that assigns ids; opening this view never does.</p>`
-        : `<p class="dnote">This brief has no checklist criteria (lines like <code>- [ ] …</code>) to track.</p>`);
-  }
-  const breakdown = ['reported', 'pending', 'needs-work', 'recheck']
-    .filter(k => counts[k]).map(k => `${counts[k]} ${esc(acc.states[k])}`).join(' · ');
   // Done is not acceptance — said here, as a fact about the records, and
   // not as a step on the Overview. Whether a rule asked for a sign-off is
   // the server's answer, never assumed (design #94 §8.1, §8.3)
-  const unaccepted = t.stage === 'done' ? counts.total - counts.accepted : 0;
-  return signoffLine + `<p class="acount"><b>${counts.accepted} of ${counts.total}</b> criteria accepted` +
-    `${breakdown ? ` · ${breakdown}` : ''}</p>` +
+  const unaccepted = t.stage === 'done' && counts.total ? counts.total - counts.accepted : 0;
+  const orphans = acc.orphanResults || [];
+  const how = `<details class="rpt" data-keep="acc-how"${S.accOpen[`${t.file}:acc-how`] ? ' open' : ''}>` +
+    `<summary>How these results are recorded</summary><div style="padding:6px 10px">` +
+    `<p class="dnote">Each work or repair run reports a result per criterion in its closing report, and the independent PR review confirms each one against the exact commit it reviewed. Bench reads those results when the report is filed and checks them against this card; there is nothing to set up. ` +
+    `<b>Met — awaiting review</b> is the implementer's claim; only the independent review's result, or a person's decision, reads <b>Accepted</b>. ` +
+    `A new commit or a reworded criterion makes an earlier result <b>Needs recheck</b>, and the earlier result stays in the history. ` +
+    `Nothing here is inferred from the card's stage, an agent's exit or a passing suite, and an accepted checklist is not a merge approval.</p>` +
+    `</div></details>`;
+  return signoffLine + accOutcomeHtml(acc, false) +
     (unaccepted ? `<p class="dnote">Delivered, and ${unaccepted} criteri${unaccepted === 1 ? 'on was' : 'a were'} ` +
-      `never accepted on record. Done is not acceptance` +
+      `not accepted on record. Done is not acceptance` +
       (so.required ? `.</p>` : `; no merge rule here requires a sign-off.</p>`) : '') +
-    `<p class="dnote">Accepted means a named person confirmed it, or mapped one of bench's own current passing records to it. It is not a measure of how complete the work is, and an agent's report never ticks one.</p>` +
-    acc.criteria.map(c => criterionHtml(t, c)).join('') +
-    (acc.untracked.length ? `<h3>New criteria, not yet tracked</h3><ul class="chain">${legacy}</ul>` +
-      `<p class="dnote">They count as pending.</p>` + trackBtn('Track new criteria') : '') +
-    (acc.removed.length ? `<details class="rpt"><summary>Removed from the brief (${acc.removed.length}) — history, not counted</summary>` +
-      `<div style="padding:6px 10px">` + acc.removed.map(r => `<p class="afull">${esc(r.text || r.id)}</p>` +
-        r.history.map(recordHtml).join('')).join('') + `</div></details>` : '');
+    accReportingHtml(t, acc) +
+    (items.length
+      ? `<div class="acclist" role="list" aria-label="Acceptance criteria">` +
+        items.map(c => `<div role="listitem" class="aitem">${criterionHtml(t, c, acc.states)}</div>`).join('') + `</div>`
+      : `<p class="dnote">This brief has no checklist criteria (lines like <code>- [ ] …</code>), so there is nothing to report against.</p>`) +
+    how +
+    (acc.removed.length || orphans.length
+      ? `<details class="rpt" data-keep="acc-removed"${S.accOpen[`${t.file}:acc-removed`] ? ' open' : ''}>` +
+        `<summary>No longer in the brief (${acc.removed.length + orphans.length}) — history, not counted</summary>` +
+        `<div style="padding:6px 10px">` +
+        acc.removed.map(r => `<p class="afull">${esc(r.text || r.id)}</p>` +
+          r.history.map(x => recordHtml(x, acc.states)).join('')).join('') +
+        (orphans.length ? `<p class="dnote">Results reported about a requirement that has since changed or gone:</p>` +
+          orphans.map(x => resultRecordHtml(x, acc.states)).join('') : '') +
+        `</div></details>` : '');
 }
 
 function findingHtml(t, f, acc) {
@@ -1761,9 +1862,12 @@ function activityHtml(t, acc) {
       items.push({ at: whenOf(r.at), src: `${r.kind}${r.by ? ' · ' + r.by : ''}`,
         report: r.text, key: `rep:${r.kind}|${r.at}|${r.by}` });
     }
-    for (const c of [...acc.criteria, ...acc.removed]) {
-      for (const r of c.history) items.push({ at: whenOf(r.at), src: `acceptance · ${r.actor || ''}`,
-        text: `${r.state} — ${(c.label || r.text || c.id)}${r.note ? ': ' + r.note : ''}` });
+    for (const c of [...(acc.items || acc.criteria), ...acc.removed]) {
+      for (const r of c.history) items.push({ at: whenOf(r.at),
+        src: r.source === 'agent' ? `acceptance · ${ROLE_WORDS[r.role] || r.role} ${r.actor || ''}`
+                                  : `acceptance · ${r.actor || ''}`,
+        text: `${(acc.states || {})[r.state] || r.state} — ${(c.label || r.text || c.id)}` +
+              `${r.note ? ': ' + r.note : r.reason ? ': ' + r.reason : ''}` });
     }
     for (const f of acc.findings) {
       for (const e of f.events) items.push({ at: whenOf(e.at), src: `finding · ${e.actor || ''}`,
@@ -1871,30 +1975,22 @@ function wireDetail(t) {
     if (el.id === 'commentbox') return;
     el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => { S.accDraft[el.id] = el.value; });
   });
-  const acc = (S.acc[t.file] || {}).data;
-  body.querySelectorAll('#accTrack').forEach(btn => wireAction(btn, `${t.file}::acc-track`, {
-    label: 'Track acceptance', confirm: true,
-    run: async () => {
-      if (!acc) return false;
-      const data = await postAcc(t, '/api/card/acceptance/track',
-        { file: t.file, stage: t.stage, briefSha: acc.briefSha, request: newRequestKey() });
-      if (!data) return false;
-      toast(`tracking ${data.tracked.length} criteria` + (data.committed ? '' : ' — written to the card, not committed'));
-      return true;
-    },
-  }));
+  // There is no tracking step (task 190): a decision on a criterion that
+  // has no id yet names it by its revision (`@<rev>`), and that decision
+  // is the write that gives the card's criteria their ids.
   body.querySelectorAll('[data-decide]').forEach(btn => btn.addEventListener('click', async () => {
     const form = btn.closest('.aform');
     const cid = form.dataset.crit;
+    const dom = form.dataset.dom || cid;
     const payload = { file: t.file, stage: t.stage, criterion: cid, rev: form.dataset.rev,
-      basis: form.dataset.basis || null, state: $(`#acc-state-${cid}`).value,
-      note: $(`#acc-note-${cid}`).value, ref: $(`#acc-ref-${cid}`).value,
-      evidence: $(`#acc-ev-${cid}`).value || null, request: newRequestKey() };
+      basis: form.dataset.basis || null, state: $(`#acc-state-${dom}`).value,
+      note: $(`#acc-note-${dom}`).value, ref: $(`#acc-ref-${dom}`).value,
+      evidence: $(`#acc-ev-${dom}`).value || null, request: newRequestKey() };
     btn.disabled = true;
     const data = await postAcc(t, '/api/card/acceptance/decide', payload);
     btn.disabled = false;
     if (!data) return;
-    for (const k of ['state', 'note', 'ref', 'ev']) delete S.accDraft[`acc-${k}-${cid}`];
+    for (const k of ['state', 'note', 'ref', 'ev']) delete S.accDraft[`acc-${k}-${dom}`];
     toast(data.duplicate ? 'that decision was already recorded' : `recorded: ${payload.state}`);
   }));
   body.querySelectorAll('[data-finding] [data-event]').forEach(btn => btn.addEventListener('click', async () => {
@@ -1935,16 +2031,16 @@ function acceptanceChips(task) {
   const a = ((S.state || {}).acceptance || {})[task.file];
   if (!a) return info ? [info] : [];
   const out = info ? [info] : [];
-  if (a.tracked) {
-    const behind = a.needsWork + a.recheck;
-    const parts = [['reported', a.reported], ['pending', a.pending], ['needing work', a.needsWork],
-                   ['needing recheck', a.recheck]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
+  if (a.total) {
+    const behind = a.needsWork + a.recheck + (a.decision || 0);
+    const o = a.outcome || {};
     // Acceptance is not a default ceremony (design #94 §8.1): the count is
-    // a tool, and earns the face only when a person recorded that a
-    // criterion needs work or a recheck — a current, actionable problem.
+    // a tool, and earns the face only for a current, actionable problem —
+    // a criterion not met, needing a recheck, or waiting on your decision.
     out.push({ label: `${a.accepted}/${a.total} accepted`, pre: '☑', cls: behind ? 'bad' : '',
       section: 'acceptance', face: !!behind,
-      title: `${a.accepted} of ${a.total} criteria accepted on record${parts.length ? ' — ' + parts.join(', ') : ''}. Not a measure of completion.` });
+      title: `${o.headline || 'Acceptance'} — ${a.accepted} of ${a.total} criteria accepted` +
+        `${o.next ? '. ' + o.next : ''}` });
   }
   if (a.openFindings || a.fixReported) {
     out.push({ label: a.openFindings ? `${a.openFindings} open finding${a.openFindings === 1 ? '' : 's'}`

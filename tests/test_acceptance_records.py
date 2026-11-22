@@ -142,8 +142,9 @@ class Records(unittest.TestCase):
         reading = self.read()
         self.assertTrue(reading["tracked"])
         states = [c["state"] for c in reading["criteria"]]
-        self.assertEqual(states, ["pending", "reported", "pending"])
-        self.assertIn("legacy", reading["criteria"][1]["reason"])
+        # task 190: a hand-written tick is an unverified claim, said so
+        self.assertEqual(states, ["pending", "not-verified", "pending"])
+        self.assertIn("unverified claim", reading["criteria"][1]["reason"])
         self.assertEqual(reading["counts"]["accepted"], 0,
                          "a hand-written tick is never an acceptance")
         self.assertEqual(reading["criteria"][1]["text"],
@@ -219,7 +220,7 @@ class Records(unittest.TestCase):
         self.path.write_text("\n".join(lines), encoding="utf-8")
         after = self.read()
         self.assertEqual([c["state"] for c in after["criteria"]],
-                         ["accepted", "reported", "accepted"],
+                         ["accepted", "not-verified", "accepted"],
                          "reordering unchanged criteria changes no result")
         reworded = self.text().replace("The page opens on the title",
                                        "The page opens on the title and state")

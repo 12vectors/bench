@@ -1120,17 +1120,19 @@ def acceptance(doc: dict | None = None) -> dict:
                          for word, why in gatepolicy.SIGNOFF_POLICIES.items()],
         "signoff": {
             "what": (
-                "Off by default. The PR review already assesses the work "
-                "against each acceptance criterion at the exact head, and "
-                "that assessment is a reviewer's, not a person's acceptance. "
-                "Turn sign-off on where the decision has to be a person's — "
+                "Off by default. The implementation run reports a result for "
+                "each acceptance criterion and the independent PR review "
+                "accepts or rejects each one at the exact head — a "
+                "reviewer's conclusion, not a person's acceptance. Turn "
+                "sign-off on where the decision has to be a person's — "
                 "visual, business, regulated or other human judgement: every "
-                "tracked criterion must then read accepted, decided by a "
-                "named person against the commit that would merge."),
+                "criterion must then read accepted, decided by a named person "
+                "against the commit that would merge."),
             "untracked": (
-                "A card whose criteria are not tracked reads Sign-off needed, "
-                "with Track acceptance as its action. Tracking adds ids and "
-                "accepts nothing."),
+                "Criteria get their ids automatically, on a saved brief, a "
+                "filed run report or a person's first decision — there is no "
+                "tracking step. Until a person decides each one, a card reads "
+                "Sign-off needed with Confirm criteria as its action."),
             "headBinding": (
                 "An acceptance is about the commit it was decided against. A "
                 "new commit asks for the criteria to be confirmed again; the "

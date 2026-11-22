@@ -27,9 +27,21 @@ number on the card say more than anyone established:
 
 Storage extends #65's version-1 contract (AGENTS.md, "The persistence
 contract"): criterion ids are `<!-- ac:<id> -->` on the criterion's own
-line, assigned only by `track`; acceptance records are
-`<!-- bench:acceptance {...} -->`; finding events are
+line, assigned only by `assign_ids` on an authorized write; acceptance
+records are `<!-- bench:acceptance {...} -->`; finding events are
 `<!-- bench:finding {...} -->`. Every record carries `"v": 1`.
+
+Task 190 made the runs maintain it. A work or repair run and the
+independent PR review end their reports with an `ACCEPTANCE RESULTS`
+block; `filing_results` validates it against the card when the report is
+filed and it travels in the report's board-written provenance line
+(`acceptance` in `<!-- bench:review {...} -->`), which `agent_results`
+reads back. Filing a report, applying a refinement and a person's
+decision are the authorized writes that give criteria their ids
+(`adopt`, `assign_ids`); reading never does. An implementer's `met`
+reads *Met — awaiting review*; only the independent review's result or a
+person's decision reads *Accepted*, and the review's never stands in for
+a person's sign-off (`gates`).
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ from pathlib import Path
 
 import config
 import evidence
+import gitrepo
 import progress
 import staleness
 import taskfiles
@@ -54,13 +67,48 @@ VERSION = 1
 
 # What a criterion's state *licenses a reader to believe*, in words. The
 # word carries the meaning; colour never stands alone.
+#
+# Task 190 put the outcome first. The stored keys are the ones #81 wrote
+# (`needs-work`, `reported`), so every record on every card reads as it
+# always did; only the words changed, and two states were added for what
+# a review can say that a person's form never did.
 STATES = {
-    "pending": "pending",
-    "reported": "reported — awaiting confirmation",
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "recheck": "needs recheck",
+    "accepted": "Accepted",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "decision": "Needs your decision",
+    "reported": "Met — awaiting review",
+    "recheck": "Needs recheck",
+    "pending": "No result yet",
 }
+# The order the aggregate is read in: what needs someone first, what is
+# settled last.
+STATE_ORDER = ("needs-work", "decision", "recheck", "not-verified", "reported",
+               "pending", "accepted")
+
+# What a run may say about one criterion in its closing report, by the
+# role it ran in (task 190). An implementer says whether it met a
+# criterion; only the independent reviewer can say *accepted*. Each word
+# maps to the state a reader is shown.
+RESULT_WORDS = {
+    "implementer": {"met": "reported", "not-met": "needs-work",
+                    "not-verified": "not-verified", "decision": "decision"},
+    "reviewer": {"accepted": "accepted", "not-met": "needs-work",
+                 "not-verified": "not-verified", "decision": "decision"},
+}
+ROLE_OF_INTENT = {"work": "implementer", "act-pr": "implementer",
+                  "review": "reviewer"}
+MAX_RESULTS = 60
+MAX_RESULT_REASON = 400
+MAX_PROBLEMS = 12
+RESULTS_HEADER_RE = re.compile(r"^\s*(?:#+\s*)?\**\s*ACCEPTANCE RESULTS\s*\**\s*:?\s*$",
+                               re.MULTILINE | re.IGNORECASE)
+_RESULT_LINE_RE = re.compile(
+    r"^\s*(?:[-*+]\s*)?`?\[?([0-9a-f]{12})\]?`?\s*[:—–-]\s*"
+    r"(met|not[ -]met|not[ -]verified|accepted|needs(?: your)?[ -]decision|decision)"
+    r"\s*(?:[—–:-]\s*(.*?))?\s*$", re.IGNORECASE)
+_RESULT_EVIDENCE_RE = re.compile(r"\[\s*evidence\s*:\s*([^\]]*)\]", re.IGNORECASE)
+_CID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 # What a person may record about a criterion. `reported` is not here: it
 # is an agent's claim (read from the progress channel) or a legacy tick
 # carried over by tracking — never a decision somebody makes in this form.
@@ -177,22 +225,166 @@ def _evidence_now(evidence_id: str, filename: str) -> dict:
             "ended": record.get("ended")}
 
 
+def _same_commit(a, b) -> bool:
+    a, b = str(a or ""), str(b or "")
+    return bool(a and b) and (a.startswith(b) or b.startswith(a))
+
+
+def agent_results(text: str) -> tuple[list[dict], list[dict]]:
+    """Every per-criterion result a run reported, read off the provenance
+    bench wrote under each filed report (task 190) — oldest first — and,
+    per report, what its reporting amounted to (how many results, what was
+    not understood, how many criteria it left without one). Pure: the
+    card's own text is the record, so a reload, a restart or a sync reads
+    the same results and nothing is written to read them."""
+    history = taskfiles.card_parts(text)["history"]
+    heads = list(REPORT_RE.finditer(history))
+    events, reporting = [], []
+    for index, head in enumerate(heads):
+        stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
+        prov, _body = split_provenance(_report_body(history, head.end(), stop))
+        acc = (prov or {}).get("acceptance")
+        if not acc:
+            continue
+        line = head.group(0).strip()
+        kind = head.group(1).strip()
+        who = head.group(3) or (prov or {}).get("reviewer") or ""
+        at = (prov or {}).get("filed") or ""
+        commit = acc.get("head") or ((prov or {}).get("head") or {}).get("commit")
+        reporting.append({"kind": kind, "at": head.group(2), "filed": at, "by": who,
+                          "role": acc["role"], "commit": (commit or "")[:12] or None,
+                          "reported": acc["reported"], "count": len(acc["results"]),
+                          "missing": acc.get("missing", 0),
+                          "problems": acc.get("problems") or [],
+                          "agent": (prov or {}).get("agent"),
+                          "model": (prov or {}).get("model")})
+        for result in acc["results"]:
+            events.append({
+                "id": "ar-" + hashlib.sha256(
+                    f"{line}|{result['rev']}".encode("utf-8")).hexdigest()[:10],
+                "source": "agent", "role": acc["role"], "result": result["result"],
+                "state": RESULT_WORDS[acc["role"]][result["result"]],
+                "criterion": result.get("criterion"), "rev": result["rev"],
+                "reason": result.get("reason") or "", "evidenceIds": result.get("evidence") or [],
+                "commit": (commit or "")[:12] or None, "at": at,
+                "actor": who, "agent": (prov or {}).get("agent"),
+                "model": (prov or {}).get("model"), "report": kind,
+                "reportAt": head.group(2)})
+    return _ordered(events), reporting
+
+
+def _for_item(item: dict, events: list[dict]) -> list[dict]:
+    """The agent results about one current criterion: by its id where the
+    result named one, else by the revision it was reported against — so a
+    result filed before the criterion had an id still finds it, and a
+    reworded criterion's old results stay with its id, to be rechecked."""
+    out = []
+    for event in events:
+        if item.get("id") and event.get("criterion"):
+            if event["criterion"] == item["id"]:
+                out.append(event)
+        elif event["rev"] == item["rev"]:
+            out.append(event)
+    return out
+
+
 def _effective(item: dict, records: list[dict], claim: dict | None,
-               filename: str) -> dict:
-    """One criterion's state, computed — never stored. The newest decision
-    stands, unless what it was about has moved: the requirement reworded
-    (its revision differs), the record marked for recheck by an applied
-    refinement, or the evidence it rested on no longer reading `passed`.
-    Each of those is `recheck` with the reason, and the decision itself is
-    kept and shown — the prior result is history, not deleted."""
-    decision = records[-1] if records else None
-    out = {"state": "pending", "reason": None, "decision": decision,
-           "evidence": None, "claim": claim}
+               filename: str, results: list[dict] | None = None,
+               head: str | None = None) -> dict:
+    """One criterion's state, computed — never stored.
+
+    Two kinds of record are read in time order: a person's decisions
+    (`## Acceptance record`) and the results runs reported in their filed
+    reports (task 190). The newest stands, with two exceptions that keep a
+    report from overwriting a judgment silently: a run's result never
+    supersedes a person's decision about the same commit (except the
+    reviewer's, answering a decision that itself asks for a recheck), and an
+    implementer's "met" never supersedes the reviewer's result about the
+    same commit. Then the newest is held to what it was about: the
+    requirement reworded (its revision differs), the record marked for
+    recheck by an applied refinement, the evidence it rested on no longer
+    reading `passed`, or — for a run's result — the code it assessed no
+    longer being the candidate. Each of those is `recheck` with the
+    reason, and the earlier result is kept and shown as history."""
+    timeline = _ordered(list(records) + list(results or []))
+    current, skipped = None, []
+    for event in timeline:
+        if current is not None and event.get("source") in ("tracked", "legacy-tick"):
+            # giving a criterion its id is bookkeeping, not a result: it
+            # never sets an earlier result aside
+            continue
+        if current is not None and event.get("source") == "agent":
+            if current.get("source") != "agent" and current.get("state") != "pending" \
+                    and _same_commit(current.get("commit"), event.get("commit")) \
+                    and not (event.get("role") == "reviewer"
+                             and _asks_recheck(current, item)):
+                # a person's decision stands over a run's report about the
+                # same commit — unless the decision is itself a request to
+                # assess again, which the independent review answers
+                skipped.append(event)
+                continue
+            if current.get("source") == "agent" and current.get("role") == "reviewer" \
+                    and event.get("role") == "implementer" \
+                    and _same_commit(current.get("commit"), event.get("commit")):
+                skipped.append(event)
+                continue
+        current = event
+    if current is not None and current.get("source") == "agent":
+        return _from_result(item, current, claim, filename, head, skipped)
+    out = _from_decision(item, current, claim, filename)
+    out["skipped"] = skipped
+    return out
+
+
+def _asks_recheck(decision: dict, item: dict) -> bool:
+    """Whether a person's decision now reads *Needs recheck*: a recheck
+    they asked for, one an applied refinement marked, or a decision about
+    wording the criterion no longer has. The next independent review is
+    the one named to answer it, so its result is not set aside."""
+    return bool(decision.get("recheck") or decision.get("state") == "recheck"
+                or (decision.get("rev") and decision["rev"] != item["rev"]))
+
+
+def _from_result(item: dict, result: dict, claim: dict | None, filename: str,
+                 head: str | None, skipped: list) -> dict:
+    who = "reviewer" if result["role"] == "reviewer" else "implementation agent"
+    out = {"state": result["state"], "reason": result.get("reason") or None,
+           "decision": None, "result": result, "evidence": None,
+           "evidenceList": [_evidence_now(e, filename) for e in result["evidenceIds"]],
+           "claim": claim, "by": result["role"], "skipped": skipped}
+    if result["rev"] != item["rev"]:
+        out.update(state="recheck",
+                   reason=f"the requirement was reworded after the {who} reported "
+                          f"“{result['result'].replace('-', ' ')}”")
+    elif head and result.get("commit") and not _same_commit(head, result["commit"]):
+        out.update(state="recheck",
+                   reason=f"the code changed since the {who} assessed it at "
+                          f"{result['commit']}; this result is about that commit")
+    elif result["state"] == "accepted":
+        bad = [e for e in out["evidenceList"] if e.get("outcome") != "passed"]
+        if bad:
+            out.update(state="recheck",
+                       reason=f"evidence {bad[0]['id']} it rested on now reads "
+                              f"{bad[0].get('outcome')}")
+    return out
+
+
+def _from_decision(item: dict, decision: dict | None, claim: dict | None,
+                   filename: str) -> dict:
+    """A person's newest decision about a criterion — #81's reading, with
+    the words task 190 gave the states."""
+    out = {"state": "pending", "reason": None, "decision": decision, "result": None,
+           "evidence": None, "evidenceList": [], "claim": claim,
+           "by": "person" if decision else None}
     claim_at = (claim or {}).get("at") or 0
     if decision is None:
         if claim:
-            out.update(state="reported", reason="an agent reported it implemented")
+            out.update(state="reported", by="implementer",
+                       reason="an agent reported it implemented while working — "
+                              "its filed report will say more")
         return out
+    if decision.get("source") in ("tracked", "legacy-tick"):
+        out["by"] = None
     state = decision.get("state")
     decided_at = _epoch(decision.get("at"))
     if decision.get("evidence"):
@@ -211,20 +403,25 @@ def _effective(item: dict, records: list[dict], claim: dict | None,
                               f"{ev.get('outcome')}" +
                               (f" — {ev['why']}" if ev.get("why") else ""))
         else:
-            out["state"] = "accepted"
+            out.update(state="accepted", reason=decision.get("note") or
+                       (f"bench evidence {ev['id']} reads passed" if ev else None))
     elif state == "needs-work":
         if claim and claim_at > decided_at:
-            out.update(state="reported",
-                       reason="a fix was reported after it was marked as needing work")
+            out.update(state="reported", by="implementer",
+                       reason="a fix was reported after it was recorded as not met")
         else:
-            out["state"] = "needs-work"
+            out.update(state="needs-work", reason=decision.get("note"))
     elif state == "recheck":
         out.update(state="recheck", reason=decision.get("note") or "recheck requested")
     elif state == "reported":
-        out.update(state="reported",
-                   reason=("ticked by hand before tracking — a legacy claim, "
-                           "not an acceptance") if decision.get("source") == "legacy-tick"
-                   else "reported")
+        # A tick written by hand is a claim nobody verified (task 190): it
+        # reads *Not verified*, never *Met* and never *Accepted*.
+        if decision.get("source") == "legacy-tick":
+            out.update(state="not-verified", by=None,
+                       reason="ticked by hand in the brief — an unverified claim, "
+                              "not a result")
+        else:
+            out.update(state="reported", reason="reported")
     else:
         if claim and claim_at > decided_at:
             out.update(state="reported", reason="an agent reported it implemented")
@@ -286,7 +483,199 @@ def read_provenance(raw: str) -> dict | None:
     if isinstance(found, list):
         out["evidence"] = [e for e in found[:20]
                            if isinstance(e, str) and evidence.is_evidence_id(e)]
+    results = read_results(meta.get("acceptance"))
+    if results is not None:
+        out["acceptance"] = results
     return out
+
+
+def read_results(raw) -> dict | None:
+    """The per-criterion results a filed report's provenance carries (task
+    190), read field by field like the rest of the marker: a role this
+    version names, each result a revision bench gave the run and a word
+    that role may say, bounded text, evidence ids by shape. Anything else
+    is dropped — never guessed into a result."""
+    if not isinstance(raw, dict) or raw.get("v") != VERSION:
+        return None
+    role = raw.get("role")
+    if role not in RESULT_WORDS:
+        return None
+    head = raw.get("head")
+    out = {"v": VERSION, "role": role,
+           "head": head if isinstance(head, str) and _SHA_FULL_RE.match(head) else None,
+           "reported": bool(raw.get("reported")), "results": [], "problems": [],
+           "missing": raw.get("missing") if isinstance(raw.get("missing"), int)
+           and 0 <= raw.get("missing") < 1000 else 0}
+    for item in (raw.get("results") or [])[:MAX_RESULTS] \
+            if isinstance(raw.get("results"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        rev, word = item.get("rev"), item.get("result")
+        if not (isinstance(rev, str) and re.fullmatch(r"[0-9a-f]{12}", rev)) \
+                or word not in RESULT_WORDS[role]:
+            continue
+        cid = item.get("criterion")
+        found = item.get("evidence")
+        out["results"].append({
+            "rev": rev, "result": word,
+            "criterion": cid if isinstance(cid, str) and _CID_RE.match(cid) else None,
+            "reason": _prov_text(item.get("reason"), MAX_RESULT_REASON) or "",
+            "evidence": [e for e in found[:10] if evidence.is_evidence_id(e)]
+            if isinstance(found, list) else []})
+    if isinstance(raw.get("problems"), list):
+        out["problems"] = [p for p in (_prov_text(x, 200) for x in
+                                       raw["problems"][:MAX_PROBLEMS]) if p]
+    return out
+
+
+def parse_results(text: str) -> tuple[list[dict], list[str], bool]:
+    """A run's `ACCEPTANCE RESULTS` block, read off its own output: the
+    last such block, one line per criterion — the criterion's revision as
+    the prompt gave it, the result word, a short reason, and optionally
+    `[evidence: <id>, …]`. Returns the lines read, the lines that were not
+    understood (each said, never silently dropped) and whether a block was
+    there at all. Pure: it judges nothing against the card."""
+    heads = list(RESULTS_HEADER_RE.finditer(text or ""))
+    if not heads:
+        return [], [], False
+    lines = text[heads[-1].end():].split("\n")
+    items, problems, started = [], [], False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if started:
+                break
+            continue
+        if stripped.startswith("#") or re.match(
+                r"^(PR REVIEW|ADDRESSED|NOT READY|RELEVANCE REVIEW)\s*:", stripped):
+            break
+        started = True
+        match = _RESULT_LINE_RE.match(stripped)
+        if not match:
+            problems.append(f"not understood: {stripped[:120]}")
+            continue
+        word = re.sub(r"[ -]+", "-", match.group(2).lower())
+        word = {"needs-decision": "decision", "needs-your-decision": "decision"}.get(word, word)
+        reason = match.group(3) or ""
+        ev = []
+        found = _RESULT_EVIDENCE_RE.search(reason)
+        if found:
+            ev = [e.strip() for e in found.group(1).split(",") if e.strip()]
+            reason = (reason[:found.start()] + reason[found.end():]).strip(" —–-")
+        items.append({"rev": match.group(1).lower(), "result": word,
+                      "reason": " ".join(reason.split()), "evidence": ev})
+        if len(items) >= MAX_RESULTS:
+            break
+    return items, problems[:MAX_PROBLEMS], True
+
+
+def filing_results(output: str, card_text: str, filename: str, role: str,
+                   head: str | None) -> dict:
+    """What a run's closing report says about each criterion, validated
+    against the card it is filed on, ready to travel in the report's
+    board-written provenance (task 190). The run never writes this line:
+    bench reads the run's words, keeps only what binds — a revision of a
+    criterion on this card now, a word the run's role may say, a reason, and
+    evidence bench made for this card — and says what it dropped and which
+    criteria the run left without a result. Partial is reported as
+    partial; nothing is ever completed in the run's favour."""
+    words = RESULT_WORDS[role]
+    items, problems, present = parse_results(output)
+    brief = taskfiles.card_parts(card_text)["brief"]
+    current = {}
+    for item in taskfiles.criteria(brief):
+        current.setdefault(criterion_rev(item["text"]), item)
+    kept: dict = {}
+    for item in items:
+        crit = current.get(item["rev"])
+        if crit is None:
+            problems.append(f"{item['rev']}: no criterion on this card has that "
+                            f"revision — the requirement may have changed")
+            continue
+        if item["result"] not in words:
+            allowed = ", ".join(w.replace("-", " ") for w in words)
+            problems.append(f"{item['rev']}: '{item['result']}' is not a result a "
+                            f"{role} records (one of {allowed})")
+            continue
+        if item["result"] == "decision" and len(item["reason"]) < 3:
+            problems.append(f"{item['rev']}: a decision names the question to "
+                            f"decide; none was given")
+            continue
+        ev, dropped = [], []
+        for eid in item["evidence"][:10]:
+            record = evidence.read(eid) if evidence.is_evidence_id(eid) else None
+            (ev if record is not None and record.get("task") == filename
+             else dropped).append(eid)
+        if dropped:
+            problems.append(f"{item['rev']}: evidence {', '.join(dropped)[:80]} is not "
+                            f"a record bench made for this card — left out")
+        if item["rev"] in kept:
+            problems.append(f"{item['rev']}: reported twice — the last line counts")
+        kept[item["rev"]] = {"rev": item["rev"], "criterion": crit.get("id"),
+                             "result": item["result"],
+                             "reason": _prov_text(item["reason"], MAX_RESULT_REASON) or "",
+                             "evidence": ev}
+    if not present and current:
+        problems.append("the report has no ACCEPTANCE RESULTS block, so nothing "
+                        "about the criteria was recorded from it")
+    return {"v": VERSION, "role": role,
+            "head": head if head and _SHA_FULL_RE.match(head) else None,
+            "reported": present, "results": list(kept.values())[:MAX_RESULTS],
+            "problems": [p[:200] for p in problems[:MAX_PROBLEMS]],
+            "missing": max(0, len(current) - len(kept))}
+
+
+def criteria_prompt(card_text: str, role: str) -> str:
+    """The prompt's acceptance block (task 190): every criterion on the
+    card with the revision the run reports it by, and the exact lines bench
+    reads back. Revisions, not positions: a reorder cannot move a result
+    onto another criterion, and a reworded requirement does not match."""
+    items = taskfiles.criteria(taskfiles.card_parts(card_text)["brief"])
+    if not items:
+        return ("## Acceptance results\n\nThis card's brief has no checklist "
+                "criteria, so there is nothing to report per criterion.")
+    words = {"implementer": ("met", "not met", "not verified", "needs decision"),
+             "reviewer": ("accepted", "not met", "not verified", "needs decision")}[role]
+    rows = "\n".join(f"- `{criterion_rev(i['text'])}` — {label(i['text'], 160)}"
+                     for i in items)
+    if role == "implementer":
+        meaning = (
+            "- `met` — you implemented it and checked it; say how, and cite bench "
+            "evidence where a check covers it. It reads *Met — awaiting review*: "
+            "only the independent review can accept it.\n"
+            "- `not met` — it is not done, or you found it cannot be; say what is "
+            "missing.\n"
+            "- `not verified` — done, but you could not check it; say what would.\n"
+            "- `needs decision` — only a person can settle it (a product judgment "
+            "or a permission); the reason is the exact question. Not for routine "
+            "verification.")
+    else:
+        meaning = (
+            "- `accepted` — at the head you reviewed the criterion is met, on "
+            "substantive evidence (a file and line, a test you read, a result bench "
+            "recorded). Say what it rests on.\n"
+            "- `not met` — you can show it is not met; say where.\n"
+            "- `not verified` — you could not establish it either way; say what "
+            "evidence is missing.\n"
+            "- `needs decision` — only a person can settle it; the reason is the "
+            "exact question. Not for routine verification.\n"
+            "Your acceptance is a reviewer's, not a person's sign-off, and it never "
+            "approves a merge.")
+    return (
+        "## Acceptance results\n\n"
+        "Report a result for every criterion below in your final reply, in a "
+        "block of its own that starts with the line `ACCEPTANCE RESULTS` and has "
+        "one line per criterion, then a blank line:\n\n"
+        "```\nACCEPTANCE RESULTS\n- <revision>: <result> — <one-sentence reason> "
+        "[evidence: <evidence id>, …]\n```\n\n"
+        f"`<result>` is one of {', '.join(f'`{w}`' for w in words)}:\n{meaning}\n\n"
+        "The `[evidence: …]` part is optional and names only evidence ids "
+        "bench-verify printed for this card. Bench reads this block when your "
+        "report is filed and records it against each criterion, the commit and "
+        "this run; a criterion you leave out stays without a result, and a line "
+        "it cannot read is shown as not understood. Never edit the brief to "
+        "change a criterion — reporting is not rewriting the requirement.\n\n"
+        f"The criteria, by revision:\n{rows}")
 
 
 def provenance_line(meta: dict) -> str:
@@ -485,15 +874,18 @@ def findings(text: str, filename: str, current: dict) -> list[dict]:
     return out
 
 
-def read_text(text: str, filename: str) -> dict:
+def read_text(text: str, filename: str, head: str | None = None) -> dict:
     """The whole reading of one card's text. Pure: writes nothing, assigns
-    nothing — a card nobody has tracked reads `not-recorded`, with its
-    checklist and any hand-written ticks shown as exactly that."""
+    nothing. Every current criterion is read — tracked or not — from the
+    person's decisions about it and the results runs reported in their
+    filed reports (task 190); `head` is the candidate commit, when the
+    caller knows it, which a run's result must be about to stand."""
     parts = taskfiles.card_parts(text)
     items = taskfiles.criteria(parts["brief"])
     ticks = _legacy_ticks(parts["brief"])
     records = taskfiles.acceptance_records(text)
     claims = progress.claims_for(filename)
+    events, reporting = agent_results(text)
     by_criterion: dict = {}
     for record in _ordered(records):
         cid = record.get("criterion")
@@ -501,37 +893,59 @@ def read_text(text: str, filename: str) -> dict:
             by_criterion.setdefault(cid, []).append(record)
     tracked = any(item["id"] for item in items)
     current: dict = {}
-    criteria, untracked = [], []
+    every, criteria, untracked, used = [], [], [], set()
     for order, item in enumerate(items):
         item = {**item, "order": order, "rev": criterion_rev(item["text"]),
                 "label": label(item["text"]), "legacyTick": bool(ticks.get(order))}
-        if not item["id"]:
-            untracked.append(item)
-            continue
-        current[item["id"]] = item
-        mine = by_criterion.get(item["id"], [])
-        found = _effective(item, mine, claims.get(item["id"]), filename)
-        criteria.append({**item, **found, "word": STATES[found["state"]],
-                         "basis": (found["decision"] or {}).get("id"),
-                         "history": list(reversed(mine))})
+        mine = by_criterion.get(item["id"], []) if item["id"] else []
+        theirs = _for_item(item, events)
+        used.update(e["id"] for e in theirs)
+        if not mine and not item["id"] and item["legacyTick"]:
+            # an untracked tick by hand is the same unverified claim a
+            # tracked one is, said the same way
+            mine = [{"state": "reported", "source": "legacy-tick", "at": ""}]
+        found = _effective(item, mine, claims.get(item["id"]) if item["id"] else None,
+                           filename, theirs, head)
+        history = [r for r in mine if r.get("id")] + theirs
+        row = {**item, **found, "key": item["id"] or f"@{item['rev']}",
+               "tracked": bool(item["id"]), "word": STATES[found["state"]],
+               # what a person's next decision is held to: the newest
+               # record in the card's acceptance record, whatever a run
+               # reported since (a report never makes a decision stale)
+               "basis": next((r["id"] for r in reversed(mine) if r.get("id")), None),
+               "history": list(reversed(_ordered(history)))}
+        every.append(row)
+        if item["id"]:
+            current[item["id"]] = item
+            criteria.append(row)
+        else:
+            untracked.append(row)
     removed = [{"id": cid, "text": (recs[-1].get("text") or ""),
                 "decision": recs[-1], "history": list(reversed(recs))}
                for cid, recs in by_criterion.items() if cid not in current]
+    orphans = [e for e in events if e["id"] not in used]
     counts = {state: 0 for state in STATES}
-    for item in criteria:
+    for item in every:
         counts[item["state"]] += 1
-    counts["pending"] += len(untracked)
     found_list = findings(text, filename, current)
     return {
         "file": filename,
         "briefSha": taskfiles.brief_sha(parts["brief"]),
-        # `tracked` is the one fact the face and the Acceptance section
-        # branch on: an untracked card reads "Acceptance results not
-        # recorded", never a count.
+        # whether any criterion carries an id yet; ids are assigned on an
+        # authorized write (a saved brief, a run's report, a decision) —
+        # never by reading (task 190)
         "tracked": tracked,
+        # every current criterion, in the brief's order, tracked or not
+        "items": every,
         "criteria": criteria, "untracked": untracked, "removed": removed,
+        # results reported about a requirement that is no longer on the
+        # card: history, never current
+        "orphanResults": list(reversed(orphans)),
+        "reporting": list(reversed(reporting)),
         "legacyTicks": sum(1 for v in ticks.values() if v),
-        "counts": {**counts, "total": len(criteria) + len(untracked)},
+        "counts": {**counts, "total": len(every)},
+        "outcome": outcome(every, reporting, head),
+        "head": (head or "")[:12] or None,
         "rounds": rounds(text),
         # relevance reviews are their own kind (task 84): they judge the
         # brief, not code, and feed no count, verdict or gate above
@@ -541,6 +955,108 @@ def read_text(text: str, filename: str) -> dict:
                           for state in FINDING_STATES},
         "states": STATES, "findingStates": FINDING_STATES,
     }
+
+
+def _n(count: int, one: str, many: str | None = None) -> str:
+    return f"{count} {one if count == 1 else (many or one + 's')}"
+
+
+def outcome(items: list[dict], reporting: list[dict], head: str | None = None) -> dict:
+    """The aggregate a reader sees first (task 190): one headline, the
+    counts of the criteria displayed, and who must do what next. Derived
+    from the very rows the Acceptance section lists, so the two cannot
+    disagree — and the one reading the Overview draws too. An all-accepted
+    checklist is a reviewer's or a person's conclusion about the criteria,
+    never a statement that the card may merge."""
+    counts = {state: 0 for state in STATES}
+    for item in items:
+        counts[item["state"]] += 1
+    total = len(items)
+    parts = [{"state": s, "word": STATES[s], "count": counts[s]}
+             for s in STATE_ORDER if counts[s]]
+    latest = reporting[-1] if reporting else None
+    problems = list((latest or {}).get("problems") or [])
+
+    def said(state: str, headline: str, owner, next_: str, tone: str) -> dict:
+        return {"state": state, "headline": headline, "owner": owner,
+                "next": next_, "tone": tone, "counts": counts, "parts": parts,
+                "total": total, "problems": problems,
+                "latest": latest}
+
+    if not total:
+        return said("none", "Acceptance: no criteria", None,
+                    "The brief has no checklist criteria (lines like `- [ ] …`), so "
+                    "there is nothing to report against. Add them to the brief if "
+                    "this card should have them.", "neutral")
+    if counts["needs-work"]:
+        return said("changes-needed", "Acceptance: changes needed", "agent",
+                    f"The implementation agent fixes {_n(counts['needs-work'], 'criterion', 'criteria')} "
+                    f"not met — ↻ act on PR in review, ▸ start work before it — and "
+                    f"the next review checks again.", "alarm")
+    if counts["decision"]:
+        first = next((i for i in items if i["state"] == "decision"), {})
+        return said("decision", "Acceptance: needs your decision", "you",
+                    f"Answer {'the question' if counts['decision'] == 1 else str(counts['decision']) + ' questions'} "
+                    f"below and record your decision on the criterion — first: "
+                    f"“{label(first.get('reason') or first.get('text') or '', 140)}”.",
+                    "alarm")
+    if counts["recheck"]:
+        return said("recheck", "Acceptance: needs recheck", "reviewer",
+                    f"{_n(counts['recheck'], 'earlier result')} no longer "
+                    f"{'holds' if counts['recheck'] == 1 else 'hold'} for the current "
+                    f"code or wording. The next independent review (◔ review PR) "
+                    f"assesses {'it' if counts['recheck'] == 1 else 'them'} again.",
+                    "neutral")
+    if counts["reported"]:
+        return said("awaiting-review", "Acceptance: awaiting review", "reviewer",
+                    f"The implementer reported {_n(counts['reported'], 'criterion', 'criteria')} met. "
+                    f"The independent review (◔ review PR) accepts or rejects each "
+                    f"one — only its result, or a person's, reads Accepted.", "neutral")
+    if counts["not-verified"]:
+        return said("incomplete", "Acceptance: incomplete", "reviewer",
+                    f"{_n(counts['not-verified'], 'criterion', 'criteria')} could not be "
+                    f"verified. The next review needs evidence that covers "
+                    f"{'it' if counts['not-verified'] == 1 else 'them'}; a person can "
+                    f"also record a decision.", "neutral")
+    if counts["pending"]:
+        if counts["pending"] == total:
+            return said("no-results", "Acceptance: no results yet", "agent",
+                        "Results are recorded per criterion when the implementation "
+                        "run files its report, then the independent review confirms "
+                        "them. Nothing is inferred from the stage.", "neutral")
+        return said("incomplete", "Acceptance: incomplete", "agent",
+                    f"{_n(counts['pending'], 'criterion', 'criteria')} "
+                    f"{'has' if counts['pending'] == 1 else 'have'} no result yet — "
+                    f"the next run reports on {'it' if counts['pending'] == 1 else 'them'}.",
+                    "neutral")
+    by_reviewer = sum(1 for i in items if i.get("by") == "reviewer")
+    return said("accepted", "Acceptance: all criteria accepted", None,
+                ("Accepted by the independent review" if by_reviewer == total else
+                 "Accepted on record") +
+                " — a conclusion about the criteria, not a merge approval. The "
+                "merge requirements decide what happens next.", "calm")
+
+
+def heads_by_card(stems=None) -> dict:
+    """Every card's candidate commit, in one read of the application's
+    branch refs — `phase/<stem>` before `task/<stem>`, the order a merge
+    reads — so a whole board's acceptance costs one git call, not one per
+    card. A read; nothing moves."""
+    found = gitrepo.git(config.REPO, "for-each-ref", "--format=%(refname) %(objectname)",
+                        "refs/heads/" + config.TASK_BRANCH_PREFIX.rstrip("/"),
+                        "refs/heads/" + config.PHASE_BRANCH_PREFIX.rstrip("/"),
+                        timeout=10)
+    if found.returncode != 0:
+        return {}
+    task, phase = {}, {}
+    for line in found.stdout.splitlines():
+        ref, _, sha = line.partition(" ")
+        name = ref[len("refs/heads/"):]
+        if name.startswith(config.PHASE_BRANCH_PREFIX):
+            phase[name[len(config.PHASE_BRANCH_PREFIX):]] = sha
+        elif name.startswith(config.TASK_BRANCH_PREFIX):
+            task[name[len(config.TASK_BRANCH_PREFIX):]] = sha
+    return {**task, **phase}
 
 
 def _card_path(filename: str, stage: str) -> Path:
@@ -556,41 +1072,57 @@ def _card_path(filename: str, stage: str) -> Path:
 
 def for_card(filename: str, stage: str) -> dict:
     """What the card's Acceptance, Reviews and Activity sections show — a
-    GET: it reads the card, bench's evidence and the runs' progress, and
+    GET: it reads the card, bench's evidence, the runs' progress and the
+    card's branch tip (the candidate a run's result must be about), and
     writes nothing."""
     text = _card_path(filename, stage).read_text(encoding="utf-8")
-    out = read_text(text, filename)
+    out = read_text(text, filename, head=branch_head(filename))
     out.update(stage=stage, reports=reports(text), actor=actor(),
                persistence={"commits": bool(config.COMMIT_MOVES),
                             "syncs": bool(getattr(config, "SYNC", False))})
     return out
 
 
-def summary(text: str, filename: str) -> dict | None:
-    """The card face's few numbers, or None when there is nothing to say:
-    a card with no tracked criteria and no findings carries no count."""
-    if "ac:" not in text and "bench:finding" not in text:
+def _worth_reading(text: str) -> bool:
+    return ("ac:" in text or "bench:finding" in text
+            or ('"acceptance"' in text and "bench:review" in text))
+
+
+def summary(text: str, filename: str, head: str | None = None) -> dict | None:
+    """The card face's few numbers and the outcome, or None when there is
+    nothing to say: a card with no tracked criteria, no reported results
+    and no findings carries no count."""
+    if not _worth_reading(text):
         return None
-    found = read_text(text, filename)
-    if not found["tracked"] and not found["findings"]:
+    found = read_text(text, filename, head=head)
+    if not found["tracked"] and not found["findings"] and not found["reporting"]:
         return None
     counts = found["counts"]
+    result = found["outcome"]
     return {"tracked": found["tracked"], "accepted": counts["accepted"],
             "total": counts["total"], "pending": counts["pending"],
             "reported": counts["reported"], "needsWork": counts["needs-work"],
-            "recheck": counts["recheck"],
+            "recheck": counts["recheck"], "notVerified": counts["not-verified"],
+            "decision": counts["decision"],
+            "outcome": {k: result[k] for k in ("state", "headline", "owner", "next", "tone")},
             "openFindings": found["findingCounts"]["open"],
             "fixReported": found["findingCounts"]["fix-reported"]}
 
 
 def board(collected: dict) -> dict:
     """Per card, the face's summary. Empty on a board that tracks nothing —
-    the law every other chip here follows."""
-    out = {}
+    the law every other chip here follows. The candidate commits are read
+    once, and only when some card has something to say."""
+    out, heads = {}, None
     for group in collected.get("stages") or []:
         for task in group.get("tasks") or []:
+            body = task.get("body") or ""
+            if not _worth_reading(body):
+                continue
+            if heads is None:
+                heads = heads_by_card()
             try:
-                found = summary(task.get("body") or "", task["file"])
+                found = summary(body, task["file"], heads.get(task["file"][:-3]))
             except (OSError, ValueError):
                 found = None
             if found:
@@ -650,7 +1182,7 @@ def _record_id(prefix: str, filename: str, request) -> str:
     return f"{prefix}-{secrets.token_hex(5)}"
 
 
-def _branch_head(filename: str) -> str | None:
+def branch_head(filename: str) -> str | None:
     """The tip of the card's branch in the application, if it has one — the
     code revision a manual decision was made against. Read, never moved.
 
@@ -695,62 +1227,100 @@ def track(filename: str, stage: str, *, brief_sha: str, request=None) -> dict:
             raise taskfiles.StaleCard(
                 f"the brief of {filename} has changed since you read it — "
                 f"nothing was tracked; refresh and track again")
-        taken = {c["id"] for c in taskfiles.criteria(parts["brief"]) if c["id"]}
-        taken |= {r.get("criterion") for r in taskfiles.acceptance_records(text)}
-        lines = parts["brief"].splitlines(keepends=True)
-        fenced, items = False, []
-        for index, line in enumerate(lines):
-            if taskfiles.is_fence(line):
-                fenced = not fenced
-                continue
-            if fenced:
-                continue
-            if taskfiles.CRITERION_RE.match(line):
-                items.append([index, line])
-            elif items and line.strip() and line[:1].isspace() \
-                    and items[-1][0] + len(items[-1]) - 2 == index - 1:
-                # [first index, first line, continuation lines…]: a line
-                # continues the criterion directly above it, as `criteria`
-                # reads it
-                items[-1].append(line)
-        added, ticks = [], 0
-        for item in items:
-            index, raw = item[0], "".join(item[1:])
-            if taskfiles.CRITERION_ID_RE.search(raw):
-                continue
-            cid = "a" + secrets.token_hex(3)
-            while cid in taken:
-                cid = "a" + secrets.token_hex(3)
-            taken.add(cid)
-            line = lines[index]
-            body = line.rstrip("\r\n")
-            lines[index] = f"{body} <!-- ac:{cid} -->" + line[len(body):]
-            text_of = " ".join(taskfiles.CRITERION_ID_RE.sub(
-                "", taskfiles.CRITERION_RE.match(raw.split("\n")[0]).group(1)
-                + " " + " ".join(l.strip() for l in item[2:])).split())
-            ticked = bool(re.match(r"^\s*[-*+]\s+\[[xX]\]", line))
-            ticks += ticked
-            added.append({"v": VERSION, "id": f"r-{secrets.token_hex(5)}",
-                          "criterion": cid, "rev": criterion_rev(text_of),
-                          "state": "reported" if ticked else "pending",
-                          "source": "legacy-tick" if ticked else "tracked",
-                          "actor": who["name"], "actorSource": who["source"],
-                          "at": at, "text": text_of[:600]})
-        if not items:
+        updated, found = assign_ids(text, who, at)
+        if not found["items"]:
             raise ValueError(f"{filename} has no checklist criteria (`- [ ] …`) "
                              f"to track")
-        if not added:
+        if not found["tracked"]:
             raise ValueError(f"every criterion on {filename} is already tracked")
-        updated = parts["head"] + "".join(lines) + parts["history"]
-        for record in added:
-            updated = taskfiles.append_record(
-                updated, taskfiles.ACCEPTANCE_HEADING, taskfiles.ACCEPTANCE_NOTE,
-                taskfiles.record_line("acceptance", record))
-        return updated, {"tracked": [r["criterion"] for r in added],
-                         "legacyTicks": ticks}
+        return updated, {"tracked": found["tracked"], "legacyTicks": found["legacyTicks"]}
 
     return taskfiles.edit_card(filename, stage, change,
                                "acceptance tracked")
+
+
+def adopt(filename: str, stage: str, *, root: Path | None = None) -> dict:
+    """Give every criterion without an identity one — the write task 190
+    makes part of an authorized write (a run's report being filed, a saved
+    brief, a person's decision) so nobody has to Track acceptance. Its
+    wording, its tick and every id it already had are kept exactly; a card
+    with nothing untracked is not written at all, so it commits nothing.
+    Idempotent: the second call finds every criterion tracked."""
+    if root is not None and Path(root).resolve() != Path(config.TASKS).resolve():
+        return {"tracked": [], "written": False, "skipped": "another board"}
+    path = _card_path(filename, stage)
+    text = path.read_text(encoding="utf-8")
+    items = taskfiles.criteria(taskfiles.card_parts(text)["brief"])
+    if not any(not item["id"] for item in items):
+        return {"tracked": [], "written": False}
+    who = actor()
+    who = who if who["name"] else {"name": "board", "source": "board"}
+    at = taskfiles.now_iso()
+
+    def change(card: str):
+        updated, found = assign_ids(card, who, at)
+        return updated, {"tracked": found["tracked"], "legacyTicks": found["legacyTicks"]}
+
+    return taskfiles.edit_card(filename, stage, change, "acceptance criteria identified")
+
+
+def assign_ids(text: str, who: dict, at: str) -> tuple[str, dict]:
+    """The one writer of criterion identities: every checklist line without
+    `<!-- ac:<id> -->` gains a fresh one at its end, and a record — pending,
+    or a hand-written tick kept as the unverified claim it is. Fresh ids
+    only: never one the card's brief or records already hold, so a removed
+    criterion's history cannot be adopted by a stranger. Pure on text."""
+    parts = taskfiles.card_parts(text)
+    taken = {c["id"] for c in taskfiles.criteria(parts["brief"]) if c["id"]}
+    taken |= {r.get("criterion") for r in taskfiles.acceptance_records(text)}
+    lines = parts["brief"].splitlines(keepends=True)
+    fenced, items = False, []
+    for index, line in enumerate(lines):
+        if taskfiles.is_fence(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if taskfiles.CRITERION_RE.match(line):
+            items.append([index, line])
+        elif items and line.strip() and line[:1].isspace() \
+                and items[-1][0] + len(items[-1]) - 2 == index - 1:
+            # [first index, first line, continuation lines…]: a line
+            # continues the criterion directly above it, as `criteria`
+            # reads it
+            items[-1].append(line)
+    added, ticks = [], 0
+    for item in items:
+        index, raw = item[0], "".join(item[1:])
+        if taskfiles.CRITERION_ID_RE.search(raw):
+            continue
+        cid = "a" + secrets.token_hex(3)
+        while cid in taken:
+            cid = "a" + secrets.token_hex(3)
+        taken.add(cid)
+        line = lines[index]
+        body = line.rstrip("\r\n")
+        lines[index] = f"{body} <!-- ac:{cid} -->" + line[len(body):]
+        text_of = " ".join(taskfiles.CRITERION_ID_RE.sub(
+            "", taskfiles.CRITERION_RE.match(raw.split("\n")[0]).group(1)
+            + " " + " ".join(l.strip() for l in item[2:])).split())
+        ticked = bool(re.match(r"^\s*[-*+]\s+\[[xX]\]", line))
+        ticks += ticked
+        added.append({"v": VERSION, "id": f"r-{secrets.token_hex(5)}",
+                      "criterion": cid, "rev": criterion_rev(text_of),
+                      "state": "reported" if ticked else "pending",
+                      "source": "legacy-tick" if ticked else "tracked",
+                      "actor": who["name"], "actorSource": who["source"],
+                      "at": at, "text": text_of[:600]})
+    if not added:
+        return text, {"items": items, "tracked": [], "legacyTicks": 0}
+    updated = parts["head"] + "".join(lines) + parts["history"]
+    for record in added:
+        updated = taskfiles.append_record(
+            updated, taskfiles.ACCEPTANCE_HEADING, taskfiles.ACCEPTANCE_NOTE,
+            taskfiles.record_line("acceptance", record))
+    return updated, {"items": items, "tracked": [r["criterion"] for r in added],
+                     "legacyTicks": ticks}
 
 
 def decide(filename: str, stage: str, *, criterion: str, state: str,
@@ -798,28 +1368,49 @@ def decide(filename: str, stage: str, *, criterion: str, state: str,
     def change(text: str):
         if any(r.get("id") == record_id for r in taskfiles.acceptance_records(text)):
             return text, {"duplicate": True, "id": record_id}
+        cid, fresh = criterion, False
+        if str(cid).startswith("@"):
+            # a criterion that has no identity yet, named by the revision
+            # the person read (task 190): the decision is the authorized
+            # write that gives the card's criteria their ids, in this same
+            # edit, then records against the one they read
+            text, _assigned = assign_ids(text, who, at)
+            want = str(cid)[1:]
+            match = [c for c in taskfiles.criteria(taskfiles.card_parts(text)["brief"])
+                     if c["id"] and criterion_rev(c["text"]) == want]
+            if not match:
+                raise taskfiles.StaleCard(
+                    "that criterion was reworded or removed since you read it — "
+                    "nothing was recorded; read it again and decide")
+            cid, fresh = match[0]["id"], True
         parts = taskfiles.card_parts(text)
         items = {c["id"]: c for c in taskfiles.criteria(parts["brief"]) if c["id"]}
-        if criterion not in items:
-            raise ValueError(f"{filename} has no tracked criterion '{criterion}' — "
+        if cid not in items:
+            raise ValueError(f"{filename} has no tracked criterion '{cid}' — "
                              f"a decision is about a criterion on this card")
-        current = criterion_rev(items[criterion]["text"])
+        current = criterion_rev(items[cid]["text"])
         if rev != current:
             raise taskfiles.StaleCard(
-                f"the criterion '{criterion}' was reworded since you read it — "
+                f"the criterion '{cid}' was reworded since you read it — "
                 f"nothing was recorded; read it again and decide")
         mine = _ordered([r for r in taskfiles.acceptance_records(text)
-                         if r.get("criterion") == criterion])
+                         if r.get("criterion") == cid])
         newest = mine[-1].get("id") if mine else None
-        if (basis or None) != newest:
+        if fresh and not basis and all(r.get("source") in ("tracked", "legacy-tick")
+                                       for r in mine):
+            basis_ok = True
+        else:
+            basis_ok = (basis or None) == newest
+        criterion_id = cid
+        if not basis_ok:
             raise taskfiles.StaleCard(
                 f"a newer decision about '{criterion}' was recorded since you "
                 f"read it — nothing was recorded; read it and decide again")
-        record = {"v": VERSION, "id": record_id, "criterion": criterion,
+        record = {"v": VERSION, "id": record_id, "criterion": criterion_id,
                   "rev": current, "state": state,
                   "source": "evidence" if ev else "manual",
                   "actor": who["name"], "actorSource": who["source"], "at": at,
-                  "text": items[criterion]["text"][:600]}
+                  "text": items[criterion_id]["text"][:600]}
         if note:
             record["note"] = note
         if ref:
@@ -828,7 +1419,7 @@ def decide(filename: str, stage: str, *, criterion: str, state: str,
             record.update(evidence=ev["id"], check=ev.get("check"),
                           scope=ev.get("scope"), commit=ev.get("commit"))
         else:
-            head = _branch_head(filename)
+            head = branch_head(filename)
             if head:
                 record["commit"] = head
         if newest:
@@ -836,7 +1427,8 @@ def decide(filename: str, stage: str, *, criterion: str, state: str,
         updated = taskfiles.append_record(
             text, taskfiles.ACCEPTANCE_HEADING, taskfiles.ACCEPTANCE_NOTE,
             taskfiles.record_line("acceptance", record))
-        return updated, {"duplicate": False, "id": record_id, "record": record}
+        return updated, {"duplicate": False, "id": record_id, "record": record,
+                         "criterion": criterion_id}
 
     return taskfiles.edit_card(filename, stage, change,
                                f"acceptance {criterion} → {state}")
@@ -913,7 +1505,7 @@ def finding(filename: str, stage: str, *, event: str, finding_id=None,
                 record.update(evidence=ev["id"], check=ev.get("check"),
                               commit=ev.get("commit"))
             else:
-                head = _branch_head(filename)
+                head = branch_head(filename)
                 if head:
                     record["commit"] = head
         updated = taskfiles.append_record(
