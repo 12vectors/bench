@@ -1335,7 +1335,7 @@ def commit_work_file(path: Path, message: str, failure: str) -> bool:
 
 
 def append_to_task(filename: str, stage: str, text: str, what: str,
-                   *, root: Path | None = None) -> bool:
+                   *, root: Path | None = None, commit: bool = True) -> bool:
     """Append to a card where it stands, and commit the write.
 
     The other half of the same law: an agent's closing report is the
@@ -1357,6 +1357,10 @@ def append_to_task(filename: str, stage: str, text: str, what: str,
     the configuration it found), nothing is written anywhere: the report
     belongs to a board this process no longer serves, and the run's log
     still holds it.
+
+    `commit=False` leaves the commit to the caller, which commits through
+    `commit_edit` and records what became of it — the report filing
+    journal does (task 169).
     """
     if root is not None and Path(root) != config.TASKS:
         state.record_board_event({
@@ -1383,7 +1387,7 @@ def append_to_task(filename: str, stage: str, text: str, what: str,
         return False
     except OSError:
         return False
-    if root is None or Path(root) == config.TASKS:
+    if commit and (root is None or Path(root) == config.TASKS):
         # never a commit in a repository other than the bound board's
         commit_edit(filename, stage, what)
     return True

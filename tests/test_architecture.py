@@ -800,6 +800,11 @@ ROUTES: dict[str, str] = {
     "GET /api/brain/review": "read",
     "POST /api/brain/review/classify": "browser-mutation",
     "POST /api/brain/review/override": "browser-mutation",
+    # recovering a report that was not filed, and the explicit rebuild of
+    # the Brain's review index (task 169)
+    "GET /api/reports/filing": "read",
+    "POST /api/reports/filing/retry": "browser-mutation",
+    "POST /api/brain/reviews/rebuild": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",
