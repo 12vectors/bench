@@ -59,6 +59,11 @@ Priority: **P1** leads the Overview; **P2** is on the Overview, visible;
 **P3** is on the Overview, folded or set back under *More about this
 card*; **H** lives in its own tab, linked from the Overview.
 
+Since task 186 the Overview leads with **Where it stands · what happens
+next** and puts **The work** directly after it, then **What is
+required**, the reviews and *More about this card*; nothing moved
+between sections. The `task-info-status-first-*` screenshots show it.
+
 | Information | Home | Priority | Reached by |
 | --- | --- | --- | --- |
 | Purpose, problem, scope, boundaries | Overview → **The work** (quoted excerpts) | P1 | "Read the full brief" → Brief |
