@@ -16,6 +16,7 @@ import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
 import { toast } from './lib/toast.js';
 import { archiveCard, renderBar, renderLog, unarchiveLast } from './views/activity.js';
+import { openArchiveAll } from './views/archiveall.js';
 import { STACK_SHEETS } from './views/board.js';
 import { acts, closeSheet, focusCard, move, rawMove, requiredSheet, showDetail } from './views/card.js';
 import { FACE_WORDS, deliveryOf } from './views/delivery.js';
@@ -38,6 +39,15 @@ let tickCount = 0;
 onRender(render);
 // a refused mutation from a page of an earlier build says so, once
 onStalePage(showStalePage);
+// the Done column's Archive all (task 187): the column header is redrawn
+// on every paint, so its button is reached by delegation
+document.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-archive-all]');
+  if (!btn || btn.disabled) return;
+  ev.preventDefault();
+  S.sheetReturn = btn;
+  openArchiveAll(closeSheet);
+});
 document.addEventListener('click', async ev => {
   const el = ev.target.closest('[data-stack-action],[data-stack-confirm],[data-stack-close]');
   if (!el) return;

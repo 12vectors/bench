@@ -62,6 +62,23 @@ function columnNote(stage, shown) {
   return notes.join(' · ');
 }
 
+/* Archive all (task 187) sits in the Done column's header, beside the
+   count, so clearing what is finished needs no card opened. The button
+   only opens a sheet — the server says there exactly which cards it would
+   take and which it would leave — so the count here is a hint, never the
+   scope. With nothing in done/ that is not a phase card it is drawn
+   disabled and says why, rather than vanishing. */
+function archiveAllButton(stage) {
+  const candidates = stage.tasks.filter(t => !t.isPhase).length;
+  const why = candidates
+    ? 'Archive every eligible Done card — shows the exact set first'
+    : 'Nothing in Done to archive';
+  return `<button type="button" class="colact" data-archive-all` +
+    `${candidates ? '' : ' disabled'} title="${esc(why)}" ` +
+    `aria-label="Archive all Done tasks${candidates ? '' : ' — nothing to archive'}">` +
+    `<span aria-hidden="true">⌸</span> Archive all</button>`;
+}
+
 /* The board is painted by key (task 130). Its five columns are built once
    and kept — so their scroll, their drop listeners and a drag in flight
    all survive a paint — and each column's cards are reconciled: a card
@@ -86,7 +103,8 @@ function renderBoard() {
       setHtml(col.firstElementChild,
         `<span class="tickmark" style="background:${STAGE_TINT[stage.slug]}"></span>` +
         `<span>${stage.label}</span><span class="count">${shown.length}</span>` +
-        `<span class="note">${esc(columnNote(stage, shown))}</span>`);
+        `<span class="note">${esc(columnNote(stage, shown))}</span>` +
+        (stage.slug === 'done' ? archiveAllButton(stage) : ''));
       const drop = col.lastElementChild;
       const nodes = [];
       // a column emptied by a phase says so rather than congratulating you

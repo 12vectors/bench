@@ -26,6 +26,7 @@ from typing import Callable, NamedTuple
 
 import acceptance
 import agreements
+import archiveall
 import ask
 import agents
 import artifacts
@@ -1540,12 +1541,49 @@ def post_archive(req) -> None:
                     "archivedCount": taskfiles.archived_count()})
 
 
+def get_archive_all(req) -> None:
+    # What Archive all would take from done/ now, and every card it would
+    # leave with why (task 187) — or, with `request`, one batch's state.
+    request = _q(req, "request")
+    if request:
+        batch = archiveall.get(request)
+        if batch is None:
+            req.reply(404, {"error": f"no Archive all {request} on this board"})
+            return
+        req.reply(200, {"batch": batch})
+        return
+    req.reply(200, archiveall.reading())
+
+
+def post_archive_all(req) -> None:
+    # The confirmed set, frozen by the page: every card is read again and
+    # archived through `taskfiles.archive_task` on its own (task 187).
+    payload = req.body
+    batch, again = archiveall.start(payload.get("request"), payload.get("files"),
+                                    payload.get("retryOf"))
+    req.reply(200, {"batch": batch, "duplicate": again})
+
+
 def post_unarchive(req) -> None:
     with state.LOCK:
         last = state.LAST_ARCHIVED
         state.LAST_ARCHIVED = None
     if not last:
         raise ValueError("nothing to unarchive — the undo covers the last archive this board made")
+    if "batch" in last:
+        # ⌘Z after Archive all brings that whole set back (task 187)
+        result = archiveall.unarchive_batch(last["batch"])
+        names = ", ".join(r["file"] for r in result["batch"]) or "nothing"
+        refused = (f"; {len(result['refused'])} could not be"
+                   if result["refused"] else "")
+        state.record_board_event({
+            "kind": "move", "from": "archive", "to": "done", "actor": "you",
+            "summary": f"Archive all undone: {len(result['batch'])} brought "
+                       f"back to done/ ({names}){refused}"})
+        rev = state.broadcast({"type": "board"})
+        req.reply(200, {**result, "rev": rev, "boot": state.BOOT,
+                        "archivedCount": taskfiles.archived_count()})
+        return
     result = taskfiles.unarchive_task(last["file"], last["from"])
     state.record_board_event({
         "kind": "move", "file": result["file"], "from": "archive",
@@ -2456,6 +2494,7 @@ ROUTES = (
     Route("GET", "/api/preview/log", "read", get_preview_log),
     Route("GET", "/api/card", "read", get_card),
     Route("GET", "/api/card/locate", "read", get_card_locate),
+    Route("GET", "/api/archive/all", "read", get_archive_all),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/decisions", "read", get_card_decisions),
@@ -2499,6 +2538,7 @@ ROUTES = (
     Route("POST", "/api/task/complete/forget", "browser-mutation", post_task_complete_forget),
     Route("POST", "/api/archive", "browser-mutation", post_archive),
     Route("POST", "/api/unarchive", "browser-mutation", post_unarchive),
+    Route("POST", "/api/archive/all", "browser-mutation", post_archive_all),
     Route("POST", "/api/command/run", "browser-mutation", post_command_run),
     Route("POST", "/api/drive/start", "browser-mutation", post_drive_start),
     Route("POST", "/api/drive/stop", "browser-mutation", post_drive_stop),

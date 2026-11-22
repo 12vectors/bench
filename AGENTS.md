@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -402,6 +402,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   phase branch cut, a member integrated and the phase finished through
   `phases`' own mechanics, each with an intent and a receipt. It launches
   nothing (see "Phase scopes: one scheduler per phase")
+- `archiveall.py` — **Archive all** in the Done column (task 187): which
+  done/ cards it would take and which it leaves with why, then one
+  confirmed, frozen set archived card by card through
+  `taskfiles.archive_task`, each read again first; the batch's outcome
+  per card, its retry of only what is outstanding, an interrupted batch,
+  and sync's answer apart from the archive. It sits beside `phasescope`
+  because it asks `phases` and `agents` what protects a card (see "The
+  activity bar and the archive")
 - `refine.py` — refining a card on the board: comments, the one
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
@@ -534,6 +542,64 @@ action, not two: the same request, the same ⌘Z toast, the same count on
 the tray. Which stages may be archived from is answered once, by the
 server that enforces it, and sent with the state; the drag gesture and the
 chip both read that answer.
+
+**Archive all** clears the Done column without opening a card (task
+187). It is a button in the Done column's header, beside the count,
+reachable by keyboard and touch, and drawn disabled — saying there is
+nothing to archive — when Done holds nothing it could take. It never
+writes on the first press. It opens a sheet that asks the board
+(`GET /api/archive/all`, a read) what it would take, and shows that
+exact set and its count:
+
+- **Scope.** Every eligible card in `done/` on this board — including
+  any the Board does not draw — and nothing in any other stage. It
+  leaves, and lists with why: a phase card (archive it on its own), a
+  member of a phase that is still open (the phase card stands for it),
+  a card an agent is working on, and a card being merged and cleaned up.
+- **The set is frozen.** **Archive N cards** sends exactly the files the
+  sheet listed, under a request identity (`POST /api/archive/all`,
+  `{request, files, retryOf?}`). A card completed after that is not
+  taken. Each card is read again just before it is archived, and one
+  that has moved, gone or become protected is skipped with its reason
+  rather than archived anyway. Cancel, Close and Escape change nothing.
+- **One card at a time, through the one door.** Every card goes out
+  through the same `archive_task` as the single archive: `**Status:**
+  Archived`, one `board: <n> → archived` commit per card under
+  `BOARD_COMMIT_MOVES`, the same push. Nothing is merged, no branch or
+  worktree is cleaned up and no agent is launched.
+- **Partial is said as partial.** There is no transaction across cards.
+  The sheet follows the batch (`GET /api/archive/all?request=`) and ends
+  on a summary — archived, already archived, skipped, failed, not
+  committed — with each card's reason. Cards archived stay archived.
+  **Retry N outstanding** sends only the cards whose archive failed or
+  whose commit failed (a retry commits those without moving them
+  again), under a new request naming the one it retries. Skipped cards
+  are not retried: they changed, and a fresh Archive all reads them
+  again.
+- **Once per request.** The same request again — a double click, or
+  **Ask again** after a request got no answer — returns the batch
+  already there; the same identity with another set is refused; and one
+  Archive all runs at a time. A card already in the archive reads
+  *already archived*, never moved twice. Each batch's record is kept
+  under `manager/local/state/archive/bulk/` (the newest 20); one a
+  restart cut short reads *interrupted*, with the cards it had not
+  reached as outstanding.
+- **Archived here, published apart.** With `BOARD_SYNC` on, the batch
+  holds the push each card's commit would start and asks sync to publish
+  once at the end (a batch cut short hands its commits back to the
+  ordinary push); the summary says whether it did, and the cards are
+  archived on this board either way. With `BOARD_COMMIT_MOVES` off the
+  summary says nothing was committed.
+- **A crash between a move and its commit** is caught by the next Archive
+  all naming the card: one found in the archive that git does not hold
+  yet is committed (under the failed move's journal line), never moved
+  again; one with no record of the move at all is reported *not
+  committed*, to commit by hand.
+
+**⌘Z after Archive all brings that whole set back** to `done/`, each card
+through the single restore door; a card moved since is reported rather
+than guessed at. Archived cards keep their files and history in
+`tasks/archive/`, counted on the tray.
 
 Archiving is a move, so it commits like one: under `BOARD_COMMIT_MOVES`
 the rename into `tasks/archive/` lands in a single `board: <n> → archived
