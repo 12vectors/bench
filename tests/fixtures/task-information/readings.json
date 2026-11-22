@@ -49,7 +49,9 @@
      "heading": "PR review at 2c6aa445c49e",
      "id": "rv-ee779cbb84",
      "label": "current-at-the-time",
+     "provenance": null,
      "report": "PR REVIEW: APPROVE\n\nI'm approving this change, but bench's own backend test run failed at this commit and I couldn't find out why, so someone should read that log before merging.\n\n### What I checked\n\n- **Release artifact:** `manager/core/release-manifest` no longer ships `tasks/`, `plans/` or `reference/`.",
+     "reportSha": "1015ee61f773",
      "reviewer": "Reed",
      "verdict": "APPROVE"
     }
@@ -559,7 +561,9 @@
      "heading": "PR review at 7d1e0aa94c21",
      "id": "rv-a102133305",
      "label": "current-at-the-time",
+     "provenance": null,
      "report": "PR REVIEW: REQUEST CHANGES\n\nThe zone is shown and the order holds across midnight, but the UTC value is only in a `title` attribute, which a keyboard user cannot reach. Make it focusable or show it on focus.",
+     "reportSha": "cd3895b44851",
      "reviewer": "Olive",
      "verdict": "REQUEST CHANGES"
     }
