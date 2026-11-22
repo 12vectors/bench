@@ -6825,12 +6825,19 @@ Backlog. Nothing happens: writing or editing a card gives it to nobody.
 At any point you can pause it, take a card back to do by hand, or cancel
 one run. Your own moves always win.
 
+**A whole phase is queued the same way** (task 188): move the phase card
+into To Do and its unfinished members — Backlog ones included — are
+queued with it. The orchestrator cuts the phase's branch, starts each
+member in its turn, integrates it, and delivers the phase through your
+merge rules. There is no phase setting to create, nothing to adopt and
+no member to move by hand.
+
 **What you decide, and where.**
 
 | You decide | Where |
 | --- | --- |
 | whether orchestration is on at all | **Orchestrator → Operating agreement**: off until you apply one |
-| which cards it may touch | by moving them into To Do yourself; **Take over** hands one back |
+| which cards it may touch | by moving them into To Do yourself — a phase card's move queues its members too; **Take over** hands one back |
 | what it may do: start work, review, repair, merge, integrate, diagnose | the agreement's authority, word by word |
 | how much at once, and per day | slots, launches per day and per card, repair rounds, retries |
 | what a merge requires | **Settings → Merge rules**, exactly as without orchestration |
@@ -6873,7 +6880,7 @@ not replace.
 | D3 | Review runs on a different model, shown to be different, or it is refused | "Delivery: checks, independent review…" |
 | D4 | Merge delegation is your choice, under the merge rules you already have | "Delivery…", "Operating agreements…" |
 | D5 | A stalled or failed run gets at most two bounded, read-only diagnoses | "Recovery: diagnose, don't kill" |
-| D6 | A phase is a scoped sub-orchestrator, narrowing its parent | "Phase scopes: one scheduler per phase" |
+| D6 | A phase is a scoped sub-orchestrator, narrowing its parent; every phase has one, queued by its card's move (task 188) | "Phase scopes: one scheduler per phase" |
 | D7 | Two implementation slots, one review slot, six launches per card, twenty a day | "Operating agreements…" |
 | D8 | Limits are launch counts; usage is shown only when the vendor reports it | "Orchestrator reasoning" |
 | D9 | Transient failures retry twice with backoff, behind a circuit breaker | "Scheduling: bounded passes…" |
