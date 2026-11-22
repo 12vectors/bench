@@ -10,7 +10,7 @@ four classifications. The case drives the list as a person would:
   its own heading inside a kind, and Historical and Superseded hidden —
   counted, said to be kept, never drawn as rows;
 - **composed controls**: choosing a kind narrows to it; showing Historical
-  and Superseded (each its own checkbox in the right-hand sidebar) draws
+  and Superseded (each its own checkbox in the left-hand sidebar) draws
   them under their own headings within their kind; search composes with
   both; a kind with no entries says so, which is not the same sentence as
   a search that matched nothing; the scoped counts follow; Reset restores
@@ -23,8 +23,13 @@ four classifications. The case drives the list as a person would:
 - **the keyboard**: kind buttons and classification checkboxes are
   reached by Tab and work with Space, keeping focus where it was;
 - **the layout**, measured: at 1280px (and at 1510px, the width of the
-  "before" screenshot the card carries) the sidebar's box is to the right
-  of the list's, beside it; at 390px the controls fold into one button
+  "before" screenshot card 185 carries) the sidebar's box is to the left
+  of the list's, level with it and alone (task 185 moved it from the
+  right: the old right-hand layout is reconstructed at the same viewport
+  for a matching "before" shot), the sidebar precedes the list in the
+  document and for Tab, a focused control shows its ring, and kind,
+  classification and search compose without moving it; at 390px the
+  controls fold into one button
   above the list, open on request, and neither the view nor the page runs
   wider than the window — in Night and Daylight;
 - **passive browsing**: none of it sends a write (so no model, agent or
@@ -359,17 +364,66 @@ class BrainLibrary(unittest.TestCase):
     def test_5_layout_measured_in_both_themes(self):
         for width, height, label in ((1280, 860, "1280"), (1510, 857, "1510")):
             for dark in (True, False):
+                theme = 'night' if dark else 'day'
                 b = self.open("/brain", width, height, dark)
                 self.reset_view(b)
+                # the "before" (task 183's right-hand sidebar), reconstructed
+                # at the same viewport by one injected rule and removed
+                # again, so before and after are taken from one backend,
+                # one Brain and one width (task 185)
+                b.eval("(() => { const s = document.createElement('style'); s.id = 'b185-before';"
+                       " s.textContent = '#bshell .b-lib{grid-template-columns:minmax(0,1fr) 272px;"
+                       "grid-template-areas:\"list nav\"}'; document.head.appendChild(s); })(); true")
+                time.sleep(0.15)
                 nav, res = self.rect(b, "#bshell .b-nav"), self.rect(b, "#bshell .b-results")
-                self.assertGreaterEqual(nav["left"], res["right"], f"{label}: the sidebar is right of the list")
-                self.assertLess(nav["top"], res["bottom"], f"{label}: beside it, not below")
+                self.assertGreaterEqual(nav["left"], res["right"], f"{label}: the reconstructed before is right-hand")
+                shot(f"brain-library-before-{label}-{theme}")
+                b.eval("document.getElementById('b185-before').remove(); true")
+                time.sleep(0.15)
+                nav, res = self.rect(b, "#bshell .b-nav"), self.rect(b, "#bshell .b-results")
+                self.assertLessEqual(nav["right"], res["left"], f"{label}: the sidebar is left of the list {nav} {res}")
+                self.assertLess(nav["top"], res["bottom"], f"{label}: beside it, not above")
+                self.assertLess(abs(nav["top"] - res["top"]), 4, f"{label}: the two start level {nav} {res}")
+                lib = self.rect(b, "#bshell .b-lib")
+                self.assertLess(nav["left"] - lib["left"], 2, f"{label}: the sidebar starts the row {nav} {lib}")
+                self.assertGreater(res["right"], lib["right"] - 2, f"{label}: the list runs to the right edge {res} {lib}")
+                # no competing filter panel: one sidebar, nothing beside or above the list
+                self.assertEqual([1, 1, True], b.eval(
+                    "(() => { const f = document.querySelectorAll('#bshell [role=search]');"
+                    " return [document.querySelectorAll('#bshell .b-nav').length, f.length,"
+                    " !!(f[0] && f[0].closest('.b-nav'))]; })()"),
+                    f"{label}: one browsing panel, the search inside it")
                 self.assertGreaterEqual(res["width"], 600, f"{label}: the list stays readable {res}")
                 self.assertTrue(200 <= nav["width"] <= 320, f"{label}: sidebar width {nav}")
                 self.assertFalse(b.eval("document.querySelector('#bshell .b-navtoggle').offsetParent !== null"),
                                  f"{label}: no fold button on a wide window")
+                # the reading order matches the visible order: the sidebar
+                # precedes the list in the document, so Tab meets it first
+                self.assertTrue(b.eval("!!(document.querySelector('#bshell .b-nav').compareDocumentPosition("
+                                       "document.querySelector('#bshell .b-results')) & Node.DOCUMENT_POSITION_FOLLOWING)"),
+                                f"{label}: the sidebar comes first in the document")
+                b.eval("document.querySelector('#bshell .b-title').focus(); true")
+                b.key("Tab")
+                b.key("Tab")
+                self.assertEqual("q", b.eval("document.activeElement?.dataset?.bfind || null"),
+                                 f"{label} {theme}: after New entry, Tab reaches the left-hand search")
+                b.key("Tab")
+                self.assertEqual("all", b.eval("document.activeElement?.dataset?.bkind || null"))
+                self.assertNotEqual("none", b.eval("getComputedStyle(document.activeElement).outlineStyle"),
+                                    f"{label} {theme}: a focused kind shows its ring")
                 self.no_overflow(b, f"library {label}")
-                shot(f"brain-library-after-{label}-{'night' if dark else 'day'}")
+                shot(f"brain-library-after-{label}-{theme}")
+                # composed filtering on a wide window keeps the geometry
+                self.kind(b, "Guide")
+                self.show(b, "Superseded")
+                self.search(b, "start")
+                b.wait("document.querySelectorAll('#bshell .b-results .b-list a[data-brain-id]').length === 2", 5)
+                self.assertEqual(["e-lib-guide-now", "e-lib-guide-old"], self.listed(b),
+                                 f"{label}: kind, classification and search compose")
+                nav, res = self.rect(b, "#bshell .b-nav"), self.rect(b, "#bshell .b-results")
+                self.assertLessEqual(nav["right"], res["left"], f"{label}: filtered, still left {nav} {res}")
+                shot(f"brain-library-after-{label}-filtered-{theme}")
+                self.reset_view(b)
                 # the sidebar stays in view while the list scrolls under it
                 self.assertEqual("sticky", b.eval("getComputedStyle(document.querySelector('#bshell .b-nav')).position"))
                 self.show(b, "Historical")

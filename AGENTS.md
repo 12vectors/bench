@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -405,6 +405,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   lifecycle every surface reads; and the one-time move to the unified
   phase model (`migrate_model`) with its holds and `resume`. It launches
   nothing (see "Phase scopes: one scheduler per phase")
+- `archiveall.py` — **Archive all** in the Done column (task 187): which
+  done/ cards it would take and which it leaves with why, then one
+  confirmed, frozen set archived card by card through
+  `taskfiles.archive_task`, each read again first; the batch's outcome
+  per card, its retry of only what is outstanding, an interrupted batch,
+  and sync's answer apart from the archive. It sits beside `phasescope`
+  because it asks `phases` and `agents` what protects a card (see "The
+  activity bar and the archive")
 - `refine.py` — refining a card on the board: comments, the one
   refinement job a person asks for, its validated proposal, and the
   explicit Apply or Discard. The brief and the decisions live in the
@@ -537,6 +545,64 @@ action, not two: the same request, the same ⌘Z toast, the same count on
 the tray. Which stages may be archived from is answered once, by the
 server that enforces it, and sent with the state; the drag gesture and the
 chip both read that answer.
+
+**Archive all** clears the Done column without opening a card (task
+187). It is a button in the Done column's header, beside the count,
+reachable by keyboard and touch, and drawn disabled — saying there is
+nothing to archive — when Done holds nothing it could take. It never
+writes on the first press. It opens a sheet that asks the board
+(`GET /api/archive/all`, a read) what it would take, and shows that
+exact set and its count:
+
+- **Scope.** Every eligible card in `done/` on this board — including
+  any the Board does not draw — and nothing in any other stage. It
+  leaves, and lists with why: a phase card (archive it on its own), a
+  member of a phase that is still open (the phase card stands for it),
+  a card an agent is working on, and a card being merged and cleaned up.
+- **The set is frozen.** **Archive N cards** sends exactly the files the
+  sheet listed, under a request identity (`POST /api/archive/all`,
+  `{request, files, retryOf?}`). A card completed after that is not
+  taken. Each card is read again just before it is archived, and one
+  that has moved, gone or become protected is skipped with its reason
+  rather than archived anyway. Cancel, Close and Escape change nothing.
+- **One card at a time, through the one door.** Every card goes out
+  through the same `archive_task` as the single archive: `**Status:**
+  Archived`, one `board: <n> → archived` commit per card under
+  `BOARD_COMMIT_MOVES`, the same push. Nothing is merged, no branch or
+  worktree is cleaned up and no agent is launched.
+- **Partial is said as partial.** There is no transaction across cards.
+  The sheet follows the batch (`GET /api/archive/all?request=`) and ends
+  on a summary — archived, already archived, skipped, failed, not
+  committed — with each card's reason. Cards archived stay archived.
+  **Retry N outstanding** sends only the cards whose archive failed or
+  whose commit failed (a retry commits those without moving them
+  again), under a new request naming the one it retries. Skipped cards
+  are not retried: they changed, and a fresh Archive all reads them
+  again.
+- **Once per request.** The same request again — a double click, or
+  **Ask again** after a request got no answer — returns the batch
+  already there; the same identity with another set is refused; and one
+  Archive all runs at a time. A card already in the archive reads
+  *already archived*, never moved twice. Each batch's record is kept
+  under `manager/local/state/archive/bulk/` (the newest 20); one a
+  restart cut short reads *interrupted*, with the cards it had not
+  reached as outstanding.
+- **Archived here, published apart.** With `BOARD_SYNC` on, the batch
+  holds the push each card's commit would start and asks sync to publish
+  once at the end (a batch cut short hands its commits back to the
+  ordinary push); the summary says whether it did, and the cards are
+  archived on this board either way. With `BOARD_COMMIT_MOVES` off the
+  summary says nothing was committed.
+- **A crash between a move and its commit** is caught by the next Archive
+  all naming the card: one found in the archive that git does not hold
+  yet is committed (under the failed move's journal line), never moved
+  again; one with no record of the move at all is reported *not
+  committed*, to commit by hand.
+
+**⌘Z after Archive all brings that whole set back** to `done/`, each card
+through the single restore door; a card moved since is reported rather
+than guessed at. Archived cards keep their files and history in
+`tasks/archive/`, counted on the tray.
 
 Archiving is a move, so it commits like one: under `BOARD_COMMIT_MOVES`
 the rename into `tasks/archive/` lands in a single `board: <n> → archived
@@ -1292,7 +1358,7 @@ all:
   stable address, with a person's writes — create, edit, classify,
   override and retire (see "The Brain: maintained entries, read" and
   "Writing the Brain"), and its own search, kind and classification
-  controls in a sidebar on the right (see "Finding an entry").
+  controls in a sidebar on the left (see "Finding an entry").
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
@@ -1404,9 +1470,10 @@ fetches from a remote, launches and runs nothing.
 
 ### Finding an entry
 
-The Brain's list is a library organised by **kind** (task 183). The
-entries fill the main column; the way to browse them sits in a sidebar
-on the right, independent of the Board's stages:
+The Brain's list is a library organised by **kind** (task 183). The way
+to browse it sits in a sidebar on the left (task 185), independent of the
+Board's stages, and the entries fill the main column to its right — the
+sidebar comes first for Tab, as it does for the eye:
 
 - **Search** — every word typed, case blind, against each entry's
   title, summary, id, kind, file name, sources and related ids.
@@ -1586,14 +1653,10 @@ card's **Tools** come first on every tab — the same group as its **⋯**
 menu, labelled once — and then the open section's text.
 
 - **Overview** — four sections in the order a busy reader asks their
-  questions (task 149), then everything else. **The work**: what the
-  card is and why, quoted from the brief as it reads now — its opening
-  paragraph, the first paragraph of its problem section (`Context`,
-  `Problem`, `Background`…), the headings or leading bullets of its scope
-  section (`What to build`, `Scope`…) and its boundaries (`Out of
-  scope`…), each labelled with the section it came from, clipped at a
-  sentence and marked when it continues, with the brief's revision and a
-  link to the whole brief; open questions in the brief are raised there.
+  questions (task 149), then everything else. Where the card stands comes
+  first, with the work directly after it (task 186): the status and the
+  next action are read before the work's narrative. The card's head, its
+  tabs and its **Tools** stay above all four.
   **Where it stands · what happens next**: the delivery status — its
   word as a heading, its sentence (announced as an alert only in the
   alarm tone), the one primary action and who holds it, and every other
@@ -1609,7 +1672,15 @@ menu, labelled once — and then the open section's text.
   or done with none says its result is not stated), the orchestration
   line and, where one is recorded, the **Work base** (which code the
   work starts from, and a held new start kept in view as the blocker it
-  is). **What is required**, in two halves: *to do the work* — the
+  is). **The work**: what the
+  card is and why, quoted from the brief as it reads now — its opening
+  paragraph, the first paragraph of its problem section (`Context`,
+  `Problem`, `Background`…), the headings or leading bullets of its scope
+  section (`What to build`, `Scope`…) and its boundaries (`Out of
+  scope`…), each labelled with the section it came from, clipped at a
+  sentence and marked when it continues, with the brief's revision and a
+  link to the whole brief; open questions in the brief are raised there.
+  **What is required**, in two halves: *to do the work* — the
   card's information, its dependencies (each by number, with its stage,
   or *not on this board*) and its criteria — and *to merge it* —
   **Merge requirements**, `1 of 2 merge requirements met for <commit>`,

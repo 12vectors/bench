@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 144033,
-   "sha256": "1c8b1a4ae0fce911921251663da6dbf307656901351c2058ca4e0018a9f501cb",
+   "bytes": 145189,
+   "sha256": "d391a8da58de8ba7a9cea05d7c41886d99ac3d75db3c878a502037d5a5a6d551",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -256,23 +256,28 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 23428,
-   "sha256": "8344a65c60bc6cedf89deaefe15bdc4a8bf70bdbc94d9ba128f274d49214ed49",
+   "bytes": 23830,
+   "sha256": "3660a032f779bd4f4871fc33301d810649dcbbc91a7fc52ea57a51561d57f3d3",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
-   "bytes": 10137,
-   "sha256": "56de69428d47354953f7ada2d1b942b3e1d4ce2cb38f33a47c24f856c3bb7660",
+   "bytes": 10928,
+   "sha256": "fcc5ba73ab5850689fee0980f661262a97af4e184e057d322eb1d4f81f4aa18e",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/archiveall.js": {
+   "bytes": 11422,
+   "sha256": "f2f8486f843c51cef103d6970e0682086c05d42d664a56ae4f5b72e04a5d2ea2",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {
-   "bytes": 27524,
-   "sha256": "116687407693f49070d2c5033003f27dea23f648513635208b6fb7865d9430b1",
+   "bytes": 28525,
+   "sha256": "bf1ed9404e6c6b459bdd0faba3ff02606038b76a0fb2a88a15d2b41869ec58f3",
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 117393,
-   "sha256": "6d3c8c4bff8d4656f0b72a227a7fda61d323d21377d9414baa9a34054779a859",
+   "bytes": 117398,
+   "sha256": "653b8355b23652102afa0b9205ab2ed46bfaf0892c5dcd34c4cd948c20cdbada",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -296,8 +301,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 118171,
-   "sha256": "f816736558cf8136ba45baf59f36933c2cca61229e11f136122d2b9307ba2d42",
+   "bytes": 118288,
+   "sha256": "d0e5741ad81f2be1802a2203d88435772d910ea9802c331d5e2d1ec5edd7c47d",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {

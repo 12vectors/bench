@@ -65,7 +65,7 @@ L23 agents previews readiness
 L24 setuptasks
 L25 setupguide
 L26 phases
-L27 phasescope
+L27 phasescope archiveall
 L28 refine reasoning coordinate braindraft
 L29 recovery
 L30 scheduler
@@ -414,7 +414,7 @@ L22 agents readiness previews
 L23 setuptasks
 L24 setupguide
 L25 phases
-L26 phasescope
+L26 phasescope archiveall
 L27 refine reasoning coordinate braindraft
 L28 recovery
 L29 scheduler
@@ -736,5 +736,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 169
+routes 171
 ```
