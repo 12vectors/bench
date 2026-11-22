@@ -1146,7 +1146,9 @@ def get_files(req) -> None:
 def get_brain(req) -> None:
     # The Brain's index (task 157): a read of brain/ under the work root
     # and nothing else — no directory made, no git, no fetch, no launch.
-    req.reply(200, {"brain": brain.index()})
+    # `referenceFiles` (task 172) says whether there is legacy material to
+    # offer for review: one directory listing, no file opened
+    req.reply(200, {"brain": {**brain.index(), "referenceFiles": adoption.count()}})
 
 
 def get_brain_entry(req) -> None:

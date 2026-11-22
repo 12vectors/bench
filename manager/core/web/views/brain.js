@@ -1010,6 +1010,8 @@ function adFormHtml(p) {
 
 function adoptHtml() {
   if (!ad) {
+    // no control for nothing: a board with no reference files is not asked
+    if (!(cache.index && cache.index.data && cache.index.data.referenceFiles)) return '';
     return '<section class="b-adopt" aria-labelledby="ad-h"><h2 id="ad-h">Existing reference material</h2>' +
       '<p class="b-note"><code>reference/</code> is kept for what is already there; new knowledge belongs in the ' +
       `Brain. Adopting is one file at a time and leaves every original at its address.</p>${button('ad-open', 'Review reference files')}</section>`;

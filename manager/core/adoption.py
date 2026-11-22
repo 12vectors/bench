@@ -429,6 +429,18 @@ def inventory() -> dict:
     return base
 
 
+def count() -> int:
+    """How many visible names `reference/` holds: whether the Brain has
+    anything to offer for review. Lists one directory and opens no file."""
+    if _directory_state()[0] != "present":
+        return 0
+    try:
+        return sum(1 for n in os.listdir(config.work_root() / DIRECTORY)
+                   if not n.startswith("."))
+    except OSError:
+        return 0
+
+
 def _check_name(name) -> str:
     if not isinstance(name, str) or not NAME_RE.match(name):
         raise NotAName(f"{str(name)[:70]!r} is not a file name in reference/")

@@ -184,6 +184,12 @@ class Inventory(_Adoption):
         self.assertEqual(out["items"], [])
         self.assertEqual(adoption.preview("api.md")["choices"], [])
 
+    def test_count_says_whether_there_is_anything_to_review(self):
+        self.assertEqual(adoption.count(), 4)
+        (self.ref / ".gitkeep").write_text("")
+        self.addCleanup((self.ref / ".gitkeep").unlink)
+        self.assertEqual(adoption.count(), 4, "a placeholder is not material")
+
     def test_traversal_is_not_a_name(self):
         for bad in ("../x", "a/b", "", ".env"):
             with self.assertRaises(adoption.NotAName):
