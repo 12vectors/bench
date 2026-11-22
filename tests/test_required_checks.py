@@ -980,7 +980,7 @@ class PromptsAskAfterTheLastCommit(BatchCase):
                           context=profiles.prompt_block(manifest),
                           verification=profiles.verification_block(
                               manifest, gatepolicy.required_lines(manifest)),
-                          progress="",
+                          progress="", acceptance="",
                           **config.prompt_fields(CARD, "in-progress"))
             name = f"{intent}.md"
             return templates.render(name, templates.builtin(name), fields), \

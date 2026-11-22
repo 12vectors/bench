@@ -3,7 +3,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 8,
     "recheck": 0,
     "reported": 0,
@@ -57,77 +59,191 @@
     }
    ],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": false,
    "untracked": [
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@e168cab54200",
      "label": "A fresh release artifact installed in vendored mode produces the expected usable work…",
      "legacyTick": false,
      "order": 0,
+     "reason": null,
+     "result": null,
      "rev": "e168cab54200",
-     "text": "A fresh release artifact installed in vendored mode produces the expected usable work skeleton at the default work root, with normal task and template behavior preserved."
+     "skipped": [],
+     "state": "pending",
+     "text": "A fresh release artifact installed in vendored mode produces the expected usable work skeleton at the default work root, with normal task and template behavior preserved.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@46a7b902664b",
      "label": "The same fresh artifact installed in external mode produces the usable skeleton only at…",
      "legacyTick": false,
      "order": 1,
+     "reason": null,
+     "result": null,
      "rev": "46a7b902664b",
-     "text": "The same fresh artifact installed in external mode produces the usable skeleton only at the configured work root; the final tool root contains no misleading duplicate active tasks/, plans/ or reference/ skeleton."
+     "skipped": [],
+     "state": "pending",
+     "text": "The same fresh artifact installed in external mode produces the usable skeleton only at the configured work root; the final tool root contains no misleading duplicate active tasks/, plans/ or reference/ skeleton.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@8bdd57572dd0",
      "label": "Reinstalling in each mode leaves existing work files and customized templates…",
      "legacyTick": false,
      "order": 2,
+     "reason": null,
+     "result": null,
      "rev": "8bdd57572dd0",
-     "text": "Reinstalling in each mode leaves existing work files and customized templates byte-for-byte intact and does not create duplicate skeletons or unintended state commits."
+     "skipped": [],
+     "state": "pending",
+     "text": "Reinstalling in each mode leaves existing work files and customized templates byte-for-byte intact and does not create duplicate skeletons or unintended state commits.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@797cc4e8c7be",
      "label": "Mode changes in both directions and changes between external roots preserve the old…",
      "legacyTick": false,
      "order": 3,
+     "reason": null,
+     "result": null,
      "rev": "797cc4e8c7be",
-     "text": "Mode changes in both directions and changes between external roots preserve the old root's data and any existing destination data."
+     "skipped": [],
+     "state": "pending",
+     "text": "Mode changes in both directions and changes between external roots preserve the old root's data and any existing destination data.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@32637cf94fd1",
      "label": "Upgrading an older release to the new release, followed by installer re-wiring, preserves…",
      "legacyTick": false,
      "order": 4,
+     "reason": null,
+     "result": null,
      "rev": "32637cf94fd1",
-     "text": "Upgrading an older release to the new release, followed by installer re-wiring, preserves both layouts' user files, local configuration and runtime state."
+     "skipped": [],
+     "state": "pending",
+     "text": "Upgrading an older release to the new release, followed by installer re-wiring, preserves both layouts' user files, local configuration and runtime state.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@110873437400",
      "label": "Symlink and path-containment regressions remain fail-closed; external initialization…",
      "legacyTick": false,
      "order": 5,
+     "reason": null,
+     "result": null,
      "rev": "110873437400",
-     "text": "Symlink and path-containment regressions remain fail-closed; external initialization never writes state into the application checkout."
+     "skipped": [],
+     "state": "pending",
+     "text": "Symlink and path-containment regressions remain fail-closed; external initialization never writes state into the application checkout.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@ec2e332c6bd3",
      "label": "Regression coverage exercises the actual release, extraction, install and update paths…",
      "legacyTick": false,
      "order": 6,
+     "reason": null,
+     "result": null,
      "rev": "ec2e332c6bd3",
-     "text": "Regression coverage exercises the actual release, extraction, install and update paths, not just direct skeleton-helper calls."
+     "skipped": [],
+     "state": "pending",
+     "text": "Regression coverage exercises the actual release, extraction, install and update paths, not just direct skeleton-helper calls.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@5c558a81e1db",
      "label": "Documentation accurately describes directory ownership, conservative legacy handling and…",
      "legacyTick": false,
      "order": 7,
+     "reason": null,
+     "result": null,
      "rev": "5c558a81e1db",
-     "text": "Documentation accurately describes directory ownership, conservative legacy handling and mode changes; the generated website builds successfully without deployment."
+     "skipped": [],
+     "state": "pending",
+     "text": "Documentation accurately describes directory ownership, conservative legacy handling and mode changes; the generated website builds successfully without deployment.",
+     "tracked": false,
+     "word": "No result yet"
     }
    ]
   },
@@ -182,7 +298,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 0,
     "recheck": 0,
     "reported": 0,
@@ -200,11 +318,13 @@
    "reports": [],
    "rounds": [],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": false,
    "untracked": []
@@ -242,7 +362,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 3,
     "recheck": 0,
     "reported": 0,
@@ -251,51 +373,69 @@
    "criteria": [
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "visible",
+     "key": "visible",
      "label": "The download holds exactly the visible rows and columns, in the order shown.",
      "legacyTick": false,
      "order": 0,
      "reason": null,
+     "result": null,
      "rev": "6ca3e340db71",
+     "skipped": [],
      "state": "pending",
      "text": "The download holds exactly the visible rows and columns, in the order shown.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     },
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "formula",
+     "key": "formula",
      "label": "A cell that looks like a formula is neutralised.",
      "legacyTick": false,
      "order": 1,
      "reason": null,
+     "result": null,
      "rev": "cd034e866aa9",
+     "skipped": [],
      "state": "pending",
      "text": "A cell that looks like a formula is neutralised.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     },
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "passive",
+     "key": "passive",
      "label": "Nothing is written on the server, and opening the table runs nothing.",
      "legacyTick": false,
      "order": 2,
      "reason": null,
+     "result": null,
      "rev": "161075c328b3",
+     "skipped": [],
      "state": "pending",
      "text": "Nothing is written on the server, and opening the table runs nothing.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     }
    ],
    "findingCounts": {
@@ -309,11 +449,13 @@
    "reports": [],
    "rounds": [],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": true,
    "untracked": []
@@ -370,7 +512,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 2,
     "recheck": 0,
     "reported": 0,
@@ -388,29 +532,59 @@
    "reports": [],
    "rounds": [],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": false,
    "untracked": [
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@980a15e7a577",
      "label": "No phase can be scheduled by two owners.",
      "legacyTick": false,
      "order": 0,
+     "reason": null,
+     "result": null,
      "rev": "980a15e7a577",
-     "text": "No phase can be scheduled by two owners."
+     "skipped": [],
+     "state": "pending",
+     "text": "No phase can be scheduled by two owners.",
+     "tracked": false,
+     "word": "No result yet"
     },
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@aecdde58c2a5",
      "label": "An existing phase log still reads as history.",
      "legacyTick": false,
      "order": 1,
+     "reason": null,
+     "result": null,
      "rev": "aecdde58c2a5",
-     "text": "An existing phase log still reads as history."
+     "skipped": [],
+     "state": "pending",
+     "text": "An existing phase log still reads as history.",
+     "tracked": false,
+     "word": "No result yet"
     }
    ]
   },
@@ -466,7 +640,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 3,
     "recheck": 0,
     "reported": 0,
@@ -475,51 +651,69 @@
    "criteria": [
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "zone",
+     "key": "zone",
      "label": "Every timestamp in Activity names its zone.",
      "legacyTick": false,
      "order": 0,
      "reason": null,
+     "result": null,
      "rev": "5b5c94193b5e",
+     "skipped": [],
      "state": "pending",
      "text": "Every timestamp in Activity names its zone.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     },
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "keyboard",
+     "key": "keyboard",
      "label": "The UTC value is reachable by keyboard as well as by hover.",
      "legacyTick": false,
      "order": 1,
      "reason": null,
+     "result": null,
      "rev": "84810e408e2e",
+     "skipped": [],
      "state": "pending",
      "text": "The UTC value is reachable by keyboard as well as by hover.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     },
     {
      "basis": null,
+     "by": null,
      "claim": null,
      "decision": null,
      "evidence": null,
+     "evidenceList": [],
      "history": [],
      "id": "order",
+     "key": "order",
      "label": "Items stay in instant order across midnight.",
      "legacyTick": false,
      "order": 2,
      "reason": null,
+     "result": null,
      "rev": "bd16738a07d1",
+     "skipped": [],
      "state": "pending",
      "text": "Items stay in instant order across midnight.",
-     "word": "pending"
+     "tracked": true,
+     "word": "No result yet"
     }
    ],
    "findingCounts": {
@@ -569,11 +763,13 @@
     }
    ],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": true,
    "untracked": []
@@ -626,7 +822,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 1,
     "recheck": 0,
     "reported": 0,
@@ -644,21 +842,37 @@
    "reports": [],
    "rounds": [],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": false,
    "untracked": [
     {
+     "basis": null,
+     "by": null,
+     "claim": null,
+     "decision": null,
+     "evidence": null,
+     "evidenceList": [],
+     "history": [],
      "id": null,
+     "key": "@4f496edd9b0f",
      "label": "It is tidier.",
      "legacyTick": false,
      "order": 0,
+     "reason": null,
+     "result": null,
      "rev": "4f496edd9b0f",
-     "text": "It is tidier."
+     "skipped": [],
+     "state": "pending",
+     "text": "It is tidier.",
+     "tracked": false,
+     "word": "No result yet"
     }
    ]
   },
@@ -694,7 +908,9 @@
   "acc": {
    "counts": {
     "accepted": 0,
+    "decision": 0,
     "needs-work": 0,
+    "not-verified": 0,
     "pending": 0,
     "recheck": 0,
     "reported": 0,
@@ -712,11 +928,13 @@
    "reports": [],
    "rounds": [],
    "states": {
-    "accepted": "accepted",
-    "needs-work": "needs work",
-    "pending": "pending",
-    "recheck": "needs recheck",
-    "reported": "reported — awaiting confirmation"
+    "accepted": "Accepted",
+    "decision": "Needs your decision",
+    "needs-work": "Not met",
+    "not-verified": "Not verified",
+    "pending": "No result yet",
+    "recheck": "Needs recheck",
+    "reported": "Met — awaiting review"
    },
    "tracked": false,
    "untracked": []
