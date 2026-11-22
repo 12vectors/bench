@@ -60,7 +60,9 @@ def marker(meta: dict) -> str:
 
 
 def filed(heading: str, report: str, meta: dict | None = None) -> str:
-    mark = marker(meta) + "\n\n" if meta else ""
+    # as agents._file_report writes it: the digest of exactly the text filed
+    sha = hashlib.sha256(report.encode("utf-8")).hexdigest()[:12]
+    mark = marker({**meta, "reportSha": sha}) + "\n\n" if meta else ""
     return f"\n\n---\n\n{heading}\n\n{mark}{report}\n"
 
 
