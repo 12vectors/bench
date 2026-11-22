@@ -393,6 +393,12 @@ class OneSequencePerTarget(unittest.TestCase):
         self.assertEqual(items[0]["waitingFor"], "7-b.md")
         self.assertEqual(items[1]["code"], "verify")
 
+    def test_a_blocked_integrating_card_releases_its_target(self):
+        items = [self.item("2-a.md", "2", "refresh"),
+                 self.item("7-b.md", "7", "repair-exhausted", integrating=True)]
+        coordinate._owners(items, [], {})
+        self.assertEqual(items[0]["code"], "refresh")
+
     def test_an_operation_in_flight_holds_the_target_across_a_restart(self):
         items = [self.item("2-a.md", "2", "merge")]
         ops = [{"key": "op-" + "1" * 20, "action": "merge", "file": "8-x.md",

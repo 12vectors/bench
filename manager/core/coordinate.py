@@ -1167,7 +1167,16 @@ def _integrate(op: dict, task: dict, head: str, answer: dict) -> dict:
     """A phase member into its phase branch (task 143), through the phase
     runner's own merge: the member gate read again with the head in hand,
     the validated commit merged additively, the log line written."""
-    result = phasescope.integrate(task, head)
+    # the same admission guard a merge into the application base passes
+    # (task 189): one integration into the phase branch at a time, and
+    # only of a head that holds the phase branch as it is now, where the
+    # member rule requires a check
+    target = integration.target_for(task)
+    with integration.admission(target, task["file"], "integrate"):
+        integration.require_current(
+            task["file"], gates.evaluate(task["file"], "member", task=task),
+            head, target, ask_remote=False)
+        result = phasescope.integrate(task, head)
     landed = result.get("integrated") or head
     if result["whole"]:
         return _merged(op, result, "integrated", f"integrated {landed[:12]} into "
@@ -1656,7 +1665,12 @@ def _owners(items: list[dict], ops: list[dict], tasks: dict) -> None:
         target = (item.get("integration") or {}).get("target")
         if not target:
             continue
-        if item.get("code") in FINAL or item.get("integrating"):
+        # an integrating card holds its target only while it is moving: one
+        # that is blocked, or waiting on a person, releases it, so it can
+        # never hold every admission into the target silently
+        moving = item.get("integrating") and item.get("state") not in (
+            "blocked", "awaiting", "unmanaged")
+        if item.get("code") in FINAL or moving:
             by_target.setdefault(target, []).append(item)
     for target, group in by_target.items():
         owner = holding.get(target)
