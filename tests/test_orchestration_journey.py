@@ -151,15 +151,17 @@ class _Journeys:
                          "cleanup removed the delivered branch from the remote")
 
     def phase_board(self) -> tuple[Journey, str, str, str, str]:
-        """A phase (20: members 21, 22) adopted by its scope, and a
-        standalone card (30), both delegated by the owner's move."""
+        """A phase (20: members 21, 22, both stored in Backlog) and a
+        standalone card (19), both delegated by the owner's move. Task
+        188: the phase card's one move queues it and its Backlog members —
+        nobody adopts it and no member is moved by hand."""
         j = self.journey()
         phase = j.card("20", "Ship the export", author="bob",
                        extra="**Type:** Phase\n",
                        body="The export, end to end.\n\n## Cards\n\n"
                             "- 21 — Export model\n- 22 — Export button\n")
-        one = j.card("21", "Export model", stage="to-do", author="bob")
-        two = j.card("22", "Export button", stage="to-do", author="bob")
+        one = j.card("21", "Export model", author="bob")
+        two = j.card("22", "Export button", author="bob")
         # numbered below the members: requests ready in one pass are
         # admitted first come, first served with ties by card number (task
         # 182), and the race probes below expect the standalone card's
@@ -177,8 +179,6 @@ class _Journeys:
                               "authority": {w: True for w in ALL},
                               "limits": {"implementation": 1, "review": 1,
                                          "dailyStarts": 6}}}})
-        adopted = j.step("adopt", file=phase)
-        self.assertEqual(adopted["scope"], "phase:20")
         return j, phase, one, two, solo
 
     def assert_first_pass(self, j: Journey, first: dict, one: str, solo: str) -> None:
@@ -365,6 +365,25 @@ class _Journeys:
         self.assertIn(phase, reviewed, "the integrated head had its own review")
 
 
+    def test_one_move_queues_the_phase_and_its_backlog_members(self):
+        """Task 188, in every layout: the phase card's move into To Do is
+        the only move a person makes. Its members, stored in Backlog, are
+        queued with it; the first member's own launch is what moves it,
+        and the second stays where it was stored until its turn."""
+        j, phase, one, two, solo = self.phase_board()
+        before = j.step("read")["stages"]
+        self.assertEqual(("backlog", "backlog"), (before[one], before[two]))
+        j.step("pass")
+        self.assertIn(one, [c["task"] for c in j.calls("work")])
+        self.assertNotIn(two, [c["task"] for c in j.calls("work")])
+        after = j.step("read")
+        self.assertEqual("backlog", after["stages"][two],
+                         "a member whose turn has not come is not moved")
+        entry = next(p for p in after["phases"]["phases"] if p["card"] == phase)
+        rows = {m["card"]: m for m in entry["members"]}
+        self.assertTrue(rows[two]["inherited"], rows[two])
+        self.assertEqual("phase scope", entry["owner"])
+
     def test_a_later_member_moved_early_is_recovered_not_a_mutual_wait(self):
         """Task 160 (#157/#158): the second member moved into In Progress
         by mistake, with no run and no branch. The first member still
@@ -372,7 +391,7 @@ class _Journeys:
         integrated, both readings name the mistake, and the person's
         move back to To Do is allowed and launches nothing."""
         j, phase, one, two, solo = self.phase_board()
-        j.step("move", file=two, **{"from": "to-do", "to": "in-progress"})
+        j.step("move", file=two, **{"from": "backlog", "to": "in-progress"})
         first = j.step("pass")
         self.assertIn(one, [c["task"] for c in j.calls("work")],
                       [(r.get("card"), r.get("outcome"), r.get("code"))
