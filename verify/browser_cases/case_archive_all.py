@@ -125,7 +125,9 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
         n = len(files)
         self.assertIn(f"Archive {n} card", text)
         self.assertIn("including any the Board does not draw", text)
-        self.assertIn("phase card", b.eval(f"document.querySelector('{SHEET} .aa-left').innerText"))
+        # the fold is closed while there is something to archive; its rows
+        # are in it all the same
+        self.assertIn("phase card", b.eval(f"document.querySelector('{SHEET} .aa-left').textContent"))
         listed = b.eval(f"[...document.querySelectorAll('{SHEET} .aa-list:not(.aa-items) > li')]"
                         ".map(l => l.dataset.file)")
         self.assertEqual(sorted(files), sorted(f for f in listed if f in files))

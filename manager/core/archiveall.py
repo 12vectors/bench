@@ -315,6 +315,7 @@ def _one(filename: str, commit_retry: bool) -> dict:
 def _execute(batch: dict) -> None:
     global _RUNNING
     archived: list[dict] = []
+    finished = False
     try:
         for filename in batch["files"]:
             with _LOCK:
@@ -342,9 +343,17 @@ def _execute(batch: dict) -> None:
             batch["sync"] = ({"enabled": True, "outcome": sync_said,
                               "status": sync.status()} if config.SYNC
                              else {"enabled": False})
-            batch["status"] = "finished"
+        finished = True
     finally:
+        if archived:
+            # ⌘Z covers the last archive this board made: here, the whole
+            # set — in place before the batch reads as ended, so an undo
+            # pressed on the summary finds it
+            with state.LOCK:
+                state.LAST_ARCHIVED = {"batch": archived, "request": batch["request"]}
         with _LOCK:
+            if finished:
+                batch["status"] = "finished"
             if batch["status"] == "running":
                 batch["status"] = "interrupted"
                 reached = {i["file"] for i in batch["items"]}
@@ -355,10 +364,6 @@ def _execute(batch: dict) -> None:
             if _RUNNING == batch["request"]:
                 _RUNNING = None
         _persist(batch)
-    if archived:
-        # ⌘Z covers the last archive this board made: here, the whole set
-        with state.LOCK:
-            state.LAST_ARCHIVED = {"batch": archived, "request": batch["request"]}
     state.record_board_event({
         "kind": "move", "actor": "you", "to": "archive",
         "summary": _sentence(batch)})
