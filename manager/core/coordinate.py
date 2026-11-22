@@ -1528,7 +1528,7 @@ def _update(filename: str, expected: dict, actor: str, operation: str | None,
     branch = changes.branch_of(filename)
     base = {"head": head, "target": target, "targetTip": tip["commit"],
             "actor": actor, "operation": operation}
-    if gates.contained(tip["commit"], head):
+    if integration.holds(tip["commit"], head):
         integration.record_attempt(filename, {**base, "outcome": "current"})
         return {"ok": True, "outcome": "current", "head": head,
                 "target": target, "targetTip": tip["commit"],

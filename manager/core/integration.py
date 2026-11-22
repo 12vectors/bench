@@ -171,6 +171,48 @@ def incoming(head: str, tip: str, limit: int = 20) -> list[dict]:
     return found
 
 
+# What a work root holds that is bookkeeping, not the application: where
+# the work state shares the application's repository (a vendored or
+# source-hosted install), every card move is a `board:` commit on the
+# target, and none of it is a change a candidate must be combined with.
+WORK_STATE_DIRS = ("tasks", "plans", "reference", "brain", "setup",
+                   "orchestration")
+
+
+def _work_state_prefixes() -> tuple[str, ...]:
+    if not config.app_shares_state_repository():
+        return ()
+    try:
+        rel = config.work_root().resolve().relative_to(
+            config.app_repo().resolve()).as_posix()
+    except (ValueError, OSError):
+        return ()
+    lead = "" if rel in ("", ".") else rel.rstrip("/") + "/"
+    return tuple(f"{lead}{d}/" for d in WORK_STATE_DIRS)
+
+
+def application_change(head: str, tip: str) -> bool | None:
+    """Does the target at `tip` change anything but the work state since
+    `head` forked from it? True, False, or None when git cannot say. Where
+    the work state has a repository of its own, every change counts."""
+    prefixes = _work_state_prefixes()
+    if not prefixes:
+        return True
+    out = gitrepo.app_git("diff", "--name-only", f"{head}...{tip}")
+    if out.returncode != 0:
+        return None
+    return any(not path.startswith(prefixes)
+               for path in out.stdout.splitlines() if path.strip())
+
+
+def holds(tip: str, head: str) -> bool:
+    """Does `head` hold the target at `tip`, for integration: contains it,
+    or differs from it only by the work state's own bookkeeping."""
+    if gates.contained(tip, head):
+        return True
+    return application_change(head, tip) is False
+
+
 def tree_of(commit: str) -> str:
     return _rev(f"{commit}^{{tree}}") if commit else ""
 
@@ -268,7 +310,7 @@ def reading(task: dict, *, head: str | None, decision: dict | None,
         return _word(out, "unknown", f"{target} cannot be read in this "
                      f"checkout, so whether {head[:12]} holds it is not "
                      f"known", "check-remote")
-    fresh = gates.contained(tip["commit"], head)
+    fresh = holds(tip["commit"], head)
     out["fresh"] = fresh
     seen = (pr_state or {})
     mergeable = seen.get("conflicts")
@@ -467,7 +509,7 @@ def require_current(filename: str, decision: dict | None, head: str,
                         f"read; nothing was merged. Check the remote, then "
                         f"{UPDATE_ACTION.lower()}",
                         target=target, targetTip=tip)
-        if not gates.contained(tip, head):
+        if not holds(tip, head):
             raise Stale("target-changed",
                         f"{where} is at {tip[:12]}, which {head[:12]} does "
                         f"not hold — its checks are not about the combination "

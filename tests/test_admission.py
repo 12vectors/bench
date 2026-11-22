@@ -333,6 +333,28 @@ class GuardsAndDuplicates(AdmissionCase):
             integration.require_current(A, decision, a_head, "main")
         self.assertEqual(said.exception.code, "target-unreadable")
 
+    def test_the_boards_own_commits_on_a_shared_main_are_not_a_change(self):
+        """Vendored and source-hosted: card moves are `board:` commits on
+        the application's main. They are not work a candidate must be
+        combined with, so they neither stale it nor refuse its merge; an
+        application change beside them still does."""
+        _, b_head = self.both_reviewed("calls new_name\n")
+        with mock.patch.object(config, "app_shares_state_repository",
+                               lambda: True), \
+                mock.patch.object(config, "work_root", lambda: self.repo):
+            (self.repo / "tasks").mkdir(exist_ok=True)
+            self.write(self.repo, "tasks/9-moved.md", "# moved\n")
+            found = delivery.for_card(B)
+            self.assertEqual(found["status"]["word"], "ready-to-merge")
+            self.assertTrue(found["integration"]["fresh"])
+            decision = gates.evaluate(B, "acceptance")
+            self.assertTrue(integration.require_current(
+                B, decision, b_head, "main")["applies"])
+            self.write(self.repo, "app.txt", "an application change\n")
+            delivery.forget_cached()
+            self.assertEqual(delivery.for_card(B)["status"]["word"],
+                             "target-changed")
+
     def test_an_ungated_rule_requires_no_freshness(self):
         found = integration.require_current(
             A, {"decision": "ungated", "requirements": []}, "0" * 40, "main")
