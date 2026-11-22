@@ -38,6 +38,7 @@ import brainwrite
 import commands
 import completion
 import config
+import coordinate
 import cycletime
 import decisions
 import decisiontrace
@@ -2385,6 +2386,36 @@ def post_card_stack_action(req) -> None:
     req.reply(200, {"result": found})
 
 
+def get_card_integration(req) -> None:
+    # What Update against target and verify would do for one review card
+    # now (task 189): its head, its target, the accepted commits it would
+    # bring in, and why it may not. A read: nothing fetched or merged.
+    try:
+        req.reply(200, {"integration": coordinate.update_preview(
+            _q(req, "file"))})
+    except (ValueError, OSError) as exc:
+        req.reply(409, {"error": str(exc)})
+
+
+def post_card_integration_update(req) -> None:
+    # A person's confirmed Update against target and verify (task 189),
+    # bound to the head the sheet showed. A clean update merges the
+    # accepted target into the card's own branch and pushes it; a
+    # conflict is aborted and handed to one ↻ act on PR run. Nothing is
+    # merged into the target.
+    payload = req.body
+    try:
+        found = coordinate.update_against_target(
+            payload["file"], {"head": payload.get("head")}, actor="person")
+    except agents.RepairRefused as exc:
+        req.reply(409, {"error": str(exc), "code": exc.code})
+        return
+    except coordinate.UpdateRefused as exc:
+        req.reply(409, {"error": str(exc), "code": exc.code})
+        return
+    req.reply(200, {"result": found})
+
+
 def post_card_delivery_launch_check(req) -> None:
     # The launch's own preflight, asked explicitly and fresh.
     # It claims nothing and starts nothing; the launch asks
@@ -2466,6 +2497,7 @@ ROUTES = (
     Route("GET", "/api/card/result", "read", get_card_result),
     Route("GET", "/api/artifact", "read", get_artifact),
     Route("GET", "/api/card/delivery", "read", get_card_delivery),
+    Route("GET", "/api/card/integration", "read", get_card_integration),
     Route("GET", "/api/card/timing", "read", get_card_timing),
     Route("GET", "/api/settings/history", "read", get_settings_history),
     Route("GET", "/api/diff", "read", get_diff),
@@ -2609,6 +2641,8 @@ ROUTES = (
           post_card_stack_preview),
     Route("POST", "/api/card/stack/action", "browser-mutation",
           post_card_stack_action),
+    Route("POST", "/api/card/integration/update", "browser-mutation",
+          post_card_integration_update),
     Route("POST", "/api/agent/stop", "browser-mutation", post_agent_stop),
 )
 

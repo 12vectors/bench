@@ -87,6 +87,7 @@ import gitproc  # noqa: F401
 import gitrepo  # noqa: F401
 import httpd
 import inputs  # noqa: F401
+import integration  # noqa: F401
 import operations  # noqa: F401
 import orchestrator  # noqa: F401
 import phases

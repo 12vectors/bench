@@ -54,7 +54,7 @@ L12 gates brainreviews
 L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
-L16 changes brainwrite reportfiling
+L16 changes brainwrite reportfiling integration
 L17 completion
 L18 stacks
 L19 delivery stackactions results cycletime
@@ -103,6 +103,14 @@ itself (parent, children, loops) is derived once by
 `taskfiles.weave_stacks`, beside `weave_phases`, so a loop reaches
 `plan drift` and preflight refuses it without `plans` reaching up.
 `delivery` and `routes` read it; it reads nothing above itself.
+
+`integration` (task 189) sits beside `changes`, directly below
+`completion`: a review candidate's target freshness (does its head hold
+the target's accepted tip?), the per-target admission lock and the
+current-target guard read immediately before a merge. It imports
+`config`, `gates`, `gitrepo`, `plans` and `records` and takes the PR
+poll's reading as an argument rather than importing `changes`, so
+`completion`, `delivery` and `coordinate` all stand on it.
 
 `brainwrite` (task 158) sits beside `changes`, directly above `sync`:
 the Brain's one writer, kept apart from `brain` (L5, the reader) because
@@ -403,7 +411,7 @@ L11 acceptance callers
 L12 gates brainreviews
 L13 required doctor orchestrator
 L14 events drive sync commands
-L15 changes brainwrite reportfiling
+L15 changes brainwrite reportfiling integration
 L16 completion
 L17 stacks
 L18 delivery stackactions results cycletime
@@ -733,5 +741,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 169
+routes 171
 ```

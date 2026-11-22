@@ -72,6 +72,7 @@ import gates
 import githost
 import changes
 import gitrepo
+import integration
 import plans
 import profiles
 import required
@@ -114,6 +115,9 @@ WORDS = {
     "checks-needed": ("Checks needed", "neutral"),
     "review-needed": ("Review needed", "neutral"),
     "signoff-needed": ("Sign-off needed", "neutral"),
+    "target-changed": ("Target changed — integration check needed",
+                       "attention"),
+    "target-conflicts": ("Conflicts with target — repair needed", "alarm"),
     "ready-to-merge": ("Ready to merge", "calm"),
     "ready-overridden": ("Ready — overridden", "alarm"),
     "review": ("Review", "neutral"),
@@ -148,6 +152,10 @@ ROWS = (
     # on has (task 117)
     (21, "review, stacked on a card whose work has not landed",
      ("waiting-for-parent",)),
+    # read before 18 (task 189): requirements met at a head that does not
+    # hold the target it lands in, where the merge rule requires a check
+    (22, "review, met at a head that does not hold the current target",
+     ("target-changed", "target-conflicts")),
     (18, "review, every requirement met or overridden",
      ("ready-to-merge", "ready-overridden")),
     (19, "review, an ungated board", ("review",)),
@@ -176,6 +184,10 @@ ACTIONS = {
     "open-pr": {"handler": "/api/pr/open", "kind": "api", "arm": False},
     "complete": {"handler": "/api/task/complete", "kind": "api",
                  "arm": True},
+    # task 189: bring the accepted target into the card's own branch,
+    # additively; a conflict hands one ↻ act on PR run the details
+    "update-target": {"handler": "/api/card/integration/update",
+                      "kind": "api", "arm": True},
     "cancel-check": {"handler": "/api/verify/cancel", "kind": "api",
                      "arm": True},
     "check-remote": {"handler": "/api/card/delivery/check-remote",
@@ -219,6 +231,22 @@ def _short(commit: str | None, fallback: str = "this commit") -> str:
 
 
 # ── the inputs, read once per pass ─────────────────────────────────────
+
+
+def _integration_public(fit: dict | None) -> dict | None:
+    """The integration reading as a card carries it (task 189)."""
+    if not fit:
+        return None
+    keys = ("state", "label", "tone", "sentence", "next", "target",
+            "targetTip", "targetRef", "authority", "required", "fresh",
+            "behind", "incoming", "provider", "guarantees")
+    out = {k: fit.get(k) for k in keys if k in fit}
+    attempt = fit.get("attempt")
+    if attempt:
+        out["attempt"] = {k: attempt.get(k) for k in (
+            "at", "outcome", "targetTip", "newHead", "conflicts", "actor",
+            "pushed")}
+    return out
 
 
 def _remote_tips() -> dict[str, str]:
@@ -268,6 +296,8 @@ def _context(phase_state: dict | None = None) -> dict:
         # Run required checks rides — and the batches in flight
         "workChecks": _work_checks(),
         "batches": required.running(),
+        # cards with an update against their target in flight (task 189)
+        "updating": set(integration.UPDATING),
     }
 
 
@@ -647,6 +677,17 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
     gated = bool((decision or {}).get("gated")) or \
         (decision or {}).get("decision") == "blocked"
 
+    # task 189: the candidate against the target it lands in, kept apart
+    # from the review — read locally, from the last fetch
+    fit = None
+    if stage == "review" and candidate["state"] == "present" \
+            and not merged_elsewhere:
+        fit = integration.reading(
+            task, head=candidate.get("commit"), decision=decision,
+            pr_state=changes.pr_state(filename), plan=plan,
+            remote_tips=ctx["remoteTips"] if ctx["remote"] else None,
+            updating=bool(alive) or filename in ctx.get("updating", ()))
+
     status, sentence, primary, others = _decide(
         task=task, ctx=ctx, candidate=candidate, decision=decision,
         requirements=requirements, alive=alive, failure=failure,
@@ -654,7 +695,8 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         open_findings=open_findings, on_board=on_board,
         others_hold=others_hold, holder=holder, member=member,
         merged_elsewhere=merged_elsewhere, gated=gated,
-        verdict_now=verdict_now, waiting=stacks.waiting(_stack(task, ctx)))
+        verdict_now=verdict_now, waiting=stacks.waiting(_stack(task, ctx)),
+        fit=fit)
 
     open_failed = (changes.open_failure(filename)
                    if stage == "review" and not task.get("pr")
@@ -692,6 +734,7 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
         "history": history,
         "reviews": _reviews(task, candidate, verdict_now),
         "review": review_status(task, ctx, candidate, verdict_now),
+        "integration": _integration_public(fit),
         "source": {
             "pr": ({"observed": observed, "from": pr.get("from"),
                     "age": round(ctx["now"] - observed, 1)
@@ -751,7 +794,7 @@ def _phase_repair_action(filename: str, has_pr: bool, pr: dict | None) -> dict |
 def _decide(*, task, ctx, candidate, decision, requirements, alive,
             failure, recovery, pr, completion, open_findings, on_board,
             others_hold, holder, member, merged_elsewhere, gated,
-            verdict_now=None, waiting=None):
+            verdict_now=None, waiting=None, fit=None):
     """The precedence (design §3.3), first row that applies wins. Returns
     (word, sentence, primary, others)."""
     stage = task["stage"]
@@ -1061,6 +1104,30 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                     action("open-pr-url", "Open the PR", url=pr_url), rest)
         return ("waiting-for-parent", sentence, None, rest)
 
+    # 22 (read before 18, task 189). Met at a head that does not hold the
+    # target it lands in, where the merge rule requires a check: its checks
+    # are about work not yet combined with the accepted target, so it is
+    # not ready — whatever a provider says about mergeability.
+    if decision and decision.get("decision") in ("allowed", "overridden") \
+            and integration.stale(fit) and not completion["stacked"]:
+        word = ("target-conflicts" if fit["state"] == "conflicts"
+                else "target-changed")
+        if fit["state"] == "unknown":
+            return (word, f"Requirements met for {here}, but "
+                    f"{fit['sentence']}.",
+                    _check_remote_action(ctx, candidate)
+                    or action("gates", "⚖ merge rules"), [])
+        busy = filename in ctx.get("updating", ())
+        update = action("update-target", integration.UPDATE_ACTION,
+                        enabled=not busy and not alive,
+                        why=("an update or a run is already working on it"
+                             if busy or alive else None),
+                        target=fit["target"])
+        lead = ("Conflicts with target" if word == "target-conflicts"
+                else "Target changed")
+        return (word, f"{lead}: requirements are met for {here}, but "
+                f"{fit['sentence']}", update, [])
+
     # 18. met or overridden
     if decision and decision.get("decision") in ("allowed", "overridden"):
         overridden = decision["decision"] == "overridden"
@@ -1204,7 +1271,7 @@ _TTL = 15.0
 _BOARD: tuple | None = None
 
 COMPACT = ("status", "primary", "candidate", "counts", "history", "detail",
-           "reviews", "review")
+           "reviews", "review", "integration")
 
 # What an action keeps in the compact reading: enough for the page to draw
 # it and route it, never anything the page would re-decide from.
@@ -1280,6 +1347,14 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         # why a review card's PR could not be opened (task 166)
         "prOpen": [(t["file"], changes.open_failure(t["file"]))
                    for t in tasks if t["stage"] == "review"],
+        # task 189: the provider's mergeability and this board's update
+        # attempts are read by every review card's integration reading
+        "integration": [(t["file"],
+                         (changes.pr_state(t["file"]) or {}).get("conflicts"),
+                         (changes.pr_state(t["file"]) or {}).get("head"),
+                         _file_stamp(integration.attempts_path(t["file"])))
+                        for t in tasks if t["stage"] == "review"],
+        "updating": sorted(ctx.get("updating") or ()),
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
         if config.WORKTREES.is_dir() else [],

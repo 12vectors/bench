@@ -329,6 +329,66 @@ class TheCopyMatrix(DeliveryCase):
         self.assertIn(head[:12], found["status"]["sentence"])
         self.assertEqual(found["counts"], {"required": 2, "met": 2})
 
+    def accepted_on_main(self, name: str = "accepted.txt",
+                         text: str = "accepted work\n") -> str:
+        """Another card's work, admitted into main after this card's
+        checks and review were recorded (task 189)."""
+        (self.repo / name).write_text(text, encoding="utf-8")
+        git(self.repo, "add", name)
+        git(self.repo, "commit", "-q", "-m", f"accepted: {name}")
+        delivery.forget_cached()
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def test_f16_all_met_but_the_target_moved_reads_target_changed(self):
+        """Task 189: A was admitted after this card's checks and review. The
+        card is not Ready — its checks are about work never combined with
+        the main that holds A — and the one next step updates it."""
+        head = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        tip = self.accepted_on_main()
+        self.place("review", pr=PR_URL)
+        found = self.expect("target-changed", "update-target")
+        self.assertTrue(found["primary"]["enabled"])
+        self.assertEqual(found["primary"]["target"], "main")
+        fit = found["integration"]
+        self.assertEqual(fit["state"], "target-changed")
+        self.assertEqual(fit["targetTip"], tip)
+        self.assertTrue(fit["required"])
+        self.assertFalse(fit["fresh"])
+        self.assertEqual(fit["behind"], 1)
+        self.assertIn(tip[:12], found["status"]["sentence"])
+        # the review and the checks are still the card's own history
+        self.assertEqual(found["counts"], {"required": 2, "met": 2})
+
+    def test_f16_a_conflict_with_the_target_reads_target_conflicts(self):
+        import coordinate
+        head = self.passed_at_head()
+        gates.record_verdict(CARD, verdict="APPROVE", head=head)
+        self.accepted_on_main("code.txt", "main rewrote this line\n")
+        self.place("review", pr=PR_URL)
+        tried = coordinate.update_against_target(CARD, {"head": head},
+                                                 launch_repair=False)
+        self.assertEqual(tried["outcome"], "conflict")
+        self.assertEqual(tried["conflicts"], ["code.txt"])
+        self.assertEqual(git(config.WORKTREES / STEM, "rev-parse",
+                             "HEAD").stdout.strip(), head,
+                         "an aborted update leaves the branch as it was")
+        found = self.expect("target-conflicts", "update-target")
+        self.assertEqual(found["integration"]["state"], "conflicts")
+        self.assertIn("code.txt", found["integration"]["sentence"])
+
+    def test_f16_an_ungated_board_is_not_held_by_a_moved_target(self):
+        """Freshness is required where a merge rule requires a check; a
+        board with none merges as it always did, and still says so."""
+        wt = self.worktree()
+        self.commit_in(wt)
+        self.accepted_on_main()
+        self.place("review", pr=PR_URL)
+        found = self.read()
+        self.assertEqual(found["status"]["word"], "review")
+        self.assertEqual(found["integration"]["state"], "target-changed")
+        self.assertFalse(found["integration"]["required"])
+
     def test_f17_a_new_commit_after_f16(self):
         head = self.passed_at_head()
         gates.record_verdict(CARD, verdict="APPROVE", head=head)

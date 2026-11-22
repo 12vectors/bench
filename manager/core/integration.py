@@ -194,20 +194,33 @@ def applies(decision: dict | None) -> bool:
 _ATTEMPTS = 20
 
 
-def _attempts_path(filename: str) -> Path:
-    return config.STATE / "integration" / f"{filename[:-3]}.json"
+def state_dir() -> Path:
+    """Beside the recorded plans and the completion records: machine-local,
+    for the same reason."""
+    return config.PLANS_DIR.parent / "integration"
+
+
+def attempts_path(filename: str) -> Path:
+    return state_dir() / f"{filename[:-3]}.json"
+
+
+# Cards with an update against their target in flight in this process,
+# so a second request — a double click, the orchestrator beside a person
+# — is refused rather than doubled, and the page can say so.
+UPDATING: set[str] = set()
+UPDATING_LOCK = threading.Lock()
 
 
 def attempts(filename: str) -> list[dict]:
     """This board's update-against-target attempts for the card, oldest
     first. Machine-local, like the completion records."""
-    found = records.read_json(_attempts_path(filename), expect=dict) or {}
+    found = records.read_json(attempts_path(filename), expect=dict) or {}
     return [a for a in found.get("attempts") or [] if isinstance(a, dict)]
 
 
 def record_attempt(filename: str, attempt: dict) -> dict:
     """Append one attempt (bounded) and return it."""
-    path = _attempts_path(filename)
+    path = attempts_path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     kept = attempts(filename)[-(_ATTEMPTS - 1):]
     entry = {"v": V, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -356,7 +369,7 @@ def target_key(target: str) -> str:
 
 
 def _lock_path(key: str) -> Path:
-    return config.STATE / "integration" / "locks" / f"{key}.lock"
+    return state_dir() / "locks" / f"{key}.lock"
 
 
 @contextlib.contextmanager

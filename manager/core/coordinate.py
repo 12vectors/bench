@@ -1396,9 +1396,6 @@ def _reconcile_merge(op: dict, since: float) -> dict:
 # ── update against target, on the card's own branch (task 189) ────────
 
 
-_UPDATING: set[str] = set()
-
-
 class UpdateRefused(ValueError):
     def __init__(self, code: str, sentence: str):
         super().__init__(sentence)
@@ -1406,8 +1403,8 @@ class UpdateRefused(ValueError):
 
 
 def updating(filename: str) -> bool:
-    with state.LOCK:
-        return filename in _UPDATING
+    with integration.UPDATING_LOCK:
+        return filename in integration.UPDATING
 
 
 def _card(filename: str) -> dict:
@@ -1481,18 +1478,18 @@ def update_against_target(filename: str, expected: dict | None = None, *,
     candidate that moved is refused. A second request while one is in
     flight is refused, so concurrent clicks cannot start two updates or
     two repair workers."""
-    with state.LOCK:
-        if filename in _UPDATING:
+    with integration.UPDATING_LOCK:
+        if filename in integration.UPDATING:
             raise UpdateRefused("busy", f"an update of {filename} against its "
                                 f"target is already in progress — nothing "
                                 f"was doubled")
-        _UPDATING.add(filename)
+        integration.UPDATING.add(filename)
     try:
         return _update(filename, expected or {}, actor, operation,
                        launch_repair)
     finally:
-        with state.LOCK:
-            _UPDATING.discard(filename)
+        with integration.UPDATING_LOCK:
+            integration.UPDATING.discard(filename)
 
 
 def _update(filename: str, expected: dict, actor: str, operation: str | None,

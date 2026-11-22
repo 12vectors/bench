@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -319,6 +319,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   recovery record a retry finishes from, the card's cleanup and a
   phase's sweep, and the delivered record (it imports `drive`, to park a
   drive before merging, and `changes`, which is why it sits above both)
+- `integration.py` — a review candidate against the target it lands in
+  (task 189): whether its head holds the target's accepted tip, the
+  integration state a card wears, the update attempts recorded per card,
+  the per-target admission lock and the current-target guard read
+  immediately before a merge. Beside `changes`, below `completion`;
+  reading it fetches nothing (see "Review is not admission: the current
+  target")
 - `stacks.py` — the derived stack reading (task 117): for a card whose
   `**Base branch:**` names another card's work branch, its parent, the
   cards stacked on it, its place on its path (`2/3` along a chain, `step
@@ -3918,6 +3925,8 @@ holds this table to the module's own list.
 | `checks-needed` | Checks needed | neutral | 14 |
 | `review-needed` | Review needed | neutral | 15 |
 | `signoff-needed` | Sign-off needed | neutral | 16 |
+| `target-changed` | Target changed — integration check needed | attention | 22 (read before 18) |
+| `target-conflicts` | Conflicts with target — repair needed | alarm | 22 (read before 18) |
 | `ready-to-merge` | Ready to merge | calm | 18 |
 | `ready-overridden` | Ready — overridden | alarm | 18 |
 | `review` | Review | neutral | 19 |
