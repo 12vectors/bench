@@ -1560,15 +1560,15 @@ closes on Escape, giving focus back. Nothing is dropped: the tools list
 every chip the card has, built and wired by the same code as the face.
 
 Two counts may join the tools, and only where there is something to
-count: `☑ 6/9 accepted` once a card's acceptance is tracked, and
+count: `☑ 6/9 accepted` once a card has acceptance results or ids, and
 `◇ 2 open findings` (or `1 fix to recheck`) while review findings are
-outstanding. Outstanding findings, and criteria a person recorded as
-needing work or a recheck, are current problems and are on the face; an
-acceptance count on its own is not, because confirming criteria is not
-a default ceremony (see "Acceptance and review findings"). Each opens its
-section of the detail view. The word is *accepted*, never *done*: the
-ratio is how many criteria a person has accepted on record, not how
-complete the work is.
+outstanding. Outstanding findings, and criteria that are not met, need a
+recheck or wait on your decision, are current problems and are on the
+face; an acceptance count on its own is not, because confirming criteria
+is not a default ceremony (see "Acceptance and review findings"). Each
+opens its section of the detail view. The word is *accepted*, never
+*done*: the ratio is how many criteria the independent review or a
+person has accepted on record, not how complete the work is.
 
 The card's detail view leads with what the card is and what happens next:
 its number, title and delivery status stay in view while you read (the
@@ -5286,9 +5286,9 @@ included:
 
 | reason | what it means | class |
 | --- | --- | --- |
-| `signoff-untracked` | the criteria (or some added since) have no ids, so no person can have accepted them — **Track acceptance** | needed |
+| `signoff-untracked` | the criteria (or some added since) have no ids, so no person can have decided them — record a decision on each; the first gives them their ids | needed |
 | `signoff-no-criteria` | the brief has no checklist to sign off | needed |
-| `signoff-pending` | not every tracked criterion is accepted; an agent's `reported` claim counts as nothing | needed |
+| `signoff-pending` | not every criterion is accepted by a person; an implementer's *Met — awaiting review*, *Not verified*, *Needs your decision* and the independent review's own **Accepted** count as nothing here — a review's acceptance is not a person's sign-off | needed |
 | `signoff-recheck` | an acceptance no longer stands: reworded, marked for recheck, or its evidence stopped reading passed | needed |
 | `signoff-other-head` | accepted against an earlier commit (or before there was one); a sign-off is about the commit that would merge | needed |
 | `signoff-needs-work` | a person recorded a criterion as not met | problem |
@@ -5301,8 +5301,8 @@ reads, and the one a person's decision records its commit by. A card
 holding both branches is therefore confirmed against the phase tip, and
 an acceptance recorded against the task tip does not travel to it.
 
-The card reads `signoff-needed` with **Track acceptance** or **Confirm
-criteria**, which opens its Acceptance section and changes nothing; every
+The card reads `signoff-needed` with **Confirm criteria**, which opens
+its Acceptance section and changes nothing; every
 decision there is the existing armed write. Turning sign-off on rewrites
 nothing — existing acceptance records and decisions are read as they
 are, no criterion is accepted by the setting, and nothing in bench writes
@@ -5432,8 +5432,8 @@ nobody into a merge.
   action in `others`, never hidden. An action whose handler belongs to a
   later card is always `enabled: false` with that reason — never a
   button that does nothing. `signoff-needed` exists only where a merge
-  rule asks for sign-off; its action, **Track acceptance** or **Confirm
-  criteria**, opens the card's Acceptance section and changes nothing
+  rule asks for sign-off; its action, **Confirm criteria**, opens the
+  card's Acceptance section and changes nothing
   itself (see "Sign-off: a person's decision, only where a rule asks for
   one"). **Run required checks** is the
   primary action of `checks-needed`; where every needed check is one a
@@ -8511,9 +8511,11 @@ Review-stage cards with a PR carry two actions:
   head, from the diff, the code and substantive evidence together (a
   file and line, a test it read, a result bench recorded at the head —
   never a report's "tests pass"), and to list what it could not judge
-  and why, in an *Acceptance assessment* section of its report. That is
-  a reviewer's assessment, not a person's acceptance: the run is told to
-  record none, it gains no grant for it, and a sign-off where one is
+  and why, in an *Acceptance assessment* section of its report, ending
+  with an `ACCEPTANCE RESULTS` block bench records per criterion (see
+  "Acceptance and review findings", task 190). Its **Accepted** is the
+  independent review's, bound to the pinned head — not a person's
+  acceptance: it gains no grant for it, and a sign-off where one is
   required is still a person's (see "Sign-off: a person's decision, only
   where a rule asks for one").
 - **⚑ copilot** — requests a GitHub Copilot review via the API. Works iff
@@ -9285,17 +9287,20 @@ per criterion, attributed, bound to the requirement's wording and the
 code it was judged against — and review findings are the same idea for
 what a review turned up.
 
-**It is a record, not a default ceremony.** The PR review already judges
-the work against the card's acceptance criteria, and no merge rule on a
-board requires per-criterion sign-off unless the operator configures
-one. So nothing on the board asks a person to confirm criteria as a
-matter of course: the Overview never says "confirm acceptance", the
-accepted count is one of the card's tools rather than a face chip, and
-on a delivered card the fact that some criteria were never accepted on
-record is stated in the Acceptance section, as a fact, rather than as a
-next step. Every control and every record below is still there and
-works exactly as described; a criterion a person recorded as needing
-work, and an open finding, are current problems and are on the face.
+**The runs maintain it; you read the outcome** (task 190). The
+implementation run reports a result for every criterion in its closing
+report, and the independent PR review confirms each one against the
+exact commit it reviewed. Bench reads both when the report is filed, so
+there is nothing to set up and nothing to copy: a person reads the
+outcome and steps in only for a real decision or a correction. No merge
+rule on a board requires per-criterion sign-off unless the operator
+configures one, so nothing asks a person to confirm criteria as a matter
+of course: the accepted count is one of the card's tools rather than a
+face chip, and on a delivered card the fact that some criteria were
+never accepted on record is stated in the Acceptance section, as a fact,
+rather than as a next step. A criterion not met, one needing a recheck,
+one waiting on your decision, and an open finding are current problems
+and are on the face.
 
 Where a merge rule *does* configure one (`"signoff": "criteria"`, see
 "Sign-off: a person's decision, only where a rule asks for one"), the
@@ -9307,42 +9312,100 @@ report can never add one: a report line shaped like a board record
 (`<!-- bench:…`) is quoted before the report reaches the card, so it is
 still there to read and is never parsed as a decision.
 
-### Tracking is explicit, and viewing changes nothing
+### Identities are automatic, and viewing changes nothing
 
-A card nobody has tracked reads **Acceptance results not recorded**, in
-those words, whatever lane it is in. Its criteria are listed, and a
-hand-written `[x]` is shown as what it is: a legacy claim, not an
-acceptance. Opening the card writes nothing.
+There is no Track acceptance step. A criterion gets its identity —
+`<!-- ac:<id> -->` at the end of its line, a fresh id never one a
+removed criterion held, with a record of it — on the first *authorized
+write* that concerns it: a run's report being filed on the card, an
+applied refinement of the brief (in that same write and commit), or a
+person's decision about it. The tick and the wording stay exactly as they
+were; a hand-written `[x]` is recorded as the unverified claim it is.
+Adoption is idempotent: a card whose criteria all have ids is not
+written at all. Opening the card, its Overview, a reload or a sync read
+writes nothing, assigns nothing and launches nothing. Before a criterion
+has an id it is still listed, with its state, and a result reported
+against its revision still finds it.
 
-**Track acceptance** (armed: it edits the brief) is the one operation that
-gives criteria identities. Each `- [ ]` line without one gains
-`<!-- ac:<id> -->` at its end — a fresh id, never one a removed criterion
-held — and an acceptance record: `pending`, or `reported` with source
-`legacy-tick` where the line was ticked by hand. The tick and the wording
-stay exactly as they were. It is bound to the brief you were shown, so a
-brief that changed meanwhile is refused with nothing written, and because
-it edits the brief, a refinement proposal made before it reads stale.
-Criteria added later begin pending and are tracked the same way.
+### How a run reports, and what bench keeps
+
+The work, repair (**↻ act on PR**) and PR-review prompts carry an
+**Acceptance results** block (the `{acceptance}` placeholder, offered to
+those three templates and required by none, so an older local override
+keeps launching and its runs simply report nothing): every criterion
+with its **revision** — a hash of its wording — and the exact lines to
+end the reply with:
+
+```text
+ACCEPTANCE RESULTS
+- <revision>: <result> — <one-sentence reason> [evidence: <evidence id>, …]
+```
+
+An implementer's result is `met`, `not met`, `not verified` or `needs
+decision`; the reviewer's is `accepted`, `not met`, `not verified` or
+`needs decision`. When the report is filed bench reads the **last** such
+block from the run's whole output (never the clipped report), and keeps
+only what binds: a revision of a criterion on the card now, a word that
+role may say, a reason, a `needs decision` that names its question, and
+evidence ids bench recorded *for this card*. It keeps them in the
+board-written provenance line under the report (`<!-- bench:review {…}
+-->`, field `acceptance`: role, the commit, the results, what was not
+understood, how many criteria were left without one). A run cannot write
+that line — its own line shaped like it is quoted on the way in — so a
+report cannot forge a result.
+
+Results are read off the card on every reading, so they travel with
+sync and survive a restart. Durability is the report's: the filing is
+the durable operation of "Filing a report, and recovering one that was
+not filed", so a report that could not be filed keeps its results with
+it and **Retry filing** files both. A duplicate filing is one report and
+one set of results. A block missing, a line not understood, a word the
+role may not use, a revision no criterion has, or a criterion left out is
+listed under **The latest report recorded…** in the Acceptance section,
+and nothing about it is recorded as a result.
 
 ### What a criterion's state means
 
-| state | what it licenses you to believe |
-| --- | --- |
-| `pending` | nothing is on record about it |
-| `reported — awaiting confirmation` | a run said it implemented it, or it was ticked by hand before tracking. A claim |
-| `accepted` | a named person confirmed it with a note, or mapped one of bench's own records that reads `passed` *now* to it |
-| `needs work` | a person recorded that it is not met, and why |
-| `needs recheck` | it was accepted, and what that rested on has moved: the wording changed, an applied refinement marked it, or the evidence no longer reads `passed` |
+| state | stored as | what it licenses you to believe |
+| --- | --- | --- |
+| **No result yet** | `pending` | nothing is on record about it |
+| **Met — awaiting review** | `reported` | the implementer said it met it (in its report, or live via `bench-progress --criterion`). A claim |
+| **Accepted** | `accepted` | the independent review accepted it at the current commit, or a named person confirmed it with a note or mapped one of bench's own records that reads `passed` *now* to it. Which of the two is said beside it |
+| **Not met** | `needs-work` | the reviewer, the implementer or a person recorded that it is not met — a demonstrated failure, with where |
+| **Not verified** | `not-verified` | someone tried and could not establish it either way, or it was ticked by hand — insufficient evidence, not a failure |
+| **Needs your decision** | `decision` | only a person can settle it (a product judgment or a permission); the reason is the exact question |
+| **Needs recheck** | `recheck` | an earlier result no longer stands: the wording changed, the code moved past the commit it was about, an applied refinement marked it, or the evidence no longer reads `passed` |
 
-Only `accepted` wears the tick and only `accepted` is counted. An agent's
-report, a clean exit, an unrelated passing suite, a merge and a move to
-`done/` change none of them. A recheck keeps the earlier decision in view
-and says why it no longer stands; reordering criteria changes nothing,
-and a removed criterion leaves the count and stays in history.
+The newest result stands, with two rules that keep a report from
+overwriting a judgment silently: a run's result never supersedes a
+person's decision about the same commit, and an implementer's `met`
+never supersedes the reviewer's result about the same commit (each set
+aside result is kept in the history and said to be). A run's result is
+bound to the commit it assessed: once the card's branch moves past it,
+it reads **Needs recheck**. A stage, an agent's clean exit, a bare
+checkbox and a generic passing suite change none of this. A recheck
+keeps the earlier result in view and says why it no longer stands;
+reordering criteria changes nothing, a reworded criterion inherits no
+acceptance, and a removed criterion leaves the count and stays in
+history, with any results reported against it.
+
+**The outcome first.** The Acceptance section opens with one headline —
+*Acceptance: changes needed*, *needs your decision*, *needs recheck*,
+*awaiting review*, *incomplete*, *no results yet*, *all criteria
+accepted* or *no criteria* — the counts of the criteria listed below it,
+and who acts next: you, the implementation agent or the independent
+review. Each criterion follows with its state in words, its whole
+wording and the reason, with who said so, its evidence, its history and
+**Record your decision** one click away. The Overview's **Where it
+stands** carries the same headline, counts and next step, from the same
+reading (`acceptance.outcome`). An all-accepted checklist is a
+conclusion about the criteria, not a merge approval: the merge
+requirements still decide what happens next.
 
 ### Recording a decision
 
-Each criterion expands to its full wording, its id and revision, what
+A person's decision is a correction or a judgment that is theirs, never
+a routine step. Each criterion expands to its id and revision, what
 supports it, and its whole record. A decision names its actor — this
 board's git identity in the work state, else the operating-system user,
 said which — and is refused rather than written when the page is stale:
@@ -9355,11 +9418,13 @@ newer decision, and a request key makes a double click one record.
   one of bench's evidence records for this card that reads `passed` now.
   Mapping evidence is the person's act; nothing maps a check to a
   criterion by its name or a test count.
-- **Needs work**, **Needs recheck** and **Back to pending** need a note.
+- **Not met**, **Needs recheck** and **Clear to no result** need a note.
+- A criterion with no id yet is decided by its revision (`@<revision>`):
+  that decision is the write that gives the card's criteria their ids.
 
-A run reports a criterion through its progress channel —
-`bench-progress --criterion <id>` — and that is all it can do: the card
-shows *reported* beside the run that said so, and a person decides.
+While it works, a run may also say it implemented a criterion through
+its progress channel — `bench-progress --criterion <id>` — which reads
+*Met — awaiting review* until its filed report says more.
 
 ### Review findings, their fixes and their rechecks
 
