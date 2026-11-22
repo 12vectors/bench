@@ -52,6 +52,7 @@ import integration  # noqa: E402
 import movements  # noqa: E402
 import operations  # noqa: E402
 import orchestrator  # noqa: E402
+import phasescope  # noqa: E402
 import plans  # noqa: E402
 import profiles  # noqa: E402
 import required  # noqa: E402
@@ -664,6 +665,257 @@ class MergesReconcile(Sandbox):
 
 
 # ── completion: the exact head, and the move's actor ──────────────────
+
+# ── 6. the current target, under orchestration (task 189) ─────────────
+
+TWO = "8-other.md"
+
+
+class AgainstTheCurrentTarget(Sandbox):
+    """Step 3a of `coordinate.assess` and the steps it takes — the refresh,
+    the integration repair, the admission lock and the target guard —
+    run through the scheduler's own pass. The integration reading is the
+    test's (`self.fit`); `tests/test_admission.py` reads it from real git."""
+
+    def setUp(self):
+        super().setUp()
+        self.fit = {"state": "up-to-date", "target": "trunk", "fresh": True,
+                    "required": True, "targetTip": "c" * 40}
+        reading = mock.patch.object(
+            integration, "reading",
+            lambda task, **kw: {**self.fit, "head": kw.get("head")})
+        reading.start()
+        self.addCleanup(reading.stop)
+        self.updates: list[dict] = []
+        self.update_result = {"ok": True, "outcome": "merged", "head": B,
+                              "sentence": "merged trunk into the branch"}
+        self.update_raises: BaseException | None = None
+        update = mock.patch.object(coordinate, "update_against_target",
+                                   self._update)
+        update.start()
+        self.addCleanup(update.stop)
+        self.repairs: list[dict | None] = []
+        fetches = mock.patch.object(coordinate, "_fetch_target",
+                                    lambda target: self.fetched.append(target))
+        self.fetched: list = []
+        fetches.start()
+        self.addCleanup(fetches.stop)
+        self.gate = gate("allowed", checks=[("unit", "met", "passed", "ev-1")])
+        self.approve()
+
+    def _update(self, filename, expected=None, *, actor="person",
+                operation=None, launch_repair=True):
+        self.updates.append({"file": filename, "head": (expected or {}).get(
+            "head"), "actor": actor, "operation": operation,
+            "launch_repair": launch_repair})
+        if self.update_raises is not None:
+            raise self.update_raises
+        return dict(self.update_result)
+
+    def _repair(self, filename, stage, *, operation=None, integration=None):
+        self.repairs.append(integration)
+        return super()._repair(filename, stage, operation=operation,
+                               integration=integration)
+
+    def stale(self, state="target-changed", **extra):
+        self.fit = {"state": state, "target": "trunk", "fresh": False,
+                    "required": True, "targetTip": "c" * 40,
+                    "sentence": f"trunk moved ({state})", **extra}
+
+    def test_a_moved_target_is_refreshed_once_without_an_agent(self):
+        self.enable()
+        self.stale()
+        found = self.item()
+        self.assertEqual("refresh", found["code"])
+        self.tick()
+        self.assertEqual(1, len(self.updates))
+        self.assertEqual({"file": CARD, "head": A, "actor": "orchestrator",
+                          "launch_repair": False},
+                         {k: v for k, v in self.updates[0].items()
+                          if k != "operation"})
+        self.assertEqual([], self.calls["repair"], "a clean update runs no agent")
+        self.assertEqual([], self.calls["merge"], "the stale head is not merged")
+        op = self.ops("refresh")[0]
+        self.assertEqual(("ended", "merged"), (op["status"], op["outcome"]))
+        self.assertEqual(op["key"], self.updates[0]["operation"])
+        used = orchestrator.usage(agreements.effective(),
+                                  [dict(self.board.cards[CARD])])
+        self.assertEqual(0, used["startsTodayTotal"], "a refresh spends no start")
+        # the update's new head holds the target: its own checks and review
+        # first, and only then the merge of that combined head
+        self.heads[CARD] = B
+        self.fit = {"state": "up-to-date", "target": "trunk", "fresh": True,
+                    "required": True}
+        self.assertEqual("review", self.item()["code"],
+                         "the old head's approval is not this head's")
+        self.approve(head=B)
+        self.assertEqual("merge", self.item()["code"])
+        self.tick()
+        self.assertEqual([(CARD, "review", B, "orchestrator")],
+                         self.calls["merge"])
+
+    def test_refreshing_is_the_users_without_the_repair_word(self):
+        self.enable(authority=("review", "merge"))
+        self.stale()
+        self.assertEqual("refresh-not-delegated", self.item()["code"])
+        self.tick()
+        self.assertEqual([], self.updates)
+        self.assertEqual([], self.calls["merge"])
+
+    def test_a_conflict_is_repaired_and_the_run_is_told_what_conflicted(self):
+        self.enable()
+        self.stale("conflicts", attempt={"outcome": "conflict",
+                                         "conflicts": ["shared.txt"]})
+        found = self.item()
+        self.assertEqual("repair", found["action"])
+        self.assertTrue(found["repairIntegration"])
+        self.tick()
+        self.assertEqual(1, len(self.calls["repair"]))
+        brief = self.repairs[0]
+        self.assertEqual("trunk", brief["target"])
+        self.assertEqual(["shared.txt"], brief["conflicts"])
+        self.assertEqual(A, brief["head"])
+        self.assertEqual([], self.updates, "the conflict is not updated blind")
+
+    def test_a_lost_admission_lock_is_asked_again_not_held(self):
+        self.enable()
+        self.merge_raises = integration.Busy("another admission into trunk is "
+                                             "in progress — nothing was merged")
+        self.tick()
+        op = self.ops("merge")[0]
+        self.assertEqual(("refused", "admission-busy"),
+                         (op["status"], op["code"]))
+        self.merge_raises = None
+        self.assertEqual("merge", self.item()["code"],
+                         "a transient wait does not hold the card for a person")
+        self.tick()
+        self.assertEqual(2, len(self.calls["merge"]))
+
+    def test_a_target_that_moved_on_the_remote_is_fetched_then_updated(self):
+        self.enable()
+        self.merge_raises = integration.Stale(
+            "target-moved", "origin/trunk is at cccc, which this checkout has "
+            "not fetched — nothing was merged", target="trunk",
+            targetTip="d" * 40)
+        self.tick()
+        self.assertEqual(["trunk"], self.fetched)
+        self.assertEqual("target-moved", self.ops("merge")[0]["code"])
+        self.merge_raises = None
+        self.stale()                     # what the fetch makes the next read say
+        found = self.item()
+        self.assertEqual("refresh", found["code"],
+                         "not merge-refused, not step-refused")
+
+    def test_a_guard_refused_integration_or_refresh_does_not_hold(self):
+        self.enable()
+        self.stale()
+        self.update_raises = coordinate.UpdateRefused("busy", "an update is "
+                                                      "already in progress")
+        self.tick()
+        self.assertEqual("busy", self.ops("refresh")[0]["code"])
+        self.update_raises = None
+        self.assertEqual("refresh", self.item()["code"])
+        # and a target-changed refusal of any final step is answered afresh
+        for code in ("admission-busy", "target-changed", "target-moved"):
+            self.assertIn(code, coordinate.ANSWERED_AFRESH)
+
+    def test_a_refused_push_is_pushed_once_then_held_for_a_person(self):
+        self.enable()
+        self.fit["unpushed"] = True
+        self.assertEqual("refresh", self.item()["code"])
+        self.update_result = {"ok": False, "outcome": "push-refused",
+                              "head": A, "sentence": "origin refused it"}
+        self.tick()
+        self.tick()
+        self.assertEqual(1, len(self.updates))
+        found = self.item()
+        self.assertEqual("update-not-pushed", found["code"])
+        self.assertEqual("blocked", found["state"])
+        self.assertEqual([], self.calls["merge"])
+
+    def test_one_card_holds_a_targets_final_sequence(self):
+        self.enable()
+        self.board.add(TWO)
+        self.heads[TWO] = B
+        self.verdicts[(TWO, B)] = dict(self.verdicts[(CARD, A)], head=B)
+        self.stale()
+        found = {i["card"]: i for i in
+                 coordinate.plan(self.board.collect())["items"]}
+        self.assertEqual("refresh", found[CARD]["code"])
+        self.assertEqual("admission-queued", found[TWO]["code"])
+        self.assertEqual(CARD, found[TWO]["waitingFor"])
+        self.tick()
+        self.assertEqual([CARD], [u["file"] for u in self.updates])
+
+    def test_an_update_left_without_a_receipt_is_settled_not_repeated(self):
+        self.enable()
+        self.stale()
+        op = operations.begin(operations.key_for("refresh", CARD, A, 1),
+                              action="refresh", card=CARD, number="7",
+                              scope="bench", pool="none", basis=A, attempt=1)
+        with mock.patch.object(gates, "branch_tips",
+                               lambda: {changes.branch_of(CARD): "9" * 40}):
+            self.tick()                  # the restart: the branch moved
+        self.assertEqual("unknown", operations.read(op["key"])["status"])
+        self.assertEqual([], self.updates, "never updated again blind")
+        self.assertEqual("outcome-unknown", self.item()["code"])
+
+
+class PhaseTargets(unittest.TestCase):
+    """A phase member lands in its phase branch and a phase card in the
+    application base; a member's integration passes the same admission
+    lock and guard a merge does (`coordinate._integrate`)."""
+
+    MEMBER = {"file": "81-member.md", "isPhase": False,
+              "phase": {"file": "80-ship.md", "number": "80"}}
+    PHASE = {"file": "80-ship.md", "isPhase": True, "phase": None,
+             "baseBranch": None, "prBase": None, "body": "# 80 — ship\n"}
+
+    def setUp(self):
+        for patch in (mock.patch.object(plans, "recorded", lambda f: None),
+                      mock.patch.object(gates, "evaluate", lambda *a, **k: gate(
+                          "allowed", checks=[("unit", "met", "passed", "e")])),
+                      mock.patch.object(coordinate, "_merged",
+                                        lambda op, result, outcome, words, **x:
+                                        {"outcome": outcome})):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_where_each_kind_lands(self):
+        self.assertEqual("phase/80-ship", integration.target_for(self.MEMBER))
+        self.assertEqual(config.APP_BASE, integration.target_for(self.PHASE))
+
+    def test_a_member_that_does_not_hold_its_phase_branch_is_not_integrated(self):
+        def stale(*a, **k):
+            raise integration.Stale("target-changed", "phase/80-ship moved — "
+                                    "nothing was merged", target="phase/80-ship")
+
+        with mock.patch.object(integration, "require_current", stale), \
+                mock.patch.object(phasescope, "integrate") as merged:
+            with self.assertRaises(integration.Stale):
+                coordinate._integrate({"key": "op-x", "file": "81-member.md"},
+                                      self.MEMBER, A, {})
+        merged.assert_not_called()
+
+    def test_a_second_integration_into_the_phase_branch_waits(self):
+        with mock.patch.object(integration, "require_current",
+                               lambda *a, **k: {"applies": True}), \
+                mock.patch.object(phasescope, "integrate") as merged:
+            with integration.admission("phase/80-ship", "82-other.md"):
+                with self.assertRaises(integration.Busy) as said:
+                    coordinate._integrate({"key": "op-x",
+                                           "file": "81-member.md"},
+                                          self.MEMBER, A, {})
+            self.assertEqual("admission-busy", said.exception.code)
+            merged.assert_not_called()
+            merged.return_value = {"whole": True, "integrated": A,
+                                   "branch": "phase/80-ship"}
+            done = coordinate._integrate({"key": "op-x",
+                                          "file": "81-member.md"},
+                                         self.MEMBER, A, {})
+        self.assertEqual("integrated", done["outcome"])
+        merged.assert_called_once()
+
 
 class CompletionTakesTheExactHead(unittest.TestCase):
     def run_complete(self, tip: str, expect: str):

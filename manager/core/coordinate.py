@@ -625,12 +625,12 @@ def assess(task: dict, reading: dict, ops: list[dict],
         # before anything is admitted — once; a second refusal is a person's
         if any(o.get("outcome") == "push-refused"
                for o in _same(mine, "refresh", head)):
-            return _set(item, "update-not-pushed", f"{fit['sentence']} — the "
+            return _set(item, "update-not-pushed", f"{fit.get('sentence')} — the "
                         f"remote refused the push again; settle what it said, "
                         f"then {integration.UPDATE_ACTION}")
         if not here["authority"]["repair"]["allowed"]:
-            return _set(item, "refresh-not-delegated", f"{fit['sentence']} — "
-                        f"the agreement does not delegate repair, so "
+            return _set(item, "refresh-not-delegated", f"{fit.get('sentence')}"
+                        f" — the agreement does not delegate repair, so "
                         f"{integration.UPDATE_ACTION} is yours")
         return _set(item, "refresh", f"push {head[:12]}, this card's update "
                     f"against {fit['target']}, so its pull request shows it")
