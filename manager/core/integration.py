@@ -425,7 +425,7 @@ def _ls_remote(remote: str, target: str) -> tuple[str | None, str]:
 
 
 def require_current(filename: str, decision: dict | None, head: str,
-                    target: str) -> dict:
+                    target: str, *, ask_remote: bool = True) -> dict:
     """Immediately before an admission: the candidate must contain the
     target it lands in — this checkout's copy and the remote's own, read
     now. Raises `Stale` with the reason and the supported way on; returns
@@ -434,7 +434,7 @@ def require_current(filename: str, decision: dict | None, head: str,
     if not applies(decision):
         return {"applies": False, "head": head, "target": target}
     local = _rev(f"refs/heads/{target}")
-    remote = config.app_remote()
+    remote = config.app_remote() if ask_remote else None
     remote_tip = ""
     if remote:
         remote_tip, why = _ls_remote(remote, target)

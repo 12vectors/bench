@@ -36,6 +36,7 @@ from pathlib import Path
 import config
 import drive as drive_mod
 import gates
+import integration
 import changes
 import githost
 import plans
@@ -137,7 +138,7 @@ def _operation(source: str, verified_actor: str | None) -> dict:
 
 
 _OPERATION_KEYS = ("id", "source", "actor", "actorSource", "head", "target",
-                   "mode", "at")
+                   "targetTip", "mode", "at")
 
 
 def _operation_public(operation: dict | None) -> dict | None:
@@ -198,8 +199,15 @@ def complete_task(filename: str, stage: str, *, expect_head: str | None = None,
         raise ValueError(f"{filename} is already being completed — the card "
                          f"is showing each step; nothing was started twice")
     try:
-        result = _complete(filename, stage, expect_head, actor,
-                           _operation(source, verified_actor))
+        # One admission into a target at a time (task 189): the person's
+        # click and the orchestrator's delegated merge take the same lock,
+        # keyed by this repository and the card's target branch, and a
+        # second one into the same target is refused rather than queued.
+        # Different targets never wait for each other.
+        target = plans.pr_base(filename, changes.woven(filename, stage))
+        with integration.admission(target, filename):
+            result = _complete(filename, stage, expect_head, actor,
+                               _operation(source, verified_actor))
         return result
     finally:
         # every exit: merged, conflicted, on the wrong branch, or crashed
@@ -274,8 +282,17 @@ def _complete(filename: str, stage: str, expect_head: str | None = None,
     # the commit it read, and the merge cannot be taken back.
     scope = gates.scope_for(task)
     if not resuming:
-        gates.require(gates.evaluate(filename, scope, task=task),
-                      "merge & clean up")
+        first = gates.evaluate(filename, scope, task=task)
+        gates.require(first, "merge & clean up")
+        # Target freshness (task 189), read locally here — cheap, and before
+        # anything is touched: where the merge rule requires a check, the
+        # candidate must hold the target it lands in, or its checks are not
+        # about the combination. The remote is asked once, at the merge.
+        head_now = expect_head or _tip(branch)
+        if head_now and _branch_exists(branch):
+            integration.require_current(filename, first, head_now,
+                                        plans.pr_base(filename, task),
+                                        ask_remote=False)
     # Read before anything is destroyed and acted on only after the merge
     # lands: the phase branch is deleted in the middle of this, and it is
     # the only thing that can say which members it carried.
@@ -342,6 +359,14 @@ def _complete(filename: str, stage: str, expect_head: str | None = None,
                 pinned = expect_head
             on_origin = config.app_merge_on_origin()
             merged_tip = pinned or _tip(branch)
+            # And the target itself, read now from this checkout and the
+            # remote (task 189): a target that moved since the card was
+            # read — another admission, a replica, a merge made outside
+            # this board — refuses with nothing merged.
+            combined = integration.require_current(filename, decision,
+                                                   merged_tip, target)
+            if combined.get("applies"):
+                operation.update(targetTip=combined.get("targetTip"))
             # (an ungated board pins nothing, and calls them exactly as before)
             pin = (pinned,) if pinned else ()
             if on_origin:
