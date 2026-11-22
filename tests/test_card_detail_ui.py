@@ -67,7 +67,13 @@ HARNESS = "\n".join([
         "relevanceLine", "reviewRefineWhy", "reviewThreadHtml", "relevanceHtml",
         "jobsByComment", "reviewRef", "commentRowHtml", "diffHtml", "jobHtml",
         # task 152: the Reviews section leads with the server's review status
-        "reviewNowHtml")),
+        "reviewNowHtml",
+        # task 168: each review links to its page in the Brain
+        "brainLink")),
+    # a card's address, as lib/route.js names it on a board with no shared
+    # number: its number, else its file's stem
+    "const stemOf = (file) => String(file || '').replace(/\\.md$/, '');",
+    "const cardId = (t) => t.number ? String(parseInt(t.number, 10)) : null;",
     "const deliveryOf = (t) => ((S.state || {}).delivery || {})[t.file] || null;",
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
     "const S = { state: { acceptance: { [input.file]: input.summary } },",
