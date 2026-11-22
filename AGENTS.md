@@ -3990,7 +3990,7 @@ holds this table to the module's own list.
 | `waiting-for-phase` | Waiting for phase | neutral | 9 |
 | `waiting-for-parent` | Waiting for parent | neutral | 21 (read before 18–19) |
 | `merged-elsewhere` | Merged on GitHub | neutral | 17 (read before 10–16) |
-| `cannot-assess` | Can't assess | alarm | 6, 10 |
+| `cannot-assess` | Can't assess | alarm | 6, 10, 22 |
 | `rules-invalid` | Merge rules invalid | alarm | 11 |
 | `check-failed` | Check failed | alarm | 7, 12 |
 | `cannot-run-check` | Check could not run | alarm | 7, 12 |
@@ -8017,7 +8017,7 @@ board:
 | Target changed — integration check needed | the target moved past the head | **Update against target and verify** |
 | Conflicts with target — repair needed | updating conflicts (recorded), or the provider reports a conflict for this head | **Update against target and verify** (a repair run) |
 | Integration check running / failed / needed | the head holds the target; its required check is running, did not pass, or has not run on it | wait; ↻ act on PR; Run required checks |
-| Integration unknown | the target cannot be read here, or this checkout's copy and the remote's have diverged | Check the remote; settle the divergence by hand |
+| Integration unknown | the target cannot be read here, or this checkout's copy and the remote's have diverged; the card's pill reads *Can't assess*, never *Target changed* | Check the remote; settle the divergence by hand |
 
 A card whose head does not hold the target reads **`target-changed`** or
 **`target-conflicts`** instead of *Ready to merge* (delivery row 22, read

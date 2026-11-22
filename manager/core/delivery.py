@@ -148,7 +148,7 @@ ROWS = (
     # target it lands in, where the merge rule requires a check — checks or
     # a review still to come would be about work not yet combined with it
     (22, "review, a head that does not hold the current target",
-     ("target-changed", "target-conflicts")),
+     ("target-changed", "target-conflicts", "cannot-assess")),
     (14, "review, a required check is needed", ("checks-needed",)),
     (15, "review, the required review is not met", ("review-needed",)),
     (16, "review, sign-off pending", ("signoff-needed",)),
@@ -240,6 +240,9 @@ def _integration_public(fit: dict | None) -> dict | None:
             "targetTip", "targetRef", "authority", "required", "fresh",
             "behind", "incoming", "provider", "guarantees", "unpushed")
     out = {k: fit.get(k) for k in keys if k in fit}
+    held = fit.get("admission")
+    out["admission"] = ({"card": held.get("card"), "step": held.get("step")}
+                        if held else None)
     attempt = fit.get("attempt")
     if attempt:
         out["attempt"] = {k: attempt.get(k) for k in (
@@ -1224,7 +1227,9 @@ def _stale_target(task: dict, ctx: dict, fit: dict | None, here: str,
     word = ("target-conflicts" if fit["state"] == "conflicts"
             else "target-changed")
     if fit["state"] == "unknown":
-        return (word, f"{said[0].upper()}{said[1:]} for {here}, but "
+        # the target cannot be read here, or its two copies diverged: that
+        # it changed is not known, so the pill does not say it did
+        return ("cannot-assess", f"{said[0].upper()}{said[1:]} for {here}, but "
                 f"{fit['sentence']}.",
                 _check_remote_action(ctx, {})
                 or action("gates", "⚖ merge rules"), list(rest or []))
@@ -1417,6 +1422,10 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
                          _file_stamp(integration.attempts_path(t["file"])))
                         for t in tasks if t["stage"] == "review"],
         "updating": sorted(ctx.get("updating") or ()),
+        # who holds each target's admission now (a merge in flight)
+        "admissions": sorted((str(h.get("target")), str(h.get("card")),
+                              str(h.get("step")))
+                             for h in list(integration.HOLDERS.values())),
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
         if config.WORKTREES.is_dir() else [],

@@ -925,6 +925,19 @@ function runOf(file) {
   return (rec.runs || []).find(r => r.card === file) || null;
 }
 
+/* Who holds a target's admission (task 189): the final update → check →
+   admission sequence is serialized per target, and the plan names the one
+   card holding each target and the cards waiting for it. Draws only. */
+function admissionHtml(del) {
+  const a = del && del.admission;
+  if (!a || !a.target) return '';
+  const owner = taskByFile(a.owner);
+  const who = owner ? `${num(owner) || a.owner} ${title(owner)}` : a.owner;
+  return a.owner === del.card
+    ? `<span data-admission="holds">${badge(`holds ${a.target}`, 'working')} this card holds the admission into ${esc(a.target)}; other cards landing there wait for it</span>`
+    : `<span data-admission="waits">${badge(`waits for ${a.target}`, 'idle')} queued behind ${esc(who)}, which holds the admission into ${esc(a.target)}</span>`;
+}
+
 function workRowHtml(c, manual) {
   const t = taskByFile(c.card);
   const el = c.eligibility || {};
@@ -940,6 +953,7 @@ function workRowHtml(c, manual) {
     `<span class="o-dim">${esc(c.stage)} · ${esc(scopeName(c.scope))}${manual ? ' · ' + esc(manual === 'handback' ? 'handed back' : 'excluded') : ''}</span>` +
     `<span>${el.eligible ? badge('eligible', 'calm') : badge('not eligible', 'idle')} ${esc(el.reason || c.why || '')}</span>` +
     (step ? `<span>${badge(step.split(' — ')[0] || 'step', 'neutral')} ${esc((item && item.reason) || (del && del.reason) || '')}</span>` : '') +
+    admissionHtml(del) +
     (agent ? `<span>${badge('run working', 'working')} ${esc(agent.name || agent.id)}${agent.mode ? ' · ' + esc(agent.mode) : ''}</span>` : '') +
     `</li>`;
 }

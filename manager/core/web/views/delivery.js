@@ -390,15 +390,27 @@ const INTEGRATION_GLYPH = {
   'no-candidate': '·',
 };
 
+// Where the target's tip was read from, in words (integration.target_tip).
+const TARGET_AUTHORITY = {
+  local: ' (this checkout — no remote copy)',
+  'local-ahead': ' (this checkout, ahead of the remote\'s copy — a merge not yet published)',
+  diverged: ' (this checkout\'s copy and the remote\'s have diverged — neither is read as the target)',
+  unknown: ' (cannot be read here)',
+};
+
 function integrationHtml(task, d, where) {
   const g = d && d.integration;
   if (!g || !g.state) return '';
   const c = toneColours(g.tone);
   const id = `dint-${where}`;
+  const held = g.admission;
   const facts = [
     ['Target', `${g.target}${g.targetTip ? ` at ${shortSha(g.targetTip)}` : ''}` +
       (g.authority === 'remote-tracking' ? ` (${g.targetRef}, as last fetched)`
-        : g.authority === 'local' ? ' (this checkout)' : '')],
+        : TARGET_AUTHORITY[g.authority] || '')],
+    ['Admission into the target', !held ? 'free — no merge into it is in flight on this board'
+      : held.card === task.file ? `held by this card (${held.step || 'merge'} in flight)`
+        : `held by ${held.card} (${held.step || 'merge'} in flight) — this card's admission waits for it to end`],
     ['Candidate', g.head ? shortSha(g.head) : 'none'],
     ['Holds the target', g.fresh === true ? 'yes' : g.fresh === false
       ? `no${g.behind != null ? ` — ${g.behind} commit${g.behind === 1 ? '' : 's'} behind` : ''}` : 'not known'],

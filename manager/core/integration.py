@@ -319,7 +319,10 @@ def reading(task: dict, *, head: str | None, decision: dict | None,
            "head": head, "required": applies(decision), "behind": None,
            "incoming": [], "provider": None, "attempt": None,
            "guarantees": GUARANTEES["origin" if config.app_merge_on_origin()
-                                    else "local"]}
+                                    else "local"],
+           # who holds the admission into this target in this process now
+           # (a merge, an integration or an update in flight), or None
+           "admission": holder(target)}
     if not head:
         return _word(out, "no-candidate", "there is no implementation commit "
                      "on this board to integrate", None)

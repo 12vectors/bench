@@ -25,6 +25,8 @@ URL.
 
 from __future__ import annotations
 
+import contextlib
+import subprocess
 import sys
 import threading
 import unittest
@@ -38,11 +40,13 @@ from test_delivery_status import STATUS  # noqa: E402
 from test_integration_gates import card, git  # noqa: E402
 
 import agents  # noqa: E402
+import changes  # noqa: E402
 import completion  # noqa: E402
 import config  # noqa: E402
 import coordinate  # noqa: E402
 import delivery  # noqa: E402
 import gates  # noqa: E402
+import githost  # noqa: E402
 import integration  # noqa: E402
 import operations  # noqa: E402
 import routes  # noqa: E402
@@ -302,6 +306,16 @@ class GuardsAndDuplicates(AdmissionCase):
         self.assertIsNone(integration.holder("main"))
         with integration.admission("main", B):
             pass
+
+    def test_the_card_names_who_holds_its_targets_admission(self):
+        self.both_reviewed("calls new_name\n")
+        self.assertIsNone(delivery.for_card(B)["integration"]["admission"])
+        with integration.admission("main", A):
+            delivery.forget_cached()
+            held = delivery.for_card(B)["integration"]["admission"]
+            self.assertEqual(held, {"card": A, "step": "merge"})
+        delivery.forget_cached()
+        self.assertIsNone(delivery.for_card(B)["integration"]["admission"])
 
     def test_a_concurrent_merge_into_the_same_target_merges_nothing(self):
         a_head, _ = self.both_reviewed("calls new_name\n")
@@ -639,6 +653,9 @@ class ALocalTargetAheadOfTheRemote(AdmissionCase):
         found = delivery.for_card(B)
         self.assertEqual(found["integration"]["state"], "unknown")
         self.assertIn("diverged", found["integration"]["sentence"])
+        # that the target changed is not known: the pill does not say so
+        self.assertEqual(found["status"]["word"], "cannot-assess")
+        self.assertIn("diverged", found["status"]["sentence"])
         with self.assertRaises(coordinate.UpdateRefused) as said:
             coordinate.update_against_target(B, {"head": b_head})
         self.assertEqual(said.exception.code, "target-diverged")
@@ -802,22 +819,22 @@ class ProviderGuaranteesApart(AdmissionCase):
                      "FETCH_HEAD")
         self.assertEqual(merged.returncode, 0, merged.stderr)
         git(host, "push", "-q", "origin", "main")
-        import subprocess
         return subprocess.CompletedProcess([], 0, "", "")
 
     def on_host(self, merge):
-        import contextlib
-        import changes
-        import githost
+        """`BOARD_APP_MERGE=origin`, with the host's merge as `merge`."""
         stack = contextlib.ExitStack()
-        for target, name, value in (
-                (config, "app_merge_on_origin", lambda: True),
-                (changes, "gh_available", lambda: True),
-                (changes, "merge_is_conditional", lambda: True),
-                (changes, "pr_info", lambda branch: {"base": "main"}),
-                (changes, "merge_pr", merge),
-                (githost, "changes_targeting", lambda branch: [])):
-            stack.enter_context(mock.patch.object(target, name, value))
+        stack.enter_context(mock.patch.object(
+            config, "app_merge_on_origin", lambda: True))
+        stack.enter_context(mock.patch.object(
+            changes, "gh_available", lambda: True))
+        stack.enter_context(mock.patch.object(
+            changes, "merge_is_conditional", lambda: True))
+        stack.enter_context(mock.patch.object(
+            changes, "pr_info", lambda branch: {"base": "main"}))
+        stack.enter_context(mock.patch.object(changes, "merge_pr", merge))
+        stack.enter_context(mock.patch.object(
+            githost, "changes_targeting", lambda branch: []))
         return stack
 
     def remote_main(self) -> str:
