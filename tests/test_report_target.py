@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO / "manager" / "core"))
 
 import agents  # noqa: E402
 import config  # noqa: E402
+import reportfiling  # noqa: E402
 import state  # noqa: E402
 import taskfiles  # noqa: E402
 
@@ -62,21 +63,23 @@ class Held:
         self.reached = threading.Event()
         self.go = threading.Event()
         self.found: list = []
-        real = agents.find_stage_of
         main = threading.current_thread()
 
-        def held(name, *args, **kwargs):
-            stage = real(name, *args, **kwargs)
-            if name == filename and threading.current_thread() is not main \
-                    and not self.reached.is_set():
-                self.found.append(stage)
-                self.reached.set()
-                if not self.go.wait(30):
-                    raise AssertionError("the test never released the reaper")
-            return stage
+        # Since task 169 a report is filed through `reportfiling`, which
+        # records the operation and then, immediately before it looks the
+        # card up and appends, passes its `before-append` step: the barrier
+        # is there, with the card's stage as the run's board has it then.
+        def held(point):
+            if point != "before-append" or threading.current_thread() is main \
+                    or self.reached.is_set():
+                return
+            self.found.append(taskfiles.find_stage_of(filename))
+            self.reached.set()
+            if not self.go.wait(30):
+                raise AssertionError("the test never released the reaper")
 
-        case.addCleanup(setattr, agents, "find_stage_of", real)
-        agents.find_stage_of = held
+        case.addCleanup(setattr, reportfiling, "FAULT", None)
+        reportfiling.FAULT = held
 
     def wait(self, case: unittest.TestCase) -> None:
         case.assertTrue(self.reached.wait(30), "the reaper never looked the card up")

@@ -305,6 +305,15 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   saved / committed / shared state read again. Imports `brain`,
   `acceptance` (the actor), `taskfiles`, `sync` and `records`; it
   launches and fetches nothing (see "Writing the Brain")
+- `reportfiling.py` — filing a run's closing report (task 169): one
+  durable, machine-local operation per report, recorded before the first
+  append with its destination, run, heading (a review's identity) and
+  exact block; idempotent on the card's text, refusing a conflict, a
+  missing or doubled card and any other board; the commit, push and index
+  read apart; a person's retry and the start-up reconciliation; and the
+  Brain's machine-local review index, rebuilt only on request. Imports
+  `acceptance`, `brainreviews`, `taskfiles`, `sync` and `records` (see
+  "Filing a report, and recovering one that was not filed")
 - `completion.py` — merge & clean up: the merge (locally, or on origin
   through `changes`), its publication confirmed on the remote, the
   recovery record a retry finishes from, the card's cleanup and a
@@ -1753,8 +1762,9 @@ reach the board can write and classify them there (task 158, "Writing
 the Brain"), and find them with its search and filters (task 159,
 "Finding an entry"). The reviews filed on cards are read there too, at
 addresses of their own, without being copied (task 168, "Reviews in the
-Brain"). What it does not do yet, said so nobody looks for it: recovering
-a review whose filing failed (#169), a
+Brain"), and a report whose filing failed is recovered from there or from
+its card (task 169, "Filing a report, and recovering one that was not
+filed"). What it does not do yet, said so nobody looks for it: a
 curated handbook, seeding a Brain from an application, adopting
 `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
@@ -2305,10 +2315,97 @@ The reads list the stage and archive directories, read the card files and
 they write nothing, launch nothing, run no check and fetch nothing. The
 POSTs sit behind the browser-mutation door.
 
-**Not yet:** a report whose filing failed is not recovered here (the
-card's own history and the run's log are where it is); index rebuilding
-and authorized retry of an unfiled report are #169's. No live migration
-adds provenance to reviews filed before this change.
+**Not yet:** no live migration adds provenance to reviews filed before
+this change. Recovering a report whose filing failed, and the review
+index, are the next section's.
+
+### Filing a report, and recovering one that was not filed
+
+A run's closing report — a work report, a PR update, a PR review round, a
+relevance review — is filed on its card by a durable **filing
+operation** (task 169, `reportfiling.py`), not by a single append.
+
+**What is recorded, before the card is touched.** One record per report
+under `manager/local/state/reports/filing/` — machine-local, never
+committed: the board the run was launched from and the card's file, the
+run, the **heading allocated once** (`## Relevance review — 2026-11-22
+10:04 (Hazel)`; a review's `rv-`/`rl-` identity is a hash of that line),
+and the exact block to append with its digests. The block is the bounded,
+defused report the card would hold — never the run's log, transcript or
+pinned inputs — and it is dropped from the record once the card holds it.
+A report clipped when it was made keeps its clipping notice.
+
+**Then it is filed, idempotently.** The card is read first. Its heading
+line followed by this exact block means the report is already there (a
+reply lost, a receipt the board never wrote): nothing is written. The
+heading with other text is a **conflict**: refused, never overwritten. A
+retry never allocates a new heading, so it can never make a second review
+round of one report.
+
+**Only the original card on the original board.** A retry appends to the
+same file on the board the run was launched from, wherever on that board
+it is now — a stage or the archive. Refused by name, with nothing written
+anywhere: a board this process no longer serves (`board-changed`), a card
+that is gone (`card-missing` — bench does not recreate it, and does not
+guess at a card renamed since), the file in two places (`ambiguous`), a
+link out of the board (`link-refused`).
+
+**Four facts, read apart, each with its next step:**
+
+| state | what it means | next |
+| --- | --- | --- |
+| **not filed** (`pending`, `unfiled` with its code, `conflict`) | the card does not hold this report; it is retained on this board | **Retry filing**, or fix what the code names; a conflict is settled by hand, then **Close** with a reason |
+| **filed, commit failed or unknown** | the card holds it; `board:` commit failed, or the board stopped before recording it | **Retry commit** (commits only if the file is not already committed) |
+| **filed, push failed** | committed here; sync has not published it | **Retry push** |
+| **filed, not indexed** | the card holds it; this board's review index does not list it | **Rebuild index** — the review is listed in the Brain meanwhile |
+| **source missing** | the index listed a review no card here holds now | restore the card or report; the index keeps it, marked |
+
+**Retry is a person's, and bounded.** `POST /api/reports/filing/retry`
+(`{operation, action: file | commit | push | resolve, reason?}`, behind
+the browser-mutation door, armed on the page) is idempotent: a double
+click or a resent request after a lost reply files one report. At most
+20 filing attempts per report; at most 400 operations are kept, the
+oldest settled ones going first and one still waiting on a person never.
+At start-up the board **reconciles** every operation an earlier process
+left pending: one the card holds is recorded filed (its commit *unknown*
+until a person retries it); one it does not is recorded unfiled,
+`interrupted`. It appends, commits and indexes nothing.
+
+**The review index.** `manager/local/state/brain/review-index.json`
+lists the reviews this board filed or indexed. `GET /api/brain/reviews`
+lists every review the cards hold *whatever* the index says — a missing
+or stale index hides nothing — and adds `filing`: the index's state and
+revision, how many reviews are not indexed, the indexed reviews whose
+source has gone, and the reports that need a person. It writes no index,
+operation or card. **Rebuild index** (`POST /api/brain/reviews/rebuild`,
+`{expected}` — the index revision the page read, `none` for no index;
+another is `409`) is the one writer besides filing: it lists every review
+on the cards once, keeps a lost source marked rather than dropping it,
+records filing operations the cards turn out to hold, and touches no card
+and no classification record under `brain/reviews/`.
+
+**On the page.** The Brain's list has a **Report filing and the review
+index** fold — open whenever something needs a person — with each
+report's state in words, its next step and its armed action, the reviews
+not indexed (each row also wears *not indexed*) and the lost sources,
+and **Rebuild index**. A card's **Activity** (and its **Reviews**, for a
+review) leads with the reports of its own that need a person, with
+**Retry filing** or **Retry commit**.
+
+**What it does not promise.** The retained report and the index are this
+board's. A board that synced the card has neither: its Brain lists the
+reviews the cards hold and says they are not indexed *here*, and
+`GET /api/reports/filing?operation=` answers `404 not-on-this-board`
+rather than claiming a retry. Losing `manager/local/state/` loses the
+retained reports that were never filed; the run's log under
+`state/agent/logs/` is still the last copy. Nothing here changes a
+verdict, a gate or a classification, launches a run or fetches anything.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/reports/filing[?card=&operation=]` | this board's filing operations, or one; a read |
+| `POST /api/reports/filing/retry` | a person's retry of one operation |
+| `POST /api/brain/reviews/rebuild` | the explicit rebuild of the review index |
 
 ## Addresses: a link to every view and card
 

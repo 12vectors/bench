@@ -1,7 +1,7 @@
 /* The detail view's sections. */
 import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
-import { fetch } from '../../lib/api.js';
+import { fetch, post } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
@@ -1563,7 +1563,7 @@ function reviewsHtml(t, acc) {
     `</section>`;
   // the code's reviews first — the open findings and the newest round are
   // what a merge waits on — then the brief's own reviews (task 149)
-  return `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
+  return filingBanner(t, true) + `<section class="rvgroup" aria-labelledby="rvg-pr-${esc(t.number || 'x')}">` +
     `<h3 id="rvg-pr-${esc(t.number || 'x')}">PR reviews <span class="n">${rounds.length}</span></h3>` +
     // the review status now (main, task 152) leads the group; what a PR
     // review is stays in the fold below, as task 149 placed it
@@ -1662,6 +1662,74 @@ function wireReviews(t) {
   });
 }
 
+/* Reports a run wrote for this card that this board has not filed, or
+   filed without committing (task 169): read from this board's filing
+   record, which a replica does not have. Retry files the retained report
+   under its original heading on this card, or commits it; nothing is
+   appended twice and nothing goes anywhere else. */
+const filingStore = {};
+const filing = resource({
+  store: filingStore,
+  url: (file) => `/api/reports/filing?card=${encodeURIComponent(file)}`,
+  ask: (url) => fetch(url),
+});
+
+function needsFiling(o) {
+  return ['pending', 'unfiled', 'conflict'].includes(o.status) ||
+    (o.status === 'filed' && o.commit && ['failed', 'unknown'].includes(o.commit.state));
+}
+
+function filingBanner(t, reviewsOnly) {
+  filing.read(t.file, accStamp(t), {
+    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+  });
+  const entry = filingStore[t.file];
+  const ops = ((entry && entry.data && entry.data.operations) || []).filter(needsFiling)
+    .filter(o => !reviewsOnly || o.review);
+  if (!ops.length) return '';
+  const item = (o) => {
+    const filed = o.status === 'filed';
+    const words = filed
+      ? `filed on this card; ${o.commit.state === 'unknown' ? 'the board stopped before its commit was recorded' : 'its commit failed'}`
+      : o.status === 'conflict' ? 'not filed — this card holds a different report under the same heading'
+      : o.status === 'pending' ? 'not filed yet — the filing was interrupted' : 'not filed';
+    const action = filed ? 'commit'
+      : (o.status === 'conflict' || o.code === 'board-changed') ? null : 'file';
+    return `<li><span><b>${esc(o.runName || 'A run')}'s ${esc(String(o.kind || 'report').toLowerCase())}</b> — ` +
+      `${esc(words)}${o.detail ? `: ${esc(o.detail)}` : ''}.` +
+      (o.retained ? ' The report is retained on this board under its original heading.' : '') +
+      (o.next ? ` <span class="dnote">Next: ${esc(o.next)}.</span>` : '') + '</span>' +
+      (action ? ` <button class="act" data-rfop="${esc(o.operation)}" data-rfaction="${action}">` +
+        `${action === 'file' ? 'Retry filing' : 'Retry commit'}</button>` : '') +
+      ` <a class="dlink" href="/brain" data-route>Filing in the Brain</a></li>`;
+  };
+  return `<div class="dfiling" role="status"><p><b>${ops.length} report${ops.length === 1 ? '' : 's'} ` +
+    `${ops.length === 1 ? 'needs' : 'need'} you.</b> A run's report that was not filed, or not committed, is ` +
+    'kept on this board only.</p><ul>' + ops.map(item).join('') + '</ul></div>';
+}
+
+function wireFiling(t) {
+  $('#drawerbody').querySelectorAll('[data-rfop]').forEach(btn => {
+    const op = btn.dataset.rfop;
+    const action = btn.dataset.rfaction;
+    wireAction(btn, `rf:${op}:${action}`, {
+      label: action === 'file' ? 'Retry filing' : 'Retry commit', confirm: true,
+      run: async () => {
+        const res = await post('/api/reports/filing/retry', { operation: op, action });
+        if (!res.ok) { toast(res.error || 'the board refused that', true); return false; }
+        const o = res.data.operation;
+        toast(o.duplicate ? 'Already done — nothing was written again.'
+          : o.status === 'filed' ? (action === 'file' ? 'Filed on this card.' : `Commit: ${o.commit ? o.commit.state : 'done'}.`)
+          : `Not filed: ${o.detail || o.status}.`, o.status !== 'filed');
+        filing.read(t.file, accStamp(t), { force: true });
+        loadAcc(t, true);
+        loadState();
+        return true;
+      },
+    });
+  });
+}
+
 function activityHtml(t, acc) {
   const items = [];
   const p = (S.state.progress || {})[t.file];
@@ -1716,7 +1784,7 @@ function activityHtml(t, acc) {
       `${reportHtml(t, it.report, it.key)}</details>`
     : `<div class="tl"><time>${esc(it.at ? new Date(it.at).toLocaleString() : '—')}</time>` +
       `<span><span class="src">${esc(it.src)}</span><div class="tx">${esc(it.text)}</div></span></div>`;
-  return `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports, reviews (dated here, read in Reviews), comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in this card's sessions.</p>` +
+  return filingBanner(t, false) + `<p class="dnote">Newest first: progress the runs reported (labelled as theirs), work reports, reviews (dated here, read in Reviews), comments and decisions, and acceptance and finding records. Raw reads, edits and commands are technical detail, in this card's sessions.</p>` +
     (items.length ? `<div class="tline">${items.map(row).join('')}</div>` : `<p class="dnote">Nothing has happened on this card yet.</p>`);
 }
 
@@ -1740,6 +1808,7 @@ function wireDetail(t) {
   wireInputs(t);
   wireResult(t);
   wireTiming(t);
+  wireFiling(t);
   const retry = body.querySelector('#dretry');
   if (retry) retry.addEventListener('click', () => { loadDetail(t, true); renderDrawer(); });
   const tabs = [...body.querySelectorAll('.dtabs [role="tab"]')];

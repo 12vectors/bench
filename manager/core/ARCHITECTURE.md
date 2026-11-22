@@ -549,6 +549,8 @@ recovery._save
 recovery.breaker_failure
 recovery.breaker_reset
 recovery.breaker_success
+reportfiling._index_write
+reportfiling._put
 settings.apply
 setupbase.write_decisions
 verify._provision_source

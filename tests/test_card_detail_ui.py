@@ -75,6 +75,10 @@ HARNESS = "\n".join([
     "const stemOf = (file) => String(file || '').replace(/\\.md$/, '');",
     "const cardId = (t) => t.number ? String(parseInt(t.number, 10)) : null;",
     "const deliveryOf = (t) => ((S.state || {}).delivery || {})[t.file] || null;",
+    # task 169: the reports this board did not file lead Reviews; that
+    # reading is a request of its own, held by tests.test_reportfiling and
+    # the browser case, so here it has nothing to say
+    "const filingBanner = () => '';",
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
     "const S = { state: { acceptance: { [input.file]: input.summary } },",
     "  accOpen: {}, accDraft: {}, evidence: { [input.file]: { evidence: [] } },",

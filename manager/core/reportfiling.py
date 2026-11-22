@@ -561,7 +561,9 @@ def reconcile(limit: int = 200) -> dict:
                 op.update(status="conflict", code="conflict",
                           detail="the card holds a different report under this heading")
             else:
-                op.update(status="unfiled", code="interrupted",
+                # interrupted, and — when the card cannot be found — why not
+                op.update(status="unfiled",
+                          code="interrupted" if where["state"] == "found" else where["state"],
                           detail=(where.get("detail") or "the board stopped before this "
                                   "report reached the card; Retry filing appends it"))
                 found["unfiled"] += 1

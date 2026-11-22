@@ -358,6 +358,8 @@ function rowHtml(e) {
     classChip(e.classification) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
     (e.review && !e.review.classified ? chip('b-note', 'not yet classified', 'no classification is recorded for this review') : '') +
     (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
+    (e.review && e.review.indexed === false ? chip('b-note', 'not indexed',
+      'on its card and listed here; this board\'s review index does not list it yet') : '') +
     '</div>' +
     (e.summary ? `<p class="b-sum">${esc(e.summary)}</p>` : '<p class="b-sum b-none">No summary.</p>') +
     `<p class="b-meta mono">${esc(e.id)}${e.sources.length ? ' · from ' +
@@ -443,6 +445,117 @@ function reviewsNote() {
     `${rows.length === 1 ? '' : 's'} could not be matched or read</summary><ul>${rows.join('')}</ul></details>` : '');
 }
 
+/* Filing and the review index (task 169): the reports this board did not
+   file, filed reports whose commit or push did not happen, reviews the
+   index does not list and indexed reviews whose source has gone — each
+   said apart, with its next step. Retry and Rebuild are armed writes;
+   everything else here is the server's reading. The index and the
+   retained reports are this board's own: another board has neither. */
+const STEP_WORDS = { file: 'Retry filing', commit: 'Retry commit', push: 'Retry push',
+                     resolve: 'Close, leaving it unfiled' };
+const rfReasons = {};
+
+function rfButton(action, op, label) {
+  const k = `rf-${action}:${op}`;
+  const ph = phaseOf(armed.store, k);
+  return button(`rf-${action}`, ph === 'armed' ? `Confirm: ${label.toLowerCase()}` : ph === 'busy' ? `${label}…` : label,
+    { arg: op, armed: ph === 'armed', busy: ph === 'busy' });
+}
+
+function filingItem(o) {
+  const what = `${o.runName || 'A run'}'s ${String(o.kind || 'report').toLowerCase()} on ` +
+    (o.number ? `<a href="/cards/${esc(o.number)}?tab=activity" data-route>#${esc(o.number)}</a>` : esc(o.card));
+  const words = o.status === 'filed'
+    ? `<strong>Filed on its card</strong>; ${o.commit && o.commit.state === 'unknown'
+      ? 'the board stopped before its commit was recorded'
+      : `its commit failed${o.commit && o.commit.detail ? ` (${esc(o.commit.detail)})` : ''}`}.`
+    : o.status === 'conflict' ? '<strong>Not filed — conflict.</strong>'
+    : o.status === 'pending' ? '<strong>Not filed yet</strong> — the filing was interrupted.'
+    : '<strong>Not filed.</strong>';
+  const kept = o.retained ? ` The report (${esc(String(o.bytes || 0))} bytes${o.clipped ? ', clipped when it was filed' : ''}) ` +
+    'is retained on this board only, under its original heading.' : '';
+  let actions = '';
+  if (o.status === 'filed') {
+    actions = rfButton('commit', o.operation, 'Retry commit');
+  } else if (o.status === 'conflict' || o.code === 'card-missing' || o.code === 'board-changed' ||
+             o.code === 'ambiguous') {
+    actions = (o.status !== 'conflict' && o.code !== 'board-changed' ? rfButton('file', o.operation, 'Retry filing') : '') +
+      `<label class="b-rfreason">Why leave it unfiled <input type="text" data-rfreason="${esc(o.operation)}" ` +
+      `value="${esc(rfReasons[o.operation] || '')}" maxlength="300"></label>` +
+      rfButton('resolve', o.operation, 'Close');
+  } else {
+    actions = rfButton('file', o.operation, 'Retry filing');
+  }
+  return `<li data-rf="${esc(o.operation)}"><p>${what}: ${words}${o.detail ? ` ${esc(o.detail)}.` : ''}${kept}</p>` +
+    (o.next ? `<p class="b-note">Next: ${esc(o.next)}.</p>` : '') +
+    `<p class="b-note mono">“${esc(o.heading)}” · ${esc(o.operation)} · ${esc(String(o.attempts))} attempt` +
+    `${o.attempts === 1 ? '' : 's'}</p><div class="b-actions">${actions}</div></li>`;
+}
+
+function filingHtml() {
+  const d = cache.reviews && cache.reviews.data;
+  const f = d && d.filing;
+  if (!f) return '';
+  const idx = f.index || {};
+  const attention = f.attention || [];
+  const missing = f.missingSources || [];
+  const parts = [];
+  if (attention.length) {
+    parts.push(`<h3>Reports that need you (${attention.length})</h3><ul class="b-rflist">` +
+      attention.map(filingItem).join('') + '</ul>');
+  }
+  if (missing.length) {
+    parts.push(`<h3>Indexed reviews whose source has gone (${f.missingCount})</h3>` +
+      '<p class="b-note">The index listed these, and no card on this board holds them now — a card ' +
+      'deleted, or a report removed by hand. The index keeps them, marked; nothing is recreated.</p><ul>' +
+      missing.map(m => `<li class="mono">${m.card ? `#${esc(m.card)}` : esc(m.file)} ${esc(m.review)}</li>`).join('') +
+      '</ul>');
+  }
+  const idxWords = idx.state === 'absent' ? 'This board has no review index yet'
+    : idx.state === 'unreadable' ? 'This board\'s review index could not be read'
+    : `The review index lists ${idx.entries} review${idx.entries === 1 ? '' : 's'}` +
+      (idx.built ? `, last written ${esc(idx.built)}${idx.builtBy === 'rebuild' ? ' by a rebuild' : ' by filing'}` : '');
+  const unindexed = f.unindexed || 0;
+  const rebuild = rfButton('rebuild', idx.revision || 'none', 'Rebuild index');
+  const lead = `<p>${idxWords}. ${unindexed ? `<strong>${unindexed} review${unindexed === 1 ? ' is' : 's are'} ` +
+    'not indexed</strong> — still listed below, read from their cards.' : 'Every review on the cards is indexed.'}</p>` +
+    '<p class="b-note">Rebuilding reads every card and writes this board\'s index again. It changes no card ' +
+    'and no classification record, and keeps a lost source marked rather than dropping it.</p>' +
+    `<div class="b-actions">${rebuild}</div>`;
+  const open = attention.length || missing.length || idx.state !== 'present';
+  const counts = (attention.length ? `${attention.length} need you` : 'nothing needs you') +
+    (unindexed ? ` · ${unindexed} not indexed` : '') + (missing.length ? ` · ${f.missingCount} source${f.missingCount === 1 ? '' : 's'} gone` : '');
+  return `<details class="b-panel b-filing"${open ? ' open' : ''}><summary>Report filing and the review index — ` +
+    `${esc(counts)}</summary>${parts.join('')}${lead}<p class="b-note">Retained reports and the index are ` +
+    'local to this board: a board that synced the cards has neither, and says so.</p></details>';
+}
+
+async function rfAct(name, arg) {
+  const action = name.slice(3);
+  const k = `${name}:${arg}`;
+  const said = armed.click(k, undefined, () => renderBrain(true));
+  if (said !== 'fire') { renderBrain(true); return; }
+  armed.fire(k, () => { toast('No answer from the board — read the status again before retrying.', true); renderBrain(true); });
+  renderBrain(true);
+  const res = action === 'rebuild'
+    ? await post('/api/brain/reviews/rebuild', { expected: arg })
+    : await post('/api/reports/filing/retry', { operation: arg, action,
+      ...(action === 'resolve' ? { reason: rfReasons[arg] || '' } : {}) });
+  armed.settle(k);
+  if (res.ok && action === 'rebuild') {
+    const r = res.data.rebuild;
+    toast(`Index rebuilt: ${r.reviews} review${r.reviews === 1 ? '' : 's'}` +
+      (r.missing ? `, ${r.missing} lost source${r.missing === 1 ? '' : 's'} kept marked` : '') + '.');
+  } else if (res.ok) {
+    const o = res.data.operation;
+    toast(o.duplicate ? `${STEP_WORDS[action]}: already done — nothing was written again.`
+      : o.status === 'filed' ? (action === 'file' ? 'Filed on its card.' : `${STEP_WORDS[action]}: ${o.commit ? o.commit.state : 'done'}.`)
+      : `${STEP_WORDS[action]}: ${o.status}${o.detail ? ` — ${o.detail}` : ''}.`, o.status !== 'filed' && o.status !== 'resolved');
+  } else toast(res.error, true);
+  if (cache.reviews) cache.reviews.at = 0;
+  load('reviews');
+}
+
 function listHtml(slot) {
   const index = { ...slot.data, entries: slot.data.entries.concat(reviewRows()) };
   const head = '<header class="b-head"><div class="b-headrow"><h1 class="b-title" tabindex="-1">Brain</h1>' +
@@ -458,8 +571,8 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) {
-    return head + stale + requestsHtml() + emptyGuidance(index.directory) + diagnosticsBlock(index) +
-      reviewsNote();
+    return head + stale + requestsHtml() + emptyGuidance(index.directory) + filingHtml() +
+      diagnosticsBlock(index) + reviewsNote();
   }
   const t = tally(index);
   const total = index.entries.length;
@@ -479,7 +592,7 @@ function listHtml(slot) {
     ? noResults(index, t)
     : kinds.map(k => kindSection(index, k, t)).join('');
   return head + stale + requestsHtml() + `<div class="b-lib">` + navHtml(index, t) +
-    `<div class="b-results">${status}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
+    `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
 
@@ -1597,6 +1710,7 @@ function act(name, arg) {
     if (name === 'ag-close') $('#bshell .b-title')?.focus();
     return;
   }
+  if (name.startsWith('rf-')) { rfAct(name, arg); return; }
   if (name.startsWith('rv-')) {
     // a filed review's classification (task 168): a mode of its page
     const slot = cache.entries[key()];
@@ -1723,6 +1837,11 @@ function wire(el) {
         const blocked = ag.preflight && ag.preflight.blockers && ag.preflight.blockers.length;
         if (gen) gen.disabled = ag.busy || !ag.text.trim() || !!blocked;
       } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
+      return;
+    }
+    if (f.dataset && f.dataset.rfreason) {
+      // why a report is left unfiled: kept here, sent only with Close
+      rfReasons[f.dataset.rfreason] = f.value;
       return;
     }
     if (red && f.dataset && f.dataset.rvf) {
