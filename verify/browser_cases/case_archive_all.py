@@ -146,6 +146,7 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
     def test_confirm_archives_the_frozen_set_and_undo_brings_it_back(self):
         b = self.load(1440, 900, dark=False)
         self.open_sheet()
+        confirmed = self.eligible()["count"]   # the fixture's own done card included
         # completed after the person saw the set: not taken
         (self.done / LATE).write_text(card("Completed after confirmation"), encoding="utf-8")
         # hold the batch's replies a moment so the progress can be read
@@ -165,7 +166,7 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
         progress = b.eval("window.__progressObs.disconnect(), window.__progress")
         self.assertTrue(progress, "the sheet drew no progress before its summary")
         self.assertIn("Archiving…", progress[0])
-        self.assertIn(f"of {len(CARDS)} read", progress[0])
+        self.assertIn(f"of {confirmed} read", progress[0])
         summary = b.eval(f"document.querySelector('{SHEET} .aa-summary').innerText")
         self.assertIn("archived", summary)
         shot("archive-all-summary-1440-day")
