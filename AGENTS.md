@@ -1850,6 +1850,7 @@ on the entry, never fixed up.
 | another **Brain** version | `unsupported`: listed, never interpreted |
 | no **Brain** line | not an entry, said so |
 | a link (the directory itself included), a FIFO, a name that is not flat, a file over 256 KiB | refused, unread |
+| `brain/reviews/` | not an entry: the review classification records (see "Reviews in the Brain") |
 | anything not ending `.md`, or hidden | skipped; reserved for later versions |
 
 An id nothing carries reads **No entry … on this board**: it may belong
