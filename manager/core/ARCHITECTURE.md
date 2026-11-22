@@ -546,6 +546,7 @@ execowner._write_designation
 execowner.ensure_installation_id
 gates.override
 gates.record_verdict
+integration.record_attempt
 operations.begin
 operations.queue_remove
 operations.queue_sync
