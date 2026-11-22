@@ -27,9 +27,21 @@ number on the card say more than anyone established:
 
 Storage extends #65's version-1 contract (AGENTS.md, "The persistence
 contract"): criterion ids are `<!-- ac:<id> -->` on the criterion's own
-line, assigned only by `track`; acceptance records are
-`<!-- bench:acceptance {...} -->`; finding events are
+line, assigned only by `assign_ids` on an authorized write; acceptance
+records are `<!-- bench:acceptance {...} -->`; finding events are
 `<!-- bench:finding {...} -->`. Every record carries `"v": 1`.
+
+Task 190 made the runs maintain it. A work or repair run and the
+independent PR review end their reports with an `ACCEPTANCE RESULTS`
+block; `filing_results` validates it against the card when the report is
+filed and it travels in the report's board-written provenance line
+(`acceptance` in `<!-- bench:review {...} -->`), which `agent_results`
+reads back. Filing a report, applying a refinement and a person's
+decision are the authorized writes that give criteria their ids
+(`adopt`, `assign_ids`); reading never does. An implementer's `met`
+reads *Met — awaiting review*; only the independent review's result or a
+person's decision reads *Accepted*, and the review's never stands in for
+a person's sign-off (`gates`).
 """
 
 from __future__ import annotations
