@@ -80,7 +80,8 @@ import gitrepo
 CONTRACT = 1
 FILE = "handbook.md"
 MAX_ITEMS = 20
-MAX_GIT_CHECKS = 80
+MAX_GIT_CHECKS = 80     # git commands one reading may run, every one counted
+MAX_HISTORY_SHOWN = 1200    # what a page is sent of one history line; the file keeps it whole
 HISTORY_HEADING = "## Handbook history"
 
 # the five sections, in the order the landing draws them: an id the API
@@ -162,7 +163,9 @@ def parse(data: bytes) -> dict:
             at = section
             continue
         if at == "history":
-            rec["history"].append(brain.clean(line, 400))
+            # kept exactly: a save writes these lines back, so clipping
+            # here would lose their tail for good (the reading clips)
+            rec["history"].append(line)
             continue
         item = ITEM_RE.match(line)
         if at in SECTION_IDS and item:
@@ -280,7 +283,42 @@ def _repo_for(kind: str) -> tuple[Path | None, str]:
     return Path(root), "" if rel == "." else rel.replace(os.sep, "/") + "/"
 
 
-def _check(kind: str, target: str, commit: str, budget: list[int]) -> dict:
+class _Spent(Exception):
+    """This reading has asked git all it may."""
+
+
+class _Budget:
+    """The git commands one reading may still run, and the HEAD it read of
+    each repository, so asking about many bindings asks for HEAD once."""
+
+    def __init__(self, left: int = MAX_GIT_CHECKS):
+        self.left = left
+        self.heads: dict[str, str] = {}
+
+    def git(self, repo: Path, *args: str):
+        if self.left <= 0:
+            raise _Spent
+        self.left -= 1
+        return gitrepo.git(repo, *args, timeout=10)
+
+    def head(self, repo: Path) -> str:
+        if str(repo) not in self.heads:
+            out = self.git(repo, "rev-parse", "--verify", "-q", "HEAD")
+            self.heads[str(repo)] = out.stdout.strip() if out.returncode == 0 else ""
+        return self.heads[str(repo)]
+
+
+def _distinct_revisions(kind: str, revisions: set[str]) -> list[str]:
+    """The revisions that really differ. An `app:` or `work:` revision may
+    be abbreviated, so one that starts another names the same commit; a
+    deployment identity is opaque and is compared whole."""
+    if kind not in ("app", "work"):
+        return sorted(revisions)
+    return sorted(r for r in revisions
+                  if not any(o != r and o.startswith(r) for o in revisions))
+
+
+def _check(kind: str, target: str, commit: str, budget: _Budget) -> dict:
     """What local git says about one file binding, said as one state:
     `current` (the file has not changed since the bound commit), `stale`
     (a later commit changed it), `missing` (it is not there now),
@@ -292,20 +330,25 @@ def _check(kind: str, target: str, commit: str, budget: list[int]) -> dict:
     if repo is None:
         return {"state": "no-repository",
                 "message": f"there is no {what} repository here, so the revision cannot be read"}
-    head = gitrepo.git(repo, "rev-parse", "--verify", "-q", "HEAD", timeout=10)
-    head_sha = head.stdout.strip() if head.returncode == 0 else ""
-    key = (str(repo), head_sha, commit, prefix + target)
+    try:
+        return _ask_git(repo, prefix + target, target, commit, what, budget)
+    except _Spent:
+        return {"state": "not-checked",
+                "message": "not checked in this reading (too many bindings); open the entry"}
+
+
+def _ask_git(repo: Path, full: str, target: str, commit: str, what: str,
+             budget: _Budget) -> dict:
+    """The git half of `_check`. Raises `_Spent` part way rather than
+    memoising an answer it did not finish."""
+    head_sha = budget.head(repo)
+    key = (str(repo), head_sha, commit, full)
     with _MEMO_LOCK:
         if key in _MEMO:
             return dict(_MEMO[key])
-    if budget[0] <= 0:
-        return {"state": "not-checked",
-                "message": "not checked in this reading (too many bindings); open the entry"}
-    budget[0] -= 1
-    full = prefix + target
 
     def ok(*args: str) -> bool:
-        return gitrepo.git(repo, *args, timeout=10).returncode == 0
+        return budget.git(repo, *args).returncode == 0
 
     if not ok("cat-file", "-e", f"{commit}^{{commit}}"):
         out = {"state": "unknown-revision",
@@ -322,8 +365,7 @@ def _check(kind: str, target: str, commit: str, budget: list[int]) -> dict:
     elif not ok("cat-file", "-e", f"HEAD:{full}"):
         out = {"state": "missing", "message": f"{target} is not in the {what} repository now"}
     else:
-        log = gitrepo.git(repo, "log", "-1", "--format=%H %cs", f"{commit}..HEAD", "--", full,
-                          timeout=10)
+        log = budget.git(repo, "log", "-1", "--format=%H %cs", f"{commit}..HEAD", "--", full)
         changed = log.stdout.strip().split(" ") if log.returncode == 0 else []
         if log.returncode != 0:
             out = {"state": "not-checked", "message": "git could not answer"}
@@ -341,13 +383,13 @@ def _check(kind: str, target: str, commit: str, budget: list[int]) -> dict:
     return out
 
 
-def authority(entry: dict, budget: list[int] | None = None) -> dict:
+def authority(entry: dict, budget: _Budget | None = None) -> dict:
     """An entry's source authority, read from its own record: each binding
     with what local git (or the board's cards) says about it, the
     standing, the policy, the assessment date, the deployment as recorded
     or unknown, and every gap and contradiction, said in words. `entry`
     is a record as `brain.reading()` or `brain.entry()` gives it."""
-    budget = budget if budget is not None else [MAX_GIT_CHECKS]
+    budget = budget if budget is not None else _Budget()
     cards = brain.cards_here()
     bindings, contradictions, gaps = [], [], []
     by_target: dict[tuple[str, str], set[str]] = {}
@@ -369,9 +411,10 @@ def authority(entry: dict, budget: list[int] | None = None) -> dict:
                              "deployments")
         bindings.append(b)
     for (kind, target), revs in sorted(by_target.items()):
-        if len(revs) > 1:
-            contradictions.append(f"{kind}:{target} is bound at {len(revs)} revisions "
-                                  f"({', '.join(sorted(r[:12] for r in revs))}); which one the "
+        distinct = _distinct_revisions(kind, revs)
+        if len(distinct) > 1:
+            contradictions.append(f"{kind}:{target} is bound at {len(distinct)} revisions "
+                                  f"({', '.join(r[:12] for r in distinct)}); which one the "
                                   "explanation describes is not established")
     standing = entry.get("standing")
     deploys = [b for b in bindings if b["type"] == "deploy"]
@@ -421,7 +464,7 @@ def authority(entry: dict, budget: list[int] | None = None) -> dict:
 # ── the reading ────────────────────────────────────────────────────────
 
 
-def _item(entry_id: str, section: str, read: dict, budget: list[int]) -> dict:
+def _item(entry_id: str, section: str, read: dict, budget: _Budget) -> dict:
     """One link in a section, said as what it is: the operative Current
     explanation, or why it is not — with the remedy."""
     if entry_id in read["duplicates"]:
@@ -504,6 +547,12 @@ def _coverage(section: str, items: list[dict]) -> dict:
     if not operative and not conventions:
         state = "not-covered"
         message = "No linked entry is an operative Current explanation."
+    elif section == "ways-of-working" and not operative:
+        # this section is for what people approved: conventions alone are
+        # something, and are not that
+        state = "partial"
+        message = f"{len(conventions)} {'convention' if len(conventions) == 1 else 'conventions'} " \
+                  "linked, and no approved working policy."
     elif problems or flagged:
         state = "partial"
         message = f"{len(operative) + len(conventions)} of {len(items)} links are Current; " \
@@ -523,7 +572,7 @@ def reading() -> dict:
     section's coverage, and the record's history."""
     rec = read_record()
     read = brain.reading()
-    budget = [MAX_GIT_CHECKS]
+    budget = _Budget()
     sections = []
     for sid, title, purpose in SECTIONS:
         items = [_item(i, sid, read, budget) for i in rec["sections"].get(sid, [])]
@@ -534,7 +583,9 @@ def reading() -> dict:
             "record": {"state": rec["state"], "file": rec["file"],
                        "revision": rec["revision"] or "none", "why": rec.get("why"),
                        "problems": rec.get("problems", [])[:20]},
-            "sections": sections, "history": rec.get("history", [])[-50:],
+            "sections": sections,
+            "history": [brain.clean(line, MAX_HISTORY_SHOWN)
+                        for line in rec.get("history", [])[-50:]],
             "summary": {"sections": len(sections), "covered": covered,
                         "empty": sum(1 for s in sections if s["coverage"]["state"] == "empty")},
             "brainRevision": read["revision"],

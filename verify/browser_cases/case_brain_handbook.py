@@ -246,7 +246,8 @@ class Handbook(unittest.TestCase):
         self.add(b, "e-hb-habits")
         self.reason(b, "observed habit")
         b.click('#bshell [data-bact="hb-save"]')
-        self.wait_text(b, ["Convention — not approved policy", "no approved working policy"],
+        self.wait_text(b, ["Convention — not approved policy", "no approved working policy",
+                           "Partly covered"],
                        '#bshell [data-hbsec="ways-of-working"]')
         self.assertIn("Not covered yet", self.section(b, "operations"))
         shot("brain-handbook-labelled-night")

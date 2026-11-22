@@ -63,6 +63,9 @@ function key() {
 }
 const reviewHref = (card, id) => `/brain/r/${encodeURIComponent(card)}/${encodeURIComponent(id)}`;
 
+// the handbook's write status, under a key no entry id can be
+const HANDBOOK_OP = '@handbook';
+
 function urlOf(k) {
   if (k === 'index') return '/api/brain';
   if (k === 'reviews') return '/api/brain/reviews';
@@ -810,7 +813,7 @@ function handbookHtml(linkable) {
     'file content — only brain/ and local git history.</p>' +
     `<p class="b-note" role="status">${sum.covered} of ${sum.sections} sections covered · ${sum.empty} empty · ` +
     `<span class="mono">${esc(rec.file)}</span> revision <span class="mono">${esc(rec.revision)}</span></p>` +
-    stale + recNote + writeStatus('handbook') +
+    stale + recNote + writeStatus(HANDBOOK_OP) +
     (!linkable && !hb ? '<p class="b-note">The handbook links existing entries: write one first, ' +
       'then organize its sections here.</p>' : '') +
     `<div class="b-hbsecs">${h.sections.map(s => hbSectionHtml(s, editable)).join('')}</div>${history}</section>`;
@@ -864,7 +867,7 @@ async function hbSave() {
   if (hb !== mine) return;
   if (res.ok) {
     const op = res.data.operation;
-    ops.handbook = { request: mine.request, op, at: Date.now() };
+    ops[HANDBOOK_OP] = { request: mine.request, op, at: Date.now() };
     hb = null;
     forget();
     toast(op.duplicate ? 'Already saved — this request was answered from the record.'
@@ -880,7 +883,7 @@ async function hbSave() {
       const r = await fetch('/api/brain/operation?request=' + encodeURIComponent(mine.request));
       const data = await r.json().catch(() => ({}));
       if (data.operation && data.operation.saved) {
-        ops.handbook = { request: mine.request, op: data.operation, at: Date.now() };
+        ops[HANDBOOK_OP] = { request: mine.request, op: data.operation, at: Date.now() };
         hb = null;
         forget();
         toast('The save had landed — the board\'s record says so.');

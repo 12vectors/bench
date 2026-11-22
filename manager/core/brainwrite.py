@@ -901,8 +901,14 @@ def _plan_handbook(payload: dict, reading: dict, actor: str) -> dict:
     sections[section] = after
     history = list(rec.get("history") or []) + [
         f"- {_now()} · {actor} — {title}: {_change_words(before, after)}; {reason}"]
+    text = handbook.render(sections, history)
+    if len(text.encode("utf-8")) > brain.MAX_ENTRY_BYTES:
+        raise Refused(f"this save would take {rec['file']} over the {brain.MAX_ENTRY_BYTES}-byte "
+                      "limit the board reads, and the board could not read it again. Nothing "
+                      "was written; move older lines of its Handbook history out by hand "
+                      "(git keeps them), then save again.", 409)
     return {"id": "handbook", "file": f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}",
-            "expected": now, "text": handbook.render(sections, history),
+            "expected": now, "text": text,
             "what": f"{section} updated"}
 
 
@@ -1002,7 +1008,7 @@ def write(kind: str, payload: dict) -> dict:
                 raise Refused(f"this request was refused ({prior.get('refused') or 'not saved'}); "
                               "nothing was written. Read the current version and save again "
                               "as a new request.", 409, stale=True,
-                              current=_current_entry(prior.get("id")))
+                              current=_current_entry(prior))
             if prior.get("status") == "done":
                 return dict(_public(prior), duplicate=True)
             return _finish(request, prior, resumed=True)
@@ -1059,15 +1065,15 @@ def _conflict(request: str, entry: dict) -> dict:
     _journal_put(request, refused)
     raise Refused(f"brain/{entry['file']} changed while this write was being made; "
                   "nothing was written. Read the current version and save again.", 409,
-                  stale=True, current=_current_entry(entry["id"]))
+                  stale=True, current=_current_entry(entry))
 
 
-def _current_entry(entry_id) -> dict | None:
-    if entry_id == "handbook":
-        # the handbook's record, never an entry that happens to be named so
+def _current_entry(operation: dict) -> dict | None:
+    if operation.get("kind") == "handbook":
+        # told by the write's kind: `handbook` is also a legal entry id
         return handbook.reading()
     try:
-        return brain.entry(entry_id)
+        return brain.entry(operation.get("id"))
     except brain.NotAnId:
         return None
 

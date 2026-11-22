@@ -2179,7 +2179,8 @@ as what the entry's own record makes it:
 Each section says its coverage — **Not covered yet** (and what it does
 not yet explain), **No operative explanation**, **Partly covered** or
 **Covered** — and notes such as *no approved working policy is linked*
-or *deployment unknown*.
+or *deployment unknown*. A Ways of working section holding only
+conventions reads **Partly covered**: it is for what people approved.
 
 **Source authority, from the entry itself.** An entry may record its
 **Standing**, **Policy**, **Bindings** and **Assessed** date (edited in
@@ -2198,8 +2199,9 @@ handbook and the entry's own page read them, and nothing else:
   since** (with the commit that changed it), **gone now**, **not there
   at** the commit, **not in this history**, or an **unknown revision** —
   `cat-file -e`, `merge-base --is-ancestor` and `log` on that one path,
-  at most 80 questions per reading, memoised by the head. A `review:`
-  binding names one filed review and links to its Brain page.
+  at most 80 git commands per reading (a binding takes up to six, and
+  one past the limit reads *not checked*), memoised by the head. A
+  `review:` binding names one filed review and links to its Brain page.
 - **Disagreement is surfaced, not resolved.** One target bound at two
   revisions, *deployed* with no deployment identity, a deployment recorded
   on agreed-future or unresolved work, *implemented* with no source

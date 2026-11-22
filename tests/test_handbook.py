@@ -199,8 +199,15 @@ class Membership(_Handbook):
         self.assertEqual(items[silent]["state"], "convention")
         self.assertIn("no approval is recorded", items[silent]["message"])
         self.link("ways-of-working", [inferred])
-        notes = self.section("ways-of-working")["coverage"]["notes"]
-        self.assertTrue(any("no approved working policy" in n for n in notes), notes)
+        coverage = self.section("ways-of-working")["coverage"]
+        self.assertTrue(any("no approved working policy" in n for n in coverage["notes"]),
+                        coverage)
+        # conventions alone are not the section's approved agreements
+        self.assertEqual(coverage["state"], "partial")
+        self.assertIn("no approved working policy", coverage["message"])
+        self.assertEqual(handbook.reading()["summary"]["covered"], 0)
+        self.link("ways-of-working", [inferred, approved])
+        self.assertEqual(self.section("ways-of-working")["coverage"]["state"], "covered")
 
 
 class Authority(_Handbook):
@@ -260,7 +267,7 @@ class Authority(_Handbook):
 
     def test_contradictions_are_listed_and_nothing_is_resolved(self):
         e = self.make("Says deployed", standing="deployed", assessed="2026-11-22",
-                      bindings=[f"app:src.py@{self.app_head}", f"app:src.py@{self.app_head[:12]}"])
+                      bindings=[f"app:src.py@{self.app_head}", "app:src.py@" + "f" * 40])
         a = handbook.authority(brain.entry(e))
         self.assertEqual(a["state"], "contradictory")
         self.assertTrue(any("bound at 2 revisions" in c for c in a["contradictions"]))
@@ -275,6 +282,31 @@ class Authority(_Handbook):
         self.assertEqual(a["deployment"]["state"], "recorded")
         self.assertIn("does not verify", a["deployment"]["message"])
         self.assertEqual(a["state"], "current")
+
+    def test_one_commit_under_two_abbreviations_is_not_a_contradiction(self):
+        e = self.make("Abbreviated", standing="implemented", assessed="2026-11-22",
+                      bindings=[f"app:src.py@{self.app_head}", f"app:src.py@{self.app_head[:12]}"])
+        a = handbook.authority(brain.entry(e))
+        self.assertEqual(a["contradictions"], [])
+        self.assertEqual(a["state"], "current")
+
+    def test_a_deployment_identity_is_compared_whole(self):
+        e = self.make("Two deployments", standing="deployed", assessed="2026-11-22",
+                      bindings=[f"app:src.py@{self.app_head}", "deploy:prod@v1",
+                                "deploy:prod@v1.2"])
+        self.assertTrue(any("bound at 2 revisions" in c for c in
+                            handbook.authority(brain.entry(e))["contradictions"]))
+
+    def test_the_git_budget_counts_every_command(self):
+        e = self.make("Bound", standing="implemented", assessed="2026-11-22",
+                      bindings=[f"app:src.py@{self.app_head}"])
+        handbook._MEMO.clear()
+        budget = handbook._Budget(3)
+        a = handbook.authority(brain.entry(e), budget)
+        self.assertEqual(budget.left, 0)
+        self.assertEqual(a["bindings"][0]["state"], "not-checked")
+        # an answer it did not finish is not remembered as one
+        self.assertEqual(handbook.authority(brain.entry(e))["bindings"][0]["state"], "current")
 
     def test_a_work_binding_reads_the_work_state_repository(self):
         rev = git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -385,6 +417,35 @@ class Refusals(_Handbook):
         self.assertTrue(again["duplicate"])
         self.assertEqual(again["revision"], first["revision"])
         self.assertEqual(len(handbook.read_record()["history"]), 1)
+
+    def test_a_long_history_line_survives_the_next_save(self):
+        a, b = self.make("A"), self.make("B")
+        reason = "why " * 120 + "the end"
+        self.link("overview", [a], reason=reason)
+        self.link("overview", [a, b], reason="next")
+        self.assertIn(reason, handbook.path().read_text())
+        self.assertTrue(any(reason in line for line in handbook.reading()["history"]))
+
+    def test_a_save_that_would_outgrow_the_reader_is_refused(self):
+        a = self.make("A")
+        self.link("overview", [a])
+        path = handbook.path()
+        room = brain.MAX_ENTRY_BYTES - path.stat().st_size
+        path.write_text(path.read_text() + "- old line\n" * (room // 11))
+        before = path.read_bytes()
+        self.refused("handbook", {"expected": handbook.read_record()["revision"],
+                                  "section": "overview", "entries": [], "reason": "drop"}, 409)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_an_entry_named_handbook_keeps_its_own_conflict_reading(self):
+        (self.work / "brain").mkdir(exist_ok=True)
+        (self.work / "brain" / "named.md").write_text(
+            "# Named\n\n**Brain:** 1\n**Id:** handbook\n**Kind:** Guide\n"
+            "**Classification:** Current\n\nBody.\n")
+        self.assertEqual(brainwrite._current_entry({"kind": "edit", "id": "handbook"})["title"],
+                         "Named")
+        self.assertEqual(brainwrite._current_entry({"kind": "handbook", "id": "handbook"})["kind"],
+                         "bench-brain-handbook")
 
     def test_a_failed_commit_keeps_the_bytes_and_says_so(self):
         a = self.make("A")
