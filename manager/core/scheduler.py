@@ -299,7 +299,9 @@ def plan(board: dict | None = None, delivery: dict | None = None,
     running = _running_cards()
     items, ready = [], []
     for task in tasks:
-        if task["stage"] not in STAGES:
+        # a phase member in Backlog whose phase is queued is queued too
+        # (task 188): its stored stage stays Backlog until a launch moves it
+        if task["stage"] not in STAGES and not orchestrator.queued(task):
             continue
         sid, why = orchestrator.scope_of(task, reading)
         item = {"card": task["file"], "number": _number(task),
@@ -309,10 +311,10 @@ def plan(board: dict | None = None, delivery: dict | None = None,
         items.append(item)
         if sid is None:
             item.update(state="unmanaged", code=why,
-                        reason=("its phase is not adopted into its phase scope; "
-                                if why == "phase-not-adopted" else
-                                "its phase has no phase agreement; ")
-                        + "the existing phase runner schedules it")
+                        reason=("its phase was held back by the upgrade to the "
+                                "unified phase model; see Orchestrator → Phases"
+                                if why == "phase-migrating" else
+                                "no orchestrator scope manages it"))
             continue
         if task.get("isPhase"):
             item.update(state="unmanaged", code="phase-card",
@@ -718,11 +720,14 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
 
 # ── execute ───────────────────────────────────────────────────────────
 
-def _walk_back(filename: str, moved: bool) -> None:
+def _walk_back(filename: str, moved) -> None:
+    """Put a card the launch moved back where it was stored: To Do, or the
+    Backlog a queued phase member inherited its queue in (task 188)."""
     if moved and taskfiles.find_stage_of(filename) == "in-progress":
         try:
-            taskfiles.move_task(filename, "in-progress", "to-do",
-                                actor="orchestrator")
+            taskfiles.move_task(filename, "in-progress",
+                                moved if moved in ("to-do", "backlog")
+                                else "to-do", actor="orchestrator")
         except (ValueError, OSError):
             pass
 
@@ -787,12 +792,14 @@ def execute(task: dict, item: dict, board: dict | None = None,
     moved = False
     try:
         stage = taskfiles.find_stage_of(filename)
-        if stage == "to-do":
+        if stage in ("to-do", "backlog"):
+            # Backlog only for a member its queued phase queued (task 188):
+            # `authorize` refuses any other Backlog card
             again = orchestrator.authorize(ACTION, filename, operation=key)
             if not again["allowed"]:
                 return _refused(op, again["code"], again["reason"], moved)
-            taskfiles.move_task(filename, "to-do", "in-progress", actor="orchestrator")
-            moved = True
+            taskfiles.move_task(filename, stage, "in-progress", actor="orchestrator")
+            moved = stage
             stage = "in-progress"
         if stage != "in-progress":
             return _refused(op, "stage-moved", f"the card is in {stage}/ now", moved)
@@ -941,6 +948,10 @@ def _run_pass(board: dict | None, start, ctx: dict) -> dict:
                                    if board is None else board)
     reconciled = reconcile() + coordinate.reconcile() + phasescope.reconcile()
     ctx["reconciled"] = reconciled
+    # the one-time move to the unified phase model (task 188): a no-op once
+    # it is complete; until then it finishes every transfer it deferred
+    # because work from before the upgrade was still running
+    phasescope.migrate_model(board)
     given = board
     # a phase scope's own steps first (task 143): its card put
     # in-progress, its branch cut, main merged in, a phase whose

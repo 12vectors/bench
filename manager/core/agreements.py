@@ -512,6 +512,7 @@ def resolve(doc, problem: str | None = None) -> dict:
     model = parsed.get("model") or RESERVED
     shared = model == SHARED
     scopes = []
+    template = None
     if bench is not None:
         bench_on = valid and bench["enabled"]
         allocated = {pool: sum(p["allocation"].get(pool, 0)
@@ -555,8 +556,7 @@ def resolve(doc, problem: str | None = None) -> dict:
             "exclusions": bench["exclusions"], "handback": bench["handback"],
             "note": bench["note"],
         })
-        for number, phase in sorted(parsed["phases"].items(),
-                                    key=lambda kv: int(kv[0])):
+        def phase_scope(number: str, phase: dict) -> dict:
             authority = {}
             for word in AUTHORITIES:
                 parent = bench["authority"][word]
@@ -568,7 +568,7 @@ def resolve(doc, problem: str | None = None) -> dict:
             on = bench_on and phase["enabled"]
             paused_by = BENCH if bench["paused"] else (
                 phase["id"] if phase["paused"] else None)
-            scopes.append({
+            return {
                 "id": phase["id"], "kind": "phase", "parent": BENCH,
                 "card": number, "strategy": phase["strategy"],
                 "enabled": phase["enabled"],
@@ -584,8 +584,20 @@ def resolve(doc, problem: str | None = None) -> dict:
                                  {"value": bench["capacity"][c], "by": BENCH})
                              for c in CEILINGS},
                 "exclusions": phase["exclusions"], "handback": phase["handback"],
-                "note": phase["note"],
-            })
+                "note": phase["note"], "implicit": phase.get("implicit", False),
+            }
+        for number, phase in sorted(parsed["phases"].items(),
+                                    key=lambda kv: int(kv[0])):
+            scopes.append(phase_scope(number, phase))
+        # Task 188: every phase card is run by its phase scope, named or not.
+        # A phase the agreement does not name inherits the Bench scope
+        # whole (its authority, pause and enablement, and the default phase
+        # ceiling) and narrows nothing; a named entry only ever narrows.
+        template = phase_scope("0", {
+            "id": "phase:0", "strategy": STRATEGIES[0], "enabled": True,
+            "paused": False, "authority": {}, "allocation": {}, "limits": {},
+            "ceilings": {}, "exclusions": [], "handback": [], "note": None,
+            "implicit": True})
     legacy = {}
     if bench is not None and not shared:
         legacy = {number: dict(phase["allocation"])
@@ -593,6 +605,7 @@ def resolve(doc, problem: str | None = None) -> dict:
                   if phase["allocation"]}
     return {"configured": True, "valid": valid, "problems": parsed["problems"],
             "revision": revision(doc), "scopes": scopes,
+            "phaseTemplate": template,
             "capacityModel": model if bench is not None else None,
             "scopeDefaults": (dict(bench["scopeDefaults"])
                               if bench is not None and shared else None),
@@ -628,7 +641,54 @@ def public_document(doc) -> dict | None:
 
 
 def scope(reading: dict, scope_id: str) -> dict | None:
-    return next((s for s in reading["scopes"] if s["id"] == scope_id), None)
+    """One scope as it is in force. A phase the agreement does not name
+    is still its phase scope's (task 188): it reads the Bench scope's
+    authority, pause and enablement whole and the default phase ceiling,
+    marked `implicit`. Nobody adopts or allocates it first."""
+    found = next((s for s in reading["scopes"] if s["id"] == scope_id), None)
+    if found is not None or not scope_id.startswith("phase:"):
+        return found
+    template = reading.get("phaseTemplate")
+    number = scope_id.split(":", 1)[1]
+    if template is None or not CARD_RE.match(number):
+        return None
+    return dict(template, id=scope_id, card=str(int(number)))
+
+
+# ── the unified phase model's migration record (task 188) ─────────────
+#
+# Installation-local: which phases a one-time upgrade held back from their
+# phase scope, and why. Read by `orchestrator.scope_of` (so a held phase is
+# scheduled by nobody) and written by `phasescope.migrate_model`.
+
+PHASE_MODEL_KIND = "bench-phase-model"
+PHASE_MODEL_VERSION = 1
+
+
+def phase_model_path() -> Path:
+    return state_dir() / "phase-model.json"
+
+
+def phase_model() -> dict | None:
+    """The migration record, or None before the first migration. A record
+    from another version or kind reads as unreadable, never as complete."""
+    doc, problem = _read(phase_model_path())
+    if doc is None and problem is None:
+        return None
+    if problem or not isinstance(doc, dict) or \
+            doc.get("kind") != PHASE_MODEL_KIND or \
+            doc.get("v") != PHASE_MODEL_VERSION:
+        return {"kind": PHASE_MODEL_KIND, "v": PHASE_MODEL_VERSION,
+                "status": "unreadable", "holds": {},
+                "problem": problem or "not a version 1 phase-model record"}
+    return doc
+
+
+def phase_holds() -> dict[str, dict]:
+    """Phase number → hold, for every phase the migration held back."""
+    doc = phase_model()
+    holds = (doc or {}).get("holds")
+    return holds if isinstance(holds, dict) else {}
 
 
 def compare(before: dict, after: dict) -> list[dict]:

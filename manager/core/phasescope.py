@@ -9,21 +9,21 @@ It is not a second scheduler: member launches are `scheduler`'s, through
 are `coordinate`'s; and what may happen at all is `orchestrator.authorize`,
 asked immediately before every side effect. What it adds:
 
-- **Adoption.** A phase named by the agreement keeps the phase runner
-  until a person adopts it (`adopt`), and adoption is refused while the
-  runner is working it — a legacy run in force, a member agent running,
-  or an operation on its cards left without a receipt. The adoption is a
-  line in the phase card's own log, which is where the runner reads that
-  it stands down (`phases.run_state` → `scoped`), so there is exactly one
-  scheduling owner and the record travels with the card. Nothing about
-  the phase branch, its worktree, a member's branch, the log or what is
-  already integrated changes: adoption only moves who decides next.
-  `release` hands it back, under the same quiescence.
+- **One owner, by queueing (task 188).** Every phase card is its phase
+  scope's. Nobody adopts it and the agreement need not name it: an unnamed
+  phase inherits the Bench scope (`agreements.scope`), a named one only
+  narrows it. Moving the phase card into To Do is the person's queue and
+  delegation (D1), and it queues the phase's unfinished members with it,
+  Backlog ones included (`taskfiles.queue_state`). The historical phase
+  runner and its adoption step are retired; `migrate_model` is the
+  one-time upgrade that moved every phase over, and the only thing that
+  can still hold one back (`agreements.phase_holds`).
 - **Strategy (`may_start`).** Which member may start next: `sequential`
-  is the runner's own rule — one member at a time, in list order, each
-  after the one before it is integrated — and `dependencies` lets members
-  whose in-phase dependencies are integrated run side by side, within the
-  phase's allocation. A member in Backlog is never pulled out of it.
+  is one member at a time, in list order, each after the one before it is
+  integrated — and `dependencies` lets members whose in-phase dependencies
+  are integrated run side by side, within the phase's ceiling. A Backlog
+  member of a queued phase is queued; one of a phase still in Backlog is
+  not.
 - **The phase branch (`run`).** A phase card the owner moved into To Do
   is put in-progress (an automated move: the delegation stands, D1) and
   its branch cut through `phases.ensure_branch` — the one way a phase
@@ -49,6 +49,7 @@ moves and launches nothing.
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 
 import agents
@@ -60,13 +61,23 @@ import gates
 import operations
 import orchestrator
 import phases
+import records
 import state
 import taskfiles
 
 ACTIONS = ("prepare", "integrate", "finish")
-# Stages a phase card may be adopted from: before it is delivered, and
-# never out of Backlog, which is the owner's.
-ADOPTABLE = ("to-do", "in-progress", "review")
+# Stages whose phase cards the upgrade moves to the unified model. Backlog
+# phases need nothing (they are not queued) and Done ones are history.
+ACTIVE = ("to-do", "in-progress", "review")
+# The line the phase scope writes once into a phase's log when it first
+# owns it. This reader does not need it (every phase is its scope's); an
+# older bench sharing the work state reads it and its runner stands down.
+OWNED_LINE = ("scope adopted by the Orchestrator — unified phase model: the "
+              "phase scope owns this phase; the retired phase runner stands "
+              "down")
+RETIRED_ADOPTION = ("adopting and releasing a phase are retired: every phase "
+                    "is its phase scope's, from the moment its card is moved "
+                    "into To Do. Pause it in Orchestrator → Phases instead")
 
 
 class Refused(Exception):
@@ -90,10 +101,14 @@ def _number(task: dict) -> str | None:
 
 
 def mode(task: dict) -> str:
-    """`scoped` or `legacy` for a phase card or a member."""
-    if task.get("isPhase"):
-        return task.get("phaseMode") or "legacy"
-    return (task.get("phase") or {}).get("mode") or "legacy"
+    """`scoped` for a phase card or a member, always (task 188), unless
+    the one-time upgrade held its phase back: `migrating`."""
+    number = _number(task) if task.get("isPhase") else (
+        taskfiles.canonical_number((task.get("phase") or {}).get("number"))
+        if (task.get("phase") or {}).get("number") else None)
+    if number and number in agreements.phase_holds():
+        return "migrating"
+    return "scoped"
 
 
 def phase_of(task: dict, tasks: list[dict]) -> dict | None:
@@ -215,10 +230,7 @@ def may_start(task: dict, tasks: list[dict],
                 break
             if number not in done:
                 return ("waiting-member", f"sequential: card {number} comes "
-                        f"before it and is not integrated yet"
-                        + (" — it is in Backlog, which the phase scope never "
-                           "pulls a card out of" if member["stage"] == "backlog"
-                           else ""))
+                        f"before it and is not integrated yet")
         # in flight means being worked, never merely sitting in a stage
         # (task 160): a later member moved into in-progress/ by mistake
         # would otherwise hold the earlier one while waiting on it
@@ -247,14 +259,11 @@ def _find(filename: str) -> tuple[dict, list[dict]]:
 
 
 def quiescence(phase: dict, tasks: list[dict]) -> list[str]:
-    """What is still working this phase, in words: a legacy run in force,
-    an agent on the phase card or a member, an operation on any of them
-    with no receipt. Empty is quiescent."""
+    """What is still working this phase, in words: an agent on the phase
+    card or a member, an operation on any of them with no receipt. Empty
+    is quiescent. (The phase runner's own run in force no longer counts:
+    the runner is retired and acts on nothing, task 188.)"""
     found = []
-    where = phases.run_state(phases.log_entries(phase.get("body") or ""))
-    if where["state"] == "running":
-        found.append("the phase runner has a run in force — ‖ hold the phase "
-                     "first")
     cards = {phase["file"]} | {m["file"] for m in members(phase, tasks)}
     for name in sorted(cards & _running()):
         found.append(f"an agent is running on {name}")
@@ -273,53 +282,34 @@ def _log(phase: dict, line: str) -> None:
 
 
 def adopt(filename: str, actor: str | None = None) -> dict:
-    """Hand a phase from the phase runner to its phase scope. Refused,
-    with nothing written, unless the agreement names the phase, this
-    installation executes, and the runner is quiescent. Changes no branch,
-    worktree, member, log entry or integrated commit; writes one line."""
-    phase, tasks = _find(filename)
-    if mode(phase) == "scoped":
-        raise Refused("already-adopted", f"{filename} is already run by its "
-                      f"phase scope")
-    if phase["stage"] not in ADOPTABLE:
-        raise Refused("stage-not-adoptable", f"a phase in {phase['stage']}/ is "
-                      f"not adopted; adopt one in " + ", ".join(ADOPTABLE))
-    if phase.get("phaseDrift"):
-        raise Refused("phase-drift", f"{filename} does not resolve: "
-                      f"{phase['phaseDrift'][0]}")
-    reading = agreements.effective()
-    sid = f"phase:{_number(phase)}"
-    if not (reading["configured"] and reading["valid"]) or \
-            agreements.scope(reading, sid) is None:
-        raise Refused("phase-not-in-agreement", f"the agreement in force names "
-                      f"no {sid} scope; add the phase to the agreement first")
-    owner = execowner.authorizes()
-    if not owner["allowed"]:
-        raise Refused(owner["code"], owner["reason"])
-    busy = quiescence(phase, tasks)
-    if busy:
-        raise Refused("not-quiescent", "the phase is still working: "
-                      + "; ".join(busy[:6]), working=busy)
-    who = actor or taskfiles.actor_name() or "unknown"
-    _log(phase, f"scope adopted by {who} — the {sid} scope schedules this "
-                f"phase from here; the phase runner stands down")
-    _record(phase["file"], "adopt", f"adopted into the {sid} scope by {who}; "
-            f"branch, log, members and integrated commits unchanged")
-    state.record_board_event({"kind": "phase", "actor": "board",
-                              "file": filename,
-                              "summary": f"{filename} adopted into its phase "
-                                         f"scope by {who}"})
-    state.broadcast({"type": "board"})
-    return {"card": filename, "scope": sid, "mode": "scoped",
-            "integrated": sorted(integrated(phase), key=int)}
+    """Retired (task 188): every phase is its scope's already. Refused
+    with the way forward; nothing is read beyond the name or written."""
+    raise Refused("adoption-retired", f"{filename}: {RETIRED_ADOPTION}", 410)
 
 
 def release(filename: str, actor: str | None = None) -> dict:
-    """Hand a phase back to the phase runner, quiescent first. The runner
-    does not resume by itself: ▸ run phase is a person's decision."""
+    """Retired (task 188): there is no phase runner to hand a phase back
+    to, so a release cannot resurrect a second scheduler."""
+    raise Refused("adoption-retired", f"{filename}: {RETIRED_ADOPTION}", 410)
+
+
+def resume(filename: str, actor: str | None = None) -> dict:
+    """A person lifts a `held` migration hold (task 188): the phase was
+    halted or held under the retired runner, and carrying on was a
+    person's decision there (▸ run phase). Refused while anything still
+    works it, and for a hold that is not a person's to lift (`busy`, which
+    clears by itself once its work ends). Writes the hold's removal, the
+    ownership line and a receipt on the card; launches nothing."""
     phase, tasks = _find(filename)
-    if mode(phase) != "scoped":
-        raise Refused("not-adopted", f"{filename} is not run by its phase scope")
+    number = _number(phase)
+    hold = agreements.phase_holds().get(number)
+    if hold is None:
+        raise Refused("not-held", f"{filename} is not held by the upgrade; "
+                      f"nothing to resume")
+    if hold.get("kind") != "held":
+        raise Refused("hold-not-yours", f"{filename} is held because "
+                      f"{hold.get('reason')}; that clears by itself once its "
+                      f"work ends")
     owner = execowner.authorizes()
     if not owner["allowed"]:
         raise Refused(owner["code"], owner["reason"])
@@ -328,10 +318,19 @@ def release(filename: str, actor: str | None = None) -> dict:
         raise Refused("not-quiescent", "the phase is still working: "
                       + "; ".join(busy[:6]), working=busy)
     who = actor or taskfiles.actor_name() or "unknown"
-    _log(phase, f"scope released by {who} — the phase runner may run it again")
-    _record(phase["file"], "release", f"released to the phase runner by {who}")
+    with _MODEL_LOCK:
+        doc = agreements.phase_model() or _new_model()
+        holds = dict(doc.get("holds") or {})
+        holds.pop(number, None)
+        doc["holds"] = holds
+        doc.setdefault("resumed", []).append(
+            {"card": number, "by": who, "at": _now()})
+        _write_model(doc)
+    _ensure_owned(phase)
+    _record(phase["file"], "resume", f"resumed under the unified phase model "
+            f"by {who}: the phase scope schedules it from here")
     state.broadcast({"type": "board"})
-    return {"card": filename, "mode": "legacy"}
+    return {"card": filename, "mode": "scoped", "resumed": True}
 
 
 def _record(filename: str, action: str, summary: str) -> None:
@@ -341,11 +340,225 @@ def _record(filename: str, action: str, summary: str) -> None:
     try:
         decisions.note(filename, stage, "action", {
             "action": action, "operation": f"phase-{action}", "phase": "receipt",
-            "outcome": {"adopt": "adopted", "release": "released"}[action],
+            "outcome": {"resume": "resumed", "migrate": "migrated",
+                        "hold": "held"}.get(action, action),
             "summary": summary[:400]},
             key=f"phase-{action}-{time.time_ns()}")
     except (ValueError, OSError):
         pass
+
+
+def _owned(phase: dict) -> bool:
+    """Whether the phase's log already carries an adoption line — the one
+    an older bench reads to stand its runner down."""
+    return any(taskfiles.SCOPE_ADOPTED_RE.match(e)
+               for e in phases.log_entries(phase.get("body") or ""))
+
+
+def _ensure_owned(phase: dict) -> bool:
+    """Write the ownership line once (idempotent: a log that has it is
+    left alone). Returns whether a line was written."""
+    if _owned(phase):
+        return False
+    _log(phase, OWNED_LINE)
+    return True
+
+
+# ── the one-time move to the unified phase model (task 188) ───────────
+#
+# What the upgrade finds, per phase card in To Do, In Progress or Review:
+#
+# | found                                             | what happens                      |
+# | ------------------------------------------------- | --------------------------------- |
+# | adopted already (a `scope adopted` line)          | nothing: it is its scope's        |
+# | the runner never ran it, or ran it to the end     | transferred: the ownership line   |
+# | a runner run in force, nothing working now        | transferred; the run is history   |
+# | a runner run halted, or held by a person          | held (`held`) until a person      |
+# |                                                   | resumes it: ▸ run phase was the   |
+# |                                                   | person's decision, and still is   |
+# | an agent or an unsettled operation on it          | held (`busy`) until it is quiet;  |
+# |                                                   | each pass re-checks and finishes  |
+#
+# Nothing is launched, merged, moved, rewound or cancelled by it; branches,
+# worktrees, logs, members, receipts and frozen run permissions are left as
+# they are. The agreement is not rewritten: a phase entry it names keeps
+# narrowing exactly as before (pause, enablement, authority, limits), and
+# an unnamed phase inherits the Bench scope. The record — installation-
+# local, beside the agreement — says `complete` only after every phase's
+# transfer is durable on its card; a pre-migration recovery copy is kept
+# once and never overwritten.
+
+_MODEL_LOCK = threading.Lock()
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _new_model() -> dict:
+    return {"kind": agreements.PHASE_MODEL_KIND,
+            "v": agreements.PHASE_MODEL_VERSION, "model": "unified",
+            "status": "pending", "holds": {}, "transferred": [],
+            "summary": [], "started": _now(), "completed": None}
+
+
+def _write_model(doc: dict) -> None:
+    path = agreements.phase_model_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records.write_json(path, doc, durable=True)
+
+
+def backup_path():
+    return agreements.state_dir() / "phase-model-backup.json"
+
+
+def _backup(tasks: list[dict]) -> None:
+    """The pre-migration recovery copy, written once: the agreement and
+    its revision, the designation reading, each phase card's log reading
+    and mode, and the operation ledger's open entries. Never overwritten,
+    so a repeated or interrupted migration keeps the first one."""
+    path = backup_path()
+    if path.exists():
+        return
+    doc, problem = agreements.effective_document()
+    phase_cards = []
+    for task in tasks:
+        if not task.get("isPhase"):
+            continue
+        entries = phases.log_entries(task.get("body") or "")
+        phase_cards.append({
+            "card": task["file"], "number": _number(task),
+            "stage": task["stage"],
+            "runner": phases.run_state(entries)["state"],
+            "adopted": _owned(task), "log": entries[-40:],
+            "members": [m["file"] for m in members(task, tasks)]})
+    copy = {"kind": "bench-phase-model-backup", "v": 1, "taken": _now(),
+            "agreement": doc, "agreementProblem": problem,
+            "agreementRevision": agreements.revision(doc),
+            "designation": execowner.reading(),
+            "phases": phase_cards,
+            "openOperations": [op for op in operations.all_ops()
+                               if op.get("status") in operations.OPEN]}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records.write_json(path, copy, durable=True)
+
+
+def _classify(phase: dict, tasks: list[dict]) -> tuple[str, str | None, str]:
+    """(outcome, hold kind or None, words) for one phase card."""
+    if _owned(phase):
+        return "adopted", None, "already run by its phase scope"
+    busy = quiescence(phase, tasks)
+    if busy:
+        return "held", "busy", ("work from before the upgrade is still running "
+                                "on it (" + "; ".join(busy[:3]) + "); it moves "
+                                "over by itself once that ends")
+    where = phases.run_state(phases.log_entries(phase.get("body") or ""))
+    if where["state"] == "halted":
+        return "held", "held", (f"the retired phase runner had halted it — "
+                                f"{(where.get('reason') or '')[:200]}; resume it "
+                                f"in Orchestrator → Phases once that is settled")
+    if where["state"] == "stopped":
+        return "held", "held", ("a person had held it under the retired phase "
+                                "runner; resume it in Orchestrator → Phases to "
+                                "let its phase scope carry on")
+    return "transferred", None, ("moved to its phase scope (the runner had it "
+                                 f"{where['state']})")
+
+
+def migrate_model(board: dict | None = None) -> dict:
+    """Move this installation to the unified phase model, once, and finish
+    any transfer it deferred. Idempotent and restart-safe: a complete
+    record with nothing held returns at once; a partial one is resumed
+    phase by phase, each step checked against what is on the card. Only
+    the execution installation transfers (the ownership line is a write to
+    the shared work state); a replica reads the record it has, or none."""
+    with _MODEL_LOCK:
+        doc = agreements.phase_model()
+        if doc is not None and doc.get("status") == "complete" and \
+                not any((h or {}).get("kind") == "busy"
+                        for h in (doc.get("holds") or {}).values()):
+            return doc
+        if doc is not None and doc.get("status") == "unreadable":
+            return doc        # never written over: a person settles it
+        role = execowner.reading()["role"]
+        if role not in ("designated-here", "unconfigured"):
+            # another installation executes (or none may until a handover
+            # is adopted): it migrates the shared cards, and this replica
+            # writes nothing to them
+            return doc or {"status": "not-this-installation", "holds": {},
+                           "role": role}
+        board = taskfiles.collect() if board is None else board
+        tasks = _tasks(board)
+        _backup(tasks)
+        doc = doc or _new_model()
+        holds = dict(doc.get("holds") or {})
+        transferred = list(doc.get("transferred") or [])
+        summary = []
+        for phase in [t for t in tasks if t.get("isPhase")
+                      and t["stage"] in ACTIVE]:
+            number = _number(phase)
+            if not number:
+                continue
+            previous = holds.get(number)
+            if previous and previous.get("kind") == "held":
+                summary.append(f"#{number} held: {previous['reason']}")
+                continue
+            outcome, kind, words = _classify(phase, tasks)
+            if kind is not None:
+                holds[number] = {"kind": kind, "reason": words,
+                                 "card": phase["file"], "since":
+                                 (previous or {}).get("since") or _now()}
+                summary.append(f"#{number} held: {words}")
+                continue
+            if outcome == "transferred":
+                _ensure_owned(phase)       # durable on the card before
+            holds.pop(number, None)        # the record says it moved
+            if number not in transferred:
+                transferred.append(number)
+                if outcome == "transferred":
+                    _record(phase["file"], "migrate", "moved to the unified "
+                            "phase model: its phase scope owns it from here; "
+                            "branch, log, members and receipts unchanged")
+            summary.append(f"#{number} {words}")
+        reading = agreements.effective()
+        if reading.get("configured") and \
+                reading.get("capacityModel") == agreements.RESERVED:
+            summary.append("this agreement still reserves capacity per phase: "
+                           "a phase it does not name has no slot of its own "
+                           "until it is migrated to shared capacity "
+                           "(Orchestrator → Operating agreement)")
+        if not reading.get("configured"):
+            summary.append("no operating agreement is in force: queued phases "
+                           "wait until one is applied (Orchestrator → "
+                           "Operating agreement)")
+        named = sorted((s["card"] for s in reading.get("scopes") or []
+                        if s["kind"] == "phase"), key=int)
+        if named:
+            summary.append("phase entries kept as they were, narrowing their "
+                           "phases: " + ", ".join(f"#{n}" for n in named))
+        doc.update(holds=holds, transferred=transferred,
+                   summary=summary[:200],
+                   status="complete" if not any(
+                       h["kind"] == "busy" for h in holds.values())
+                   else "partial", checked=_now())
+        if doc["status"] == "complete" and not doc.get("completed"):
+            doc["completed"] = _now()
+        _write_model(doc)
+        return doc
+
+
+def model_reading() -> dict:
+    """The migration record as the page shows it: status, holds and the
+    summary. A read."""
+    doc = agreements.phase_model()
+    if doc is None:
+        return {"status": "not-run", "holds": {}, "summary": [],
+                "backup": False}
+    return {"status": doc.get("status"), "model": doc.get("model"),
+            "holds": doc.get("holds") or {}, "summary": doc.get("summary") or [],
+            "completed": doc.get("completed"), "problem": doc.get("problem"),
+            "transferred": doc.get("transferred") or [],
+            "backup": backup_path().exists()}
 
 
 # ── the side effects, each with an intent and a receipt ───────────────
@@ -408,6 +621,18 @@ def prepare(phase: dict) -> dict | None:
         return None
     if phase["stage"] not in ("to-do", "in-progress"):
         return None
+    if phase.get("phaseDrift"):
+        # a malformed or ambiguous list: nothing is cut or moved until a
+        # person fixes it, and the card says what (task 188)
+        return {"card": phase["file"], "action": "prepare",
+                "outcome": "blocked", "code": "phase-drift",
+                "reason": f"its ## Cards list does not resolve: "
+                          f"{phase['phaseDrift'][0]}; fix it and the next "
+                          f"pass prepares the phase"}
+    if not phase.get("members"):
+        return {"card": phase["file"], "action": "prepare",
+                "outcome": "blocked", "code": "phase-empty",
+                "reason": "it lists no cards, so there is nothing to queue"}
     answer = orchestrator.authorize("prepare", phase["file"])
     if not answer["allowed"]:
         return {"card": phase["file"], "action": "prepare",
@@ -417,6 +642,9 @@ def prepare(phase: dict) -> dict | None:
     if op is None:
         return None
     try:
+        # the ownership line first, on the card, so an older bench sharing
+        # this work state stands its runner down before anything is cut
+        _ensure_owned(phase)
         if phase["stage"] == "to-do":
             again = orchestrator.authorize("prepare", phase["file"])
             if not again["allowed"]:
@@ -424,7 +652,7 @@ def prepare(phase: dict) -> dict | None:
             taskfiles.move_task(phase["file"], "to-do", "in-progress",
                                 actor="orchestrator")
         note = phases.ensure_branch(_phase_record(phase))
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, Refused) as exc:
         return _refused(op, "prepare-refused", str(exc))
     return _ended(op, "prepared", f"{branch} is in place"
                   + (f" ({note})" if note else ""))
@@ -492,16 +720,18 @@ def integrate(member: dict, head: str) -> dict:
 
 
 def run(board: dict) -> list[dict]:
-    """A phase scope's own steps in one pass, for every adopted phase:
+    """A phase scope's own steps in one pass, for every queued phase:
     prepare, freshen, finish. Called by `scheduler.run_pass` under its
-    lock, before member launches are planned."""
+    lock, before member launches are planned. A phase held by the upgrade
+    (`migrating`) is skipped until its hold clears."""
     reading = agreements.effective()
     if not (reading["configured"] and reading["valid"]):
         return []
     tasks = _tasks(board)
     running = _running()
     results = []
-    for phase in [t for t in tasks if t.get("isPhase") and mode(t) == "scoped"]:
+    for phase in [t for t in tasks if t.get("isPhase") and mode(t) == "scoped"
+                  and t["stage"] in ("to-do", "in-progress")]:
         here = agreements.scope(reading, f"phase:{_number(phase)}")
         if here is None or not here["active"]:
             continue
@@ -509,6 +739,8 @@ def run(board: dict) -> list[dict]:
             done = prepare(phase)
             if done:
                 results.append(done)
+                if done.get("outcome") == "blocked":
+                    _block(phase, done["reason"])
                 continue
             if phase["stage"] != "in-progress":
                 continue
@@ -735,10 +967,13 @@ def _member_rows(phase: dict, tasks: list[dict], running: set[str],
         elif member["stage"] == "review":
             word, why = "integrating", ("its checks, review and integration "
                                         "are the phase scope's next steps")
-        elif member["stage"] == "backlog":
-            word, why = "in-backlog", ("in Backlog: the phase scope never pulls "
-                                       "a card out of Backlog; move it into "
-                                       "To Do to queue it")
+        elif member["stage"] == "backlog" and \
+                not (member.get("queue") or {}).get("inherited"):
+            queue = member.get("queue") or {}
+            word, why = ("blocked" if queue.get("state") == "blocked"
+                         else "not-queued"), (
+                queue.get("reason") or "in Backlog, and its phase is not queued")
+            code = "membership" if queue.get("state") == "blocked" else None
         else:
             early = moved_early(member, tasks, running, opened)
             blocked = None if early else may_start(member, tasks, running,
@@ -762,22 +997,30 @@ def _member_rows(phase: dict, tasks: list[dict], running: set[str],
                 word, why = "queued", ("queued: the phase scope starts it on its "
                                        "next pass if it is authorized and a slot "
                                        "and a launch are free")
+        queue = member.get("queue") or {}
+        if queue.get("inherited") and word in ("queued", "ready", "waiting"):
+            why = f"{why} — queued with its phase; stored in Backlog until it " \
+                  f"starts"
         rows.append({"card": member["file"], "number": number,
                      "title": member.get("title"),
                      "stage": member["stage"], "state": word, "why": why,
-                     "code": code})
+                     "code": code,
+                     # stored stage against effective queue (task 188)
+                     "effective": queue.get("effective") or member["stage"],
+                     "inherited": bool(queue.get("inherited"))})
     return rows
 
 
 LABELS = {
-    "not-configured": "Phase runner",
-    "not-adopted": "Not adopted",
+    "not-queued": "Not queued",
+    "orchestration-off": "Orchestration off",
+    "migrating": "Held by the upgrade",
+    "blocked": "Blocked",
     "paused": "Paused",
     "unknown": "Outcome unknown",
     "preparing": "Preparing",
     "working": "Working",
     "moved-early": "Member moved early",
-    "queue-needed": "Member in Backlog",
     "waiting": "Waiting",
     "ready": "Ready to start",
     "stopped": "Stopped",
@@ -805,46 +1048,25 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
     sid = f"phase:{_number(phase)}"
     valid = bool(reading.get("configured") and reading.get("valid"))
     here = agreements.scope(reading, sid) if valid else None
-    scoped = mode(phase) == "scoped"
-    out = {"card": phase["file"], "scope": sid if here else None,
-           "named": here is not None, "adopted": scoped}
+    out = {"card": phase["file"], "scope": sid,
+           "named": bool(here) and not here.get("implicit"),
+           # every phase is its scope's (task 188): nobody adopts it
+           "adopted": True, "owner": "phase scope",
+           "queued": phase["stage"] in ("to-do", "in-progress"),
+           "compat": phase.get("phaseCompat")}
 
     def done(word, line, who=None, step=None, **extra):
         out.update(word=word, label=LABELS[word], line=line,
                    next=({"who": who, "text": step} if step else None), **extra)
         return out
 
-    if not scoped:
-        out["owner"] = "phase runner"
-        if here is None:
-            return done("not-configured", "run by the phase runner: ▸ run phase "
-                        "starts and advances it. The operating agreement names "
-                        "no phase scope for it, so no orchestrator touches it")
-        busy = quiescence(phase, tasks)
-        adoptable = not busy and phase["stage"] in ADOPTABLE
-        if adoptable:
-            step = ("adopt it in Orchestrator → Phases; the phase scope then "
-                    "prepares its branch and schedules its members")
-        elif busy:
-            step = "it cannot be adopted yet: " + "; ".join(busy[:3])
-        else:
-            step = (f"move it into To Do, then adopt it (a phase in "
-                    f"{phase['stage']}/ is not adopted)")
-        return done("not-adopted", f"named in the agreement as {sid} but not "
-                    f"adopted: until a person adopts it the phase runner owns "
-                    f"it, and no orchestrator schedules its members",
-                    "you", step, adoptable=adoptable)
-    out["owner"] = "phase scope"
-    if used is None:
-        used = orchestrator.usage(reading, tasks)
-    out["budget"] = budget(here, reading, used) if here else None
     rows = _member_rows(phase, tasks, running, opened, items)
     out["members"] = rows
     by_state: dict[str, list[dict]] = {}
     for row in rows:
         by_state.setdefault(row["state"], []).append(row)
-    backlog = by_state.get("in-backlog") or []
-    out["backlog"] = [r["card"] for r in backlog]
+    out["backlog"] = [r["card"] for r in rows if r["stage"] == "backlog"]
+    out["inherited"] = [r["card"] for r in rows if r.get("inherited")]
     if phase["stage"] == "done":
         return done("delivered", "delivered: the integrated phase branch is in "
                     "the application base")
@@ -853,11 +1075,36 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
                     "integrated head is checked, reviewed and merged under the "
                     "integration merge rule", "board",
                     "see the phase card's merge requirements")
-    if here is None:
-        return done("paused", "adopted, but the operating agreement no longer "
-                    "names its scope, so nothing schedules it", "you",
-                    "name the phase again in Orchestrator → Operating agreement, "
-                    "or release it to the phase runner")
+    if phase.get("phaseDrift"):
+        return done("blocked", f"its ## Cards list does not resolve: "
+                    f"{phase['phaseDrift'][0]}; nothing is queued or started "
+                    f"until it does", "you", "fix the phase's ## Cards list "
+                    "(or the other phase that lists the same card)")
+    if phase["stage"] == "backlog":
+        return done("not-queued", "in Backlog: neither the phase nor its "
+                    "members are queued", "you", "move the phase card into To "
+                    "Do — that queues the phase and every unfinished member, "
+                    "Backlog ones included")
+    hold = agreements.phase_holds().get(_number(phase) or "")
+    if hold:
+        return done("migrating", f"held by the upgrade to the unified phase "
+                    f"model: {hold.get('reason')}",
+                    "you" if hold.get("kind") == "held" else "board",
+                    "resume it here (Orchestrator → Phases)"
+                    if hold.get("kind") == "held" else
+                    "it moves over by itself once that work ends",
+                    hold=hold.get("kind"))
+    if not valid or here is None:
+        return done("orchestration-off", "queued, but orchestration is "
+                    + ("off on this board: no operating agreement is in force"
+                       if not reading.get("configured") else
+                       "off: the agreement in force has problems")
+                    + "; nothing starts until it is on", "you",
+                    "apply an operating agreement in Orchestrator → Operating "
+                    "agreement")
+    if used is None:
+        used = orchestrator.usage(reading, tasks)
+    out["budget"] = budget(here, reading, used)
     if not here["active"]:
         why = (f"paused by the {here['pausedBy']} scope" if here.get("pausedBy")
                else f"its scope is off ({here.get('off')})")
@@ -883,9 +1130,10 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
                     "integrates it once it reaches review", on=w["card"])
     if phase["stage"] != "in-progress" or not phases.branch_exists(
             agents.phase_branch(phase["file"])):
-        return done("preparing", f"adopted; the phase scope moves it into In "
+        return done("preparing", f"queued; the Orchestrator moves it into In "
                     f"Progress and cuts {agents.phase_branch(phase['file'])} on "
-                    f"its next pass", "board", "wait for the next pass")
+                    f"its next pass, then starts its members in their turn",
+                    "board", "wait for the next pass")
     if early:
         return done("moved-early", f"{_names(early)} sits in In Progress with "
                     f"nothing working it, ahead of its turn; nothing launches "
@@ -904,14 +1152,12 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
         return done("stopped", f"{_names(by_state['stopped'])} has work on its "
                     f"branch and nothing running on it", "you",
                     "see Orchestrator → Recovery, or ▸ start work on it")
-    front = next((r for r in rows if r["state"] != "integrated"), None)
-    if front and front["state"] == "in-backlog":
-        later = [r for r in backlog if r is not front]
-        return done("queue-needed", f"#{front['number']} is next and is in "
-                    f"Backlog; the phase scope never pulls a card out of Backlog"
-                    + (f" ({_names(later)} {'waits' if len(later) == 1 else 'wait'} "
-                       f"there too)" if later else ""),
-                    "you", f"move #{front['number']} into To Do to queue it")
+    blocked = by_state.get("blocked") or []
+    if blocked:
+        b = blocked[0]
+        return done("blocked", f"#{b['number']} cannot be queued: {b['why']}",
+                    "you", "fix the phase lists so every member belongs to "
+                    "one phase")
     missing = (out["budget"] or {}).get("missing") or []
     candidates = (by_state.get("ready") or []) + (by_state.get("queued") or [])
     if missing and candidates:
@@ -919,19 +1165,14 @@ def lifecycle(phase: dict, tasks: list[dict], reading: dict,
                     f"start: {missing[0]}", "you", missing[0].split("; ")[-1])
     if candidates:
         r = candidates[0]
-        return done("ready", f"#{r['number']} is queued in To Do and may start: "
-                    f"{r['why']}", "board", "the phase scope starts it on its "
+        return done("ready", f"#{r['number']} is queued and may start: "
+                    f"{r['why']}", "board", "the Orchestrator starts it on its "
                     f"next pass", on=r["card"])
-    waiting = [r for r in rows if r["state"] in ("waiting", "blocked", "held")]
+    waiting = [r for r in rows if r["state"] in ("waiting", "held")]
     if waiting:
         w = waiting[0]
         return done("waiting", f"#{w['number']} waits: {w['why']}", "board",
                     "nothing to do unless the reason names you")
-    if backlog:
-        return done("queue-needed", f"{_names(backlog)} "
-                    f"{'is' if len(backlog) == 1 else 'are'} in Backlog; the "
-                    f"phase scope never pulls a card out of Backlog", "you",
-                    f"move #{backlog[0]['number']} into To Do to queue it")
     return done("waiting", "nothing to start right now")
 
 
@@ -1000,23 +1241,25 @@ def projection(board: dict | None = None,
     out = []
     for phase in [t for t in tasks if t.get("isPhase")]:
         sid = f"phase:{_number(phase)}"
-        named = bool(reading["configured"] and reading["valid"]
-                     and agreements.scope(reading, sid))
-        here = agreements.scope(reading, sid) if named else None
+        valid = bool(reading["configured"] and reading["valid"])
+        here = agreements.scope(reading, sid) if valid else None
         life = lifecycle(phase, tasks, reading, running, opened, used, by_card)
         entry = {"card": phase["file"], "number": _number(phase),
                  "stage": phase["stage"], "mode": mode(phase),
-                 "named": named, "scope": sid if named else None,
-                 "owner": life["owner"],
-                 "strategy": (here or {}).get("strategy"),
+                 # named: the agreement has an entry narrowing this phase;
+                 # unnamed phases inherit the Bench scope (task 188)
+                 "named": bool(here) and not here.get("implicit"),
+                 "scope": sid, "owner": life["owner"],
+                 "strategy": (here or {}).get("strategy")
+                 or agreements.STRATEGIES[0],
                  "integrated": sorted(integrated(phase), key=int),
+                 "members": life.get("members") or [],
+                 "delivered": phase["stage"] == "done",
                  "lifecycle": {k: v for k, v in life.items() if k != "members"}}
-        if named and mode(phase) != "scoped":
-            busy = quiescence(phase, tasks)
-            entry["adoptable"] = not busy and phase["stage"] in ADOPTABLE
-            entry["working"] = busy
-        if mode(phase) == "scoped":
-            entry["members"] = life.get("members") or []
-            entry["delivered"] = phase["stage"] == "done"
+        hold = agreements.phase_holds().get(_number(phase) or "")
+        if hold:
+            entry["hold"] = hold
+            entry["resumable"] = hold.get("kind") == "held"
         out.append(entry)
-    return {"phases": out, "branchPrefix": config.PHASE_BRANCH_PREFIX}
+    return {"phases": out, "branchPrefix": config.PHASE_BRANCH_PREFIX,
+            "model": model_reading()}

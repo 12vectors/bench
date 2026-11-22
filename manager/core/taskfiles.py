@@ -288,11 +288,12 @@ def read_task(path: Path, stage: str) -> dict:
         # drift between them are derived across the whole board by
         # `collect` — a member card says nothing about its phase.
         "isPhase": is_phase,
-        # Which scheduler runs this phase (task 143): `legacy`, the phase
-        # runner, until a person explicitly adopts it into its phase scope
-        # — a line in its own phase log, so the decision travels with the
-        # card and the runner reads it where it reads everything else.
+        # Which scheduler runs this phase: its phase scope, always (task
+        # 188). Kept as a field so an older reader still finds it.
         "phaseMode": phase_mode(text) if is_phase else None,
+        # A line an older bench wrote to this phase's log after the unified
+        # model (a phase-runner start, a scope release): ignored, and said.
+        "phaseCompat": phase_compat(text) if is_phase else None,
         "cards": listed,
         "members": [],
         "phase": None,
@@ -497,17 +498,118 @@ def phase_log_entries(text: str) -> list[str]:
     return entries
 
 
+RUN_STARTED_RE = re.compile(r"^run started on ")
+
+
 def phase_mode(text: str) -> str:
-    """Which scheduler runs a phase (task 143): `scoped` when the newest
-    adoption line in its log adopted it into its phase scope, `legacy` —
-    the phase runner — otherwise. Absent means legacy, so every phase
-    written before scopes existed keeps the runner it had."""
+    """Which scheduler runs a phase: its phase scope, always (task 188).
+
+    Before task 188 a phase was the historical phase runner's until a
+    person adopted it, and a `scope released` line handed it back. That
+    runner is retired: one model, one scheduler, and no line in a log can
+    hand a phase to a scheduler that no longer exists. The adoption lines
+    the upgrade writes are for older boards sharing this work state (they
+    read one and stand down); this reader no longer needs them."""
+    return "scoped"
+
+
+def phase_compat(text: str) -> str | None:
+    """A phase-runner start or a scope release written *after* the newest
+    adoption line: an older bench sharing this work state wrote it. It is
+    ignored (the phase stays its scope's) and said, so the board that wrote
+    it can be upgraded. None when the log has no such line."""
     for entry in reversed(phase_log_entries(text)):
         if SCOPE_ADOPTED_RE.match(entry):
-            return "scoped"
-        if SCOPE_RELEASED_RE.match(entry):
-            return "legacy"
-    return "legacy"
+            return None
+        if SCOPE_RELEASED_RE.match(entry) or RUN_STARTED_RE.match(entry):
+            if not any(SCOPE_ADOPTED_RE.match(e)
+                       for e in phase_log_entries(text)):
+                return None   # history from before the unified model
+            return (f"an older bench wrote \"{entry[:120]}\" to this phase's "
+                    f"log after it moved to the unified phase model; it is "
+                    f"ignored — the Orchestrator still owns the phase. Upgrade "
+                    f"the board that wrote it")
+    return None
+
+
+QUEUE_WORDS = ("queued", "not-queued", "blocked", "working", "review",
+               "delivered", "archived")
+
+
+def queue_state(task: dict, phase: dict | None) -> dict:
+    """A card's effective queue state against its stored stage (task 188):
+    the one resolver the scheduler, `orchestrator.authorize`, the board's
+    projections, the API and the diagnostics all read.
+
+    The stored stage is the directory the file sits in and never changes
+    here. A phase member stored in Backlog *inherits* its phase's queue
+    while the phase card is in To Do or In Progress: it reads `queued`,
+    `inherited: True`, and the scheduler may start it in its turn without
+    anyone moving it. Its first launch is what moves it (an automated
+    move: the phase's delegation stands). Every other stage reads as
+    itself — In Progress is never rewound, Review, Done and Archived are
+    never queued again. A member whose membership does not resolve (two
+    phases list it) is `blocked`, never queued, with the reason."""
+    stage = task["stage"]
+    out = {"stage": stage, "effective": stage, "inherited": False,
+           "state": None, "reason": None, "phase": None}
+    if phase is not None:
+        out["phase"] = phase["file"]
+    if stage == "archive":
+        out.update(state="archived", reason="archived: out of every column")
+        return out
+    if stage == "done":
+        out.update(state="delivered", reason="in Done")
+        return out
+    if stage == "review":
+        out.update(state="review", reason="in Review")
+        return out
+    if stage == "in-progress":
+        out.update(state="working", reason="in In Progress")
+        return out
+    if stage == "to-do":
+        out.update(state="queued", reason="in To Do")
+        return out
+    # backlog: queued only through a queued phase
+    if task.get("phaseDrift") and not task.get("isPhase"):
+        out.update(state="blocked", reason="its phase membership does not "
+                   "resolve (" + task["phaseDrift"][0] + "); fix the phase "
+                   "lists before it can be queued")
+        return out
+    if phase is None:
+        out.update(state="not-queued", reason="in Backlog")
+        return out
+    if phase.get("phaseDrift"):
+        out.update(state="blocked", reason=f"its phase {_phase_name(phase)} "
+                   f"does not resolve ({phase['phaseDrift'][0]}); fix its "
+                   f"## Cards list first")
+        return out
+    if phase["stage"] in ("to-do", "in-progress"):
+        out.update(state="queued", effective="to-do", inherited=True,
+                   reason=f"queued with its phase {_phase_name(phase)}, which "
+                          f"is in {STAGE_WORDS.get(phase['stage'], phase['stage'])}; "
+                          f"its stored stage stays Backlog until its launch")
+        return out
+    out.update(state="not-queued",
+               reason=f"in Backlog, and its phase {_phase_name(phase)} is in "
+                      f"{STAGE_WORDS.get(phase['stage'], phase['stage'])}: "
+                      + ("move the phase card into To Do to queue it with "
+                         "its phase" if phase["stage"] == "backlog" else
+                         "a phase past In Progress queues no new member"))
+    return out
+
+
+STAGE_WORDS = {"backlog": "Backlog", "to-do": "To Do",
+               "in-progress": "In Progress", "review": "Review", "done": "Done"}
+
+
+def weave_queue(stages: list[dict]) -> None:
+    """Every card's `queue` (task 188), after `weave_phases`."""
+    tasks = [task for stage in stages for task in stage["tasks"]]
+    phases = {t["file"]: t for t in tasks if t["isPhase"]}
+    for task in tasks:
+        phase = phases.get((task.get("phase") or {}).get("file") or "")
+        task["queue"] = queue_state(task, None if task["isPhase"] else phase)
 
 
 def weave_phases(stages: list[dict]) -> None:
@@ -747,6 +849,7 @@ def collect() -> dict:
         if steady:
             break
     weave_phases(stages)
+    weave_queue(stages)
     weave_stacks(stages)
 
     extras = {}
