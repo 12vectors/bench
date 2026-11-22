@@ -208,8 +208,12 @@ class BrainReviews(unittest.TestCase):
         self.assertIn(brief_sha(BRIEF)[:12], page)
         self.assertIn("the revision the run was launched with", page)
         self.assertIn("Current — the brief is the revision it assessed", page)
-        self.assertIn("How reports are routed", self.text(b, ".b-side"),
-                      "an entry citing the card is listed as citing it")
+        # an entry citing another review on the card does not cite this one
+        self.assertNotIn("How reports are routed", self.text(b, ".b-side"))
+        b = self.open(f"/brain/r/7/{self.r2}")
+        side = self.text(b, ".b-side")
+        self.assertIn("How reports are routed", side, "the entry citing the review is listed")
+        self.assertIn("cites this review", side)
         b = self.open("/brain/r/9/" + rid("rl-", OLD))
         page = self.text(b)
         self.assertIn("Card archived", page)
