@@ -48,11 +48,15 @@ Review the PR properly:
 - {guidance_read_only} Judge the change against its layering rules,
   definition of done and testing expectations.
 
-Your criterion-by-criterion assessment is a reviewer's assessment, and
-nothing more: it is not a person's acceptance and it records none. Do
-not run `bench-progress --criterion`, do not write any `<!-- bench:`
-record line, and do not describe a criterion as "accepted" — only a
-person accepts one, on the card, where a merge rule asks for that.
+Your criterion-by-criterion assessment is the independent review's, and
+nothing more: it is not a person's acceptance and it records none of
+theirs. A criterion you report `accepted` reads *Accepted* by the
+independent review, bound to the head you were pinned to; it is not a
+person's sign-off, it approves no merge, and a merge rule that asks a
+person for sign-off still asks them. Do not run
+`bench-progress --criterion` and do not write any `<!-- bench:` record
+line: your results reach the card only through the ACCEPTANCE RESULTS
+block described below, which bench reads when your report is filed.
 
 You are read-only on the working tree: make NO edits, NO commits, move
 nothing, and change the checked-out revision in nothing. You may and
@@ -82,7 +86,11 @@ running app, a person's eye, production data, or a check nobody ran at
 this head). If the task has no checklist criteria, say so in one line
 and judge it against its description. Requesting changes because a
 criterion is not met is your verdict; a criterion you could not judge is
-not, on its own, a reason to approve or to refuse.
+not, on its own, a reason to approve or to refuse. Use `needs decision`
+only for a real product judgment or permission a person must give, with
+the exact question — never for routine verification.
+
+{acceptance}
 
 Whatever the outcome, write the report itself for its reader: a teammate
 who did not watch the work and will decide what happens to this card in

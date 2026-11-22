@@ -709,6 +709,14 @@ def apply(job_id: str) -> dict:
         job.update({"status": "applied", "decidedBy": decision["author"],
                     "decidedAt": at, "committed": result["committed"]})
         _save(job)
+    # An explicit brief save is one of the authorized writes that gives new
+    # criteria their ids (task 190), so nobody has to Track acceptance. A
+    # no-op when every criterion already has one; never a reason the
+    # applied brief is undone.
+    try:
+        acceptance.adopt(filename, job["stage"])
+    except Exception:   # noqa: BLE001
+        pass
     state.record_board_event({
         "kind": "agent", "actor": "you", "file": filename,
         "summary": (f"{filename}: brief refined from comment {job['comment']} "
