@@ -17,6 +17,11 @@ is launched, and everything is put back.
   the accepted commit it would bring in, and that a provider's
   mergeability is not evidence the combination works.
 - Reading posts nothing and writes nothing.
+- A gated card (`UpdatingAgainstTheTarget`): *Ready to admit*, then
+  *Target changed* with **Update against target and verify** as its
+  primary action, the armed click updating its own branch on the
+  fixture, and the combined head needing its own check and a fresh
+  review.
 """
 
 import hashlib
@@ -203,6 +208,220 @@ class AgainstTheTarget(unittest.TestCase):
                 self.assertEqual([], b.eval("window.__posts"), "reading posted something")
                 b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
         self.assertEqual(before, self.digest(), "reading wrote something")
+
+
+STEM2 = "95-admission-update"
+TARGET2 = "fixture-target-189b"
+SEL2 = f'#board article.card[data-file="{STEM2}.md"]'
+
+
+def read2() -> dict:
+    status, body = S["backend"].get(f"/api/card/delivery?file={STEM2}.md")
+    if status != 200:
+        raise bv.CheckFailed(f"/api/card/delivery answered {status}: {body[:300]!r}")
+    return json.loads(body)["delivery"]
+
+
+class UpdatingAgainstTheTarget(unittest.TestCase):
+    """A gated Review card through its states, in a real browser (review
+    round 1 of task 189): *Ready to admit* while its head holds the target;
+    *Target changed* once accepted work lands there, with **Update against
+    target and verify** as the card's primary action; the armed click,
+    which merges the target into the card's own branch on the disposable
+    fixture (the only write here, and the one the click asks for); and
+    afterwards the combined head needing its own check and a fresh review.
+
+    The merge rule is the fixture's own `profiles.json`, restored after.
+    The check is a stand-in that passes; the verdict is written as bench
+    records one. The fixture's application has no remote, so nothing is
+    pushed and no agent is launched by a clean update."""
+
+    @classmethod
+    def setUpClass(cls):
+        backend = S["backend"]
+        git, app = backend._git, backend.app
+        cls.policy = backend.tool / "manager" / "local" / "profiles.json"
+        cls.saved = cls.policy.read_bytes() if cls.policy.exists() else None
+        check = backend.base / "admission-check.py"
+        check.write_text("print('ran 1 test — OK')\n", encoding="utf-8")
+        cls.policy.write_text(json.dumps({
+            "v": 1,
+            "checks": [{"name": "unit", "run": f"{backend.python} {check}",
+                        "root": "source"}],
+            "profiles": {"work": {"verify": ["unit"]},
+                         "review": {"verify": ["unit"]}},
+            "gates": {"acceptance": {"checks": ["unit"], "review": "bench"}},
+        }), encoding="utf-8")
+        cls.branches = []
+        git(app, "branch", TARGET2, "main")
+        cls.branches.append(TARGET2)
+        git(app, "checkout", "-q", "-b", f"task/{STEM2}", TARGET2)
+        (app / "admission-card.txt").write_text("the card's work\n", encoding="utf-8")
+        git(app, "add", "admission-card.txt")
+        git(app, "commit", "-q", "-m", "fixture: the card's work")
+        cls.branches.append(f"task/{STEM2}")
+        git(app, "checkout", "-q", "main")
+        cls.card = backend.work / "tasks" / "review" / f"{STEM2}.md"
+        cls.card.write_text(
+            f"# Admission update fixture\n\n**Status:** Review\n**Priority:** Low\n"
+            f"**Base branch:** {TARGET2}\n**PR:** {PR}5\n\n"
+            f"A disposable card for the admission update case.\n", encoding="utf-8")
+        cls.gates_dir = backend.tool / "manager" / "local" / "state" / "gates"
+        cls.gates_dir.mkdir(parents=True, exist_ok=True)
+        cls.head = cls.checked_and_approved()
+
+    @classmethod
+    def checked_and_approved(cls) -> str:
+        backend = S["backend"]
+        status, body = backend.post("/api/verify", {
+            "file": f"{STEM2}.md", "stage": "review", "check": "unit"}, timeout=120)
+        if status != 200:
+            raise bv.SetupError(f"/api/verify answered {status}: {body[:300]!r}")
+        head = read2()["candidate"]["commit"]
+        (cls.gates_dir / f"{STEM2}.verdicts.json").write_text(json.dumps([{
+            "v": 1, "task": f"{STEM2}.md", "verdict": "APPROVE", "head": head,
+            "agent": None, "actor": "agent", "reviewId": None, "note": "fixture",
+            "recorded": time.time(), "published": None}]), encoding="utf-8")
+        cls.card.write_text(cls.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        return head
+
+    @classmethod
+    def tearDownClass(cls):
+        backend = S["backend"]
+        git, app = backend._git, backend.app
+        cls.card.unlink(missing_ok=True)
+        (cls.gates_dir / f"{STEM2}.verdicts.json").unlink(missing_ok=True)
+        (backend.tool / "manager" / "local" / "state" / "integration"
+         / f"{STEM2}.json").unlink(missing_ok=True)
+        tree = backend.trees / STEM2
+        if tree.exists():
+            try:
+                git(app, "worktree", "remove", "--force", str(tree))
+            except bv.SetupError:
+                pass
+        for ref in reversed(cls.branches):
+            try:
+                git(app, "branch", "-D", ref)
+            except bv.SetupError:
+                pass
+        if cls.saved is None:
+            cls.policy.unlink(missing_ok=True)
+        else:
+            cls.policy.write_bytes(cls.saved)
+        S["browser"].eval("localStorage.removeItem('bench-theme')")
+
+    def load(self, state: str, width=1280, height=900, dark=None):
+        b = S["browser"]
+        b.viewport(width, height)
+        b.goto("/")
+        if dark is not None:
+            b.eval(f"S.dark = {str(dark).lower()}; applyTheme();")
+        b.eval("window.__posts = []; { const f = window.fetch; window.fetch = (u, o) => {"
+               " if (o && o.method && o.method !== 'GET') window.__posts.push(String(u));"
+               " return f.call(window, u, o); }; }")
+        js = (f"(document.querySelector('{SEL2} .intstat') || {{}})"
+              f".dataset?.integration === '{state}'")
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            if b.wait(js, 4):
+                return b
+            b.eval("loadState()")
+        raise bv.CheckFailed(f"the face never read {state}; the backend says "
+                             f"{read2().get('integration')}")
+
+    def open(self, b):
+        b.eval(f"document.querySelector('{SEL2}').focus()")
+        b.key("Enter")
+        if not b.wait("!!document.querySelector('#drawer.open #dsec-overview .dint')", 15):
+            raise bv.CheckFailed("the Overview drew no Against the target block")
+
+    def overview(self) -> dict:
+        return S["browser"].eval("""(() => {
+          const s = document.querySelector('#drawer.open #dsec-overview .dstatus');
+          const i = document.querySelector('#drawer.open #dsec-overview .dint');
+          const p = s && s.querySelector('.dsacts [data-dslot]');
+          return { word: s && s.dataset.word, primary: p ? p.innerText.trim() : null,
+                   disabled: p ? !!p.disabled : null,
+                   state: i && i.dataset.integration, text: i ? i.innerText : '' }; })()""")
+
+    def test_3_ready_to_admit_while_the_head_holds_the_target(self):
+        found = read2()
+        self.assertEqual("ready-to-merge", found["status"]["word"])
+        self.assertEqual("ready-to-admit", found["integration"]["state"])
+        for width, height, dark in ((1280, 900, False), (390, 844, True)):
+            with self.subTest(width=width, dark=dark):
+                b = self.load("ready-to-admit", width, height, dark)
+                self.open(b)
+                got = self.overview()
+                self.assertEqual("ready-to-merge", got["word"])
+                self.assertEqual("ready-to-admit", got["state"])
+                self.assertIn("Ready to admit", got["text"])
+                shot(f"admission-ready-{width}-{'night' if dark else 'day'}")
+                self.assertEqual([], b.eval("window.__posts"), "reading posted something")
+                b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+
+    def test_4_target_changed_offers_the_update_and_the_click_updates(self):
+        backend = S["backend"]
+        git, app = backend._git, backend.app
+        # accepted work lands on the target the card does not hold
+        git(app, "checkout", "-q", TARGET2)
+        (app / "admission-accepted.txt").write_text("accepted\n", encoding="utf-8")
+        git(app, "add", "admission-accepted.txt")
+        git(app, "commit", "-q", "-m", "accepted: another card's work")
+        git(app, "checkout", "-q", "main")
+        self.card.write_text(self.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        found = read2()
+        self.assertEqual("target-changed", found["status"]["word"])
+        self.assertEqual("update-target", found["primary"]["action"])
+        for width, height, dark in ((390, 844, False), (1280, 900, True)):
+            with self.subTest(width=width, dark=dark):
+                b = self.load("target-changed", width, height, dark)
+                self.assertEqual("Target changed — integration check needed", b.eval(
+                    f"document.querySelector('{SEL2} .intstat .rvl').innerText"))
+                self.open(b)
+                got = self.overview()
+                self.assertEqual("target-changed", got["word"])
+                self.assertIn("Update against target", got["primary"])
+                self.assertFalse(got["disabled"])
+                shot(f"admission-target-changed-{width}-{'night' if dark else 'day'}")
+                self.assertEqual([], b.eval("window.__posts"), "reading posted something")
+                b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        # the armed click: the first arms, the second fires
+        b = self.load("target-changed", 1280, 900, False)
+        self.open(b)
+        button = "#drawer.open #dsec-overview .dstatus .dsacts button[data-dslot]"
+        b.click(button)
+        self.assertEqual([], b.eval("window.__posts"), "arming posted something")
+        b.click(button)
+        if not b.wait("window.__posts.some(u => u.includes('/api/card/integration/update'))", 15):
+            raise bv.CheckFailed(f"the second click posted nothing: {b.eval('window.__posts')}")
+        deadline = time.time() + 60
+        found = read2()
+        while time.time() < deadline and found["candidate"]["commit"] == self.head:
+            time.sleep(1)
+            found = read2()
+        new = found["candidate"]["commit"]
+        self.assertNotEqual(self.head, new, "the card's branch was not updated")
+        self.assertTrue(self.card.exists(), "the card stays in Review")
+        self.assertTrue(found["integration"]["fresh"], found["integration"])
+        # its old check and review are history: the combined head needs its own
+        self.assertEqual("checks-needed", found["status"]["word"])
+        self.assertEqual("integration-check-needed", found["integration"]["state"])
+        b = self.load("integration-check-needed", 1280, 900, False)
+        self.open(b)
+        got = self.overview()
+        self.assertEqual("checks-needed", got["word"])
+        shot("admission-after-update-1280-day")
+        b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        # the check passes on the combined head; a fresh review is still owed
+        status, body = backend.post("/api/verify", {
+            "file": f"{STEM2}.md", "stage": "review", "check": "unit"}, timeout=120)
+        self.assertEqual(200, status, body[:300])
+        self.card.write_text(self.card.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        found = read2()
+        self.assertEqual("review-needed", found["status"]["word"],
+                         "the approval of the old head is not this head's")
+        self.assertTrue(found["integration"]["fresh"])
 
 
 if __name__ == "__main__":
