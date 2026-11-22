@@ -198,8 +198,8 @@ ACTIONS = {
     # completion sheet is merge & clean up's confirmation).
     "run-required-checks": {"handler": "/api/verify/required", "kind": "api",
                             "arm": False},
-    # Opens the card's Acceptance section, where Track acceptance and each
-    # criterion's decision already live: the action changes nothing itself.
+    # Opens the card's Acceptance section, where each criterion's result
+    # and a person's decision already live: the action changes nothing itself.
     "confirm-criteria": {"handler": None, "kind": "view", "arm": False},
     "read-failure": {"handler": None, "kind": "view", "arm": False},
     "evidence": {"handler": None, "kind": "view", "arm": False},
@@ -1108,8 +1108,9 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                     and r["state"] not in ("met", "overridden")]
     if signoff_rows:
         row = signoff_rows[0]
-        label = ("Track acceptance" if row["reason"] == "signoff-untracked"
-                 else "Confirm criteria")
+        # task 190: there is no tracking step any more — a person's first
+        # decision gives untracked criteria their ids — so one action
+        label = "Confirm criteria"
         return ("signoff-needed",
                 f"Sign-off needed for {here}: {row['plain'][0].lower()}"
                 f"{row['plain'][1:]}.",

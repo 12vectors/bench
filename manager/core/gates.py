@@ -197,8 +197,9 @@ REASONS = {
     "signoff-other-head": ("criteria were accepted against an earlier "
                            "commit, and a sign-off is about the commit that "
                            "would merge"),
-    "signoff-needs-work": ("a person recorded that an acceptance criterion "
-                           "is not met"),
+    "signoff-needs-work": ("an acceptance criterion is recorded as not met — "
+                           "by a person, the independent review or the "
+                           "implementation agent"),
     "signoff-unreadable": ("the card's text could not be read, so no "
                            "acceptance record can be weighed"),
 }
@@ -280,11 +281,13 @@ REMEDIES = {
     "policy-refused": ("Fix the gate block in the profile document — every "
                        "refusal is named with its remedy in the ⚕ "
                        "Configuration check and the ⚖ sheet."),
-    "signoff-untracked": ("Open the card's Acceptance section and use Track "
-                          "acceptance, then confirm each criterion. Tracking "
-                          "only adds ids; it accepts nothing."),
+    "signoff-untracked": ("Open the card's Acceptance section and record your "
+                          "decision on each criterion. The first decision, "
+                          "saved brief or filed run report gives the criteria "
+                          "their ids; that accepts nothing by itself."),
     "signoff-no-criteria": ("Write the acceptance criteria into the brief as a "
-                            "checklist, track them, and confirm each — or use "
+                            "checklist and confirm each once it is met — "
+                            "bench gives them their ids itself — or use "
                             "a merge rule without sign-off for this kind of "
                             "card."),
     "signoff-pending": ("Confirm each remaining criterion in the card's "
@@ -299,7 +302,7 @@ REMEDIES = {
                            "Confirm them again against the commit that would "
                            "merge — the earlier decisions are kept as "
                            "history."),
-    "signoff-needs-work": ("Fix what the decision says is missing, then have "
+    "signoff-needs-work": ("Fix what the result says is missing, then have "
                            "a person decide the criterion again."),
     "signoff-unreadable": ("Make the card readable on this board (refresh, or "
                            "check the work state), then read the gate again."),
@@ -379,7 +382,7 @@ PLAIN = {
     "head-unknown": "Cannot assess: no implementation commit on this board",
     "policy-refused": "Cannot assess: the merge rules do not resolve",
     "signoff-accepted": "Every criterion accepted for {at}",
-    "signoff-untracked": "Acceptance not tracked — Track acceptance, then confirm",
+    "signoff-untracked": "Criteria not identified yet — record a decision on each",
     "signoff-no-criteria": "No acceptance criteria to sign off",
     "signoff-pending": "Not every criterion is accepted yet",
     "signoff-recheck": "A criterion needs to be decided again",
@@ -1489,9 +1492,10 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
     bench's evidence as it reads now, and the criterion's wording. Four
     things keep it from saying more than anyone established:
 
-    - **Tracked, all of it.** An untracked card, or criteria added since
-      tracking, have no identity a decision could be about — so the gate
-      asks for Track acceptance first, and tracking accepts nothing.
+    - **Identified, all of it.** A criterion with no id has no decision a
+      person could have recorded about it — so the gate asks for a
+      decision on each; the first one gives the criteria their ids (task
+      190), and an id accepts nothing.
     - **Every tracked criterion accepted.** `reported` (an agent's claim,
       or a tick by hand before tracking), `pending`, `needs work` and
       `needs recheck` are all unmet, each with its own sentence.
@@ -1550,13 +1554,23 @@ def _signoff_requirement(filename: str, policy: str, head: dict,
         return unmet("signoff-recheck",
                      f"{REASONS['signoff-recheck']}: "
                      f"{listed(by_state['recheck'])}")
-    waiting = by_state.get("pending", []) + by_state.get("reported", [])
+    # Accepted by the independent review is the review's conclusion, not
+    # a person's sign-off (task 190): it waits here with the rest, and the
+    # sentence says why rather than counting it.
+    by_review = [c for c in by_state.get("accepted", []) if c.get("by") != "person"]
+    if by_review:
+        row["counts"]["accepted"] -= len(by_review)
+    waiting = (by_state.get("pending", []) + by_state.get("reported", [])
+               + by_state.get("not-verified", []) + by_state.get("decision", [])
+               + by_review)
     if waiting:
         return unmet("signoff-pending",
                      f"{row['counts']['accepted']} of {len(criteria)} "
-                     f"criteria accepted; still to decide: {listed(waiting)}. "
-                     f"A reported criterion is an agent's claim, not an "
-                     f"acceptance")
+                     f"criteria accepted by a person; still to decide: "
+                     f"{listed(waiting)}. A reported criterion is an agent's "
+                     f"claim, not an acceptance" +
+                     (", and the independent review's acceptance is not a "
+                      "person's sign-off" if by_review else ""))
     # Every criterion reads accepted. Now: about which commit?
     if not commit:
         return unmet("signoff-other-head",

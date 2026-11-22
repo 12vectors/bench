@@ -52,11 +52,15 @@ HARNESS = "\n".join([
     lift(r"^const esc = \(s\) =>.*?\n.*?\n", "esc()"),
     lift(r"^const DTABS = .*?\];\n", "DTABS"),
     lift(r"^const ACC_GLYPH = .*?\n", "ACC_GLYPH"),
+    lift(r"^const ROLE_WORDS = .*?\n", "ROLE_WORDS"),
+    lift(r"^const OWNER_WORDS = .*?\n", "OWNER_WORDS"),
     lift(r"^const JOB_WORD = \{.*?\n\};\n", "JOB_WORD"),
     lift(r"^const RELEVANCE_TONE = .*?\n", "RELEVANCE_TONE"),
     *(function(name) for name in (
         "actLabel", "ago", "whenOf", "stampOf", "cardSplit", "recordHtml",
         "evidenceOptions", "criterionHtml", "accActor", "acceptanceHtml",
+        # task 190: outcome first, results the runs reported
+        "resultRecordHtml", "accDom", "accBy", "accOutcomeHtml", "accReportingHtml",
         # task 125: a failed re-read keeps the last reading, marked
         "staleWords", "accStaleHtml", "acceptanceBody",
         "roundLine", "sinceRound", "findingHtml", "md", "reportHtml", "reviewsHtml",
@@ -135,14 +139,50 @@ class Rendering(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)
 
-    def test_an_untracked_card_says_results_are_not_recorded_and_ticks_nothing(self):
+    def test_an_untracked_card_reads_incomplete_offers_no_tracking_and_ticks_nothing(self):
+        """Task 190: no Track acceptance. Every criterion is listed with
+        its state in words; a tick by hand is an unverified claim."""
         out = self.render(card("- [x] Ticked by hand\n- [ ] Not ticked\n"))
         html = out["acceptance"]
-        self.assertIn("Acceptance results not recorded", html)
-        self.assertIn("a legacy claim, not an acceptance", html)
-        self.assertIn('id="accTrack"', html)
-        self.assertNotIn("abox", html, "no criterion row, so no tick box at all")
+        self.assertIn("Acceptance: incomplete", html)
+        self.assertIn("1 Not verified · 1 No result yet", html)
+        self.assertIn("an unverified claim", html)
+        self.assertNotIn("accTrack", html)
+        self.assertNotIn("Track acceptance", html)
+        self.assertNotIn("Acceptance results not recorded", html)
+        self.assertNotIn('aria-hidden="true">✓</span>', html, "nothing ticked")
+        self.assertIn('data-decide="@', html, "a person may still decide by revision")
         self.assertEqual(out["chips"], [], "no count on the face of an untracked card")
+
+    def test_results_reported_by_runs_render_with_their_reasons(self):
+        a = acceptance.criterion_rev("Opens on the title")
+        b = acceptance.criterion_rev("Keyboard reaches every section")
+        c = acceptance.criterion_rev("Counts link to sections")
+        prov = acceptance.provenance_line({"kind": "pr", "reviewer": "Juno",
+                                           "filed": "2026-11-09T10:00:00Z",
+                                           "acceptance": {
+            "v": 1, "role": "reviewer", "reported": True, "head": "0123456789ab",
+            "results": [{"rev": a, "result": "accepted", "reason": "read the handler " + HOSTILE},
+                        {"rev": b, "result": "decision", "reason": "Should Tab skip the tools?"},
+                        {"rev": c, "result": "not-verified", "reason": "needs a browser"}],
+            "problems": ["not understood: blah"], "missing": 0}})
+        text = card("- [ ] Opens on the title <!-- ac:title -->\n"
+                    "- [ ] Keyboard reaches every section <!-- ac:keys -->\n"
+                    "- [ ] Counts link to sections <!-- ac:counts -->\n",
+                    "## PR review at 0123456789ab — 2026-11-09 10:00 (Juno)\n\n"
+                    + prov + "\n\nPR REVIEW: APPROVE\n")
+        out = self.render(text)
+        html = out["acceptance"]
+        self.assertIn("Acceptance: needs your decision", html)
+        self.assertIn("<b>Next — you:</b>", html)
+        self.assertIn("Should Tab skip the tools?", html)
+        for word in ("Accepted", "Needs your decision", "Not verified"):
+            self.assertIn(f'<span class="aword">{word}</span>', html)
+        self.assertIn("independent review Juno", html)
+        self.assertIn("not understood: blah", html)
+        self.assertNotIn("<img", html)
+        self.assertEqual(out["chips"][0]["label"], "1/3 accepted")
+        self.assertTrue(out["chips"][0]["face"], "a decision waiting is on the face")
 
     def test_only_an_accepted_criterion_wears_the_tick_and_the_count_says_accepted(self):
         text = card(
@@ -160,8 +200,9 @@ class Rendering(unittest.TestCase):
                     "note": "tabs skip"}) + "\n")
         out = self.render(text)
         html = out["acceptance"]
-        self.assertIn("<b>1 of 3</b> criteria accepted", html)
-        self.assertNotIn("complete", html.split("criteria accepted")[1][:60])
+        self.assertIn("Acceptance: changes needed", html)
+        self.assertIn("1 Not met · 1 No result yet · 1 Accepted", html)
+        self.assertIn("of 3 criteria", html)
         self.assertEqual(html.count('aria-hidden="true">✓</span>'), 1)
         self.assertIn('class="arow needs-work"', html)
         self.assertNotIn("<img", html)
@@ -169,7 +210,7 @@ class Rendering(unittest.TestCase):
         chip = out["chips"][0]
         self.assertEqual(chip["label"], "1/3 accepted")
         self.assertEqual(chip["section"], "acceptance")
-        self.assertIn("Not a measure of completion", chip["title"])
+        self.assertIn("Acceptance: changes needed", chip["title"])
         self.assertIn('<span class="n">1/3</span>', out["tabs"])
 
     def test_a_reworded_criterion_shows_recheck_with_the_prior_result_kept(self):
@@ -184,7 +225,8 @@ class Rendering(unittest.TestCase):
         self.assertIn('class="arow recheck"', html)
         self.assertIn("reworded after this decision", html)
         self.assertIn("<b>accepted</b>", html, "the earlier decision stays readable")
-        self.assertIn("<b>0 of 1</b>", html)
+        self.assertIn("Acceptance: needs recheck", html)
+        self.assertIn("1 Needs recheck", html)
 
     def test_a_historic_request_for_changes_is_explained_never_approved(self):
         text = card(
@@ -231,11 +273,13 @@ class SourceInvariants(unittest.TestCase):
                         "identity before the sections")
 
     def test_viewing_assigns_nothing(self):
-        """Only the armed Track action posts to /track; loading reads."""
+        """Task 190: there is no Track action at all; loading reads, and the
+        only acceptance write is a person's explicit decision."""
         self.assertIn("acceptance.read(", function("loadAcc"))
         self.assertIn("`/api/card/acceptance?file=", HTML)
-        self.assertEqual(HTML.count("/api/card/acceptance/track"), 1)
-        self.assertIn("label: 'Track acceptance', confirm: true", function("wireDetail"))
+        self.assertEqual(HTML.count("/api/card/acceptance/track"), 0)
+        self.assertNotIn("Track acceptance", function("wireDetail"))
+        self.assertIn("'/api/card/acceptance/decide'", function("wireDetail"))
 
     def test_a_finished_run_never_reads_as_doing_now(self):
         body = function("progressFact")

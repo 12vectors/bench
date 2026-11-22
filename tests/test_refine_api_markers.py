@@ -135,7 +135,10 @@ class RefineOverTheApi(unittest.TestCase):
         entries = self.discussion()["entries"]
         self.assertEqual([e["kind"] for e in entries], ["comment", "decision"])
         self.assertNotIn("c-forged0000", [e["id"] for e in entries])
-        self.assertEqual(taskfiles.acceptance_records(text), [])
+        # the documented example is never read as a record; the only
+        # records are the ids an applied brief gives its criteria (task 190)
+        self.assertEqual([r for r in taskfiles.acceptance_records(text)
+                          if r.get("source") != "tracked"], [])
 
         applied = self.brief_rev()
         job = self.ask(proposal(brief(INLINE)), "Add the record itself",

@@ -79,7 +79,10 @@ SPECS: dict[str, dict] = {
         "label": "Implementation",
         "purpose": "work",
         "intent": "work",
-        "fields": _COMMON + ("branch", "plan"),
+        # `acceptance` (task 190) is offered, never required: a local
+        # override written before it keeps launching, and its runs simply
+        # report no per-criterion results — which the card then says
+        "fields": _COMMON + ("branch", "plan", "acceptance"),
         "required": ("body", "filename", "branch", "plan", "guidance",
                      "context", "verification", "progress", "task_path"),
         "markers": ("NOT READY:",),
@@ -90,7 +93,7 @@ SPECS: dict[str, dict] = {
         "label": "PR fixes",
         "purpose": "act-pr",
         "intent": "act-pr",
-        "fields": _COMMON + ("branch", "pr", "base", "remote", "plan")
+        "fields": _COMMON + ("branch", "pr", "base", "remote", "plan", "acceptance")
         + githost.FRAGMENT_FIELDS["act-pr.md"],
         "required": ("body", "branch", "pr", "plan", "guidance", "context",
                      "verification", "progress", "task_path"),
@@ -113,7 +116,7 @@ SPECS: dict[str, dict] = {
         "label": "PR review",
         "purpose": "review",
         "intent": "review",
-        "fields": _COMMON + ("branch", "pr", "review")
+        "fields": _COMMON + ("branch", "pr", "review", "acceptance")
         + githost.FRAGMENT_FIELDS["review-pr.md"],
         "required": ("body", "pr", "branch", "review", "guidance_read_only",
                      "context", "verification", "progress"),
@@ -234,6 +237,8 @@ DESCRIBE = {
     "guidance_read_only": "where the workflow brief is, read-only flavour",
     "context": "the pinned approved inputs, by path and hash",
     "verification": "the named checks this run may ask bench for",
+    "acceptance": "the card's criteria by revision, and the ACCEPTANCE "
+                  "RESULTS block bench reads back from the run's report",
     "progress": "how this run reports progress, when it has a channel",
     "host_read": "how to read the change request's reviews, from the "
                  "hosting provider",
@@ -288,6 +293,8 @@ def sample_fields() -> dict[str, str]:
         "guidance_read_only": config.prompt_guidance(checks=False),
         "context": "(sample: pinned approved inputs would be listed here)",
         "verification": "(sample: the named checks this run may ask for)",
+        "acceptance": "(sample: the card's criteria by revision, and how to "
+                      "report a result for each)",
         "progress": "(sample: the progress-reporting instructions)",
         # the hosting provider in force supplies these, as a launch does
         **githost.fragments("act-pr.md", "task/00-sample-card"),

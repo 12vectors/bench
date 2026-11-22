@@ -105,18 +105,22 @@ class SignoffCase(GateCase):
 
 class SignoffIsOptIn(SignoffCase):
 
-    def test_an_untracked_card_needs_track_acceptance(self):
+    def test_an_untracked_card_asks_for_decisions_not_tracking(self):
+        """Task 190: there is no Track acceptance step. An untracked card
+        still needs a person's decisions; the first one gives the criteria
+        their ids."""
         self.rule(signoff="criteria")
         decision = self.decide()
         self.assertEqual(decision["decision"], "blocked")
         row = self.signoff_row(decision)
         self.assertEqual(row["reason"], "signoff-untracked")
         self.assertEqual(gates.severity(row["reason"]), "needed")
-        self.assertIn("Track acceptance", row["remedy"])
+        self.assertNotIn("Track acceptance", row["remedy"])
+        self.assertIn("record your decision on each criterion", row["remedy"])
         found = delivery.for_card(CARD)
         self.assertEqual(found["status"]["word"], "signoff-needed")
         self.assertEqual(found["primary"]["action"], "confirm-criteria")
-        self.assertEqual(found["primary"]["label"], "Track acceptance")
+        self.assertEqual(found["primary"]["label"], "Confirm criteria")
 
     def test_tracking_accepts_nothing(self):
         self.rule(signoff="criteria")

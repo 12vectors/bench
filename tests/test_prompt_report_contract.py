@@ -41,6 +41,9 @@ FIELDS = {"branch": "task/x", "stage": "backlog", "filename": "x.md",
           # whose profile declares none, which is every board by default
           # (task 68)
           "verification": "",
+          # the criteria by revision and the ACCEPTANCE RESULTS block, as
+          # `acceptance.criteria_prompt` renders it (task 190)
+          "acceptance": "",
           # how to report progress, as `progress.prompt_block` renders it —
           # "" for an adapter that declares no progress channel (task 73)
           "progress": "",

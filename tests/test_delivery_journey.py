@@ -149,7 +149,7 @@ LEDGER: dict[str, tuple[str, ...]] = {
             "test_delivery_status.TheCopyMatrix.test_f18_pr_already_merged_on_github",
             "test_delivery_status.TheCopyMatrix.test_f26_after_a_restart_all_met"),
     "E19": ("test_signoff_and_review_lists.SignoffIsOptIn."
-            "test_an_untracked_card_needs_track_acceptance",
+            "test_an_untracked_card_asks_for_decisions_not_tracking",
             "test_signoff_and_review_lists.SignoffIsOptIn."
             "test_partially_accepted_is_still_needed",
             "test_signoff_and_review_lists.SignoffIsOptIn."

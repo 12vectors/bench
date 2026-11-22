@@ -134,7 +134,9 @@ class StructuredDetail(unittest.TestCase):
                        " y('#dsec-overview .dstatus')]; })()")
         self.assertEqual(order, sorted(order), f"title, tabs, tools, next step out of order: {order}")
         overview = b.eval("document.querySelector('#dsec-overview').innerText")
-        self.assertIn("Acceptance results not recorded", overview)
+        # task 190: the Overview carries the acceptance outcome, no setup
+        self.assertIn("Acceptance: incomplete", overview)
+        self.assertNotIn("Track acceptance", overview)
         self.assertIn("Olive asked for changes at 0123456789ab", overview)
         self.assertIn("1 PR update since", overview)
         shot("detail-overview-1280x900")
@@ -150,52 +152,53 @@ class StructuredDetail(unittest.TestCase):
         self.assertTrue(b.wait("document.activeElement.id === 'dtab-overview'", 5),
                         "the tab row does not wrap")
 
-        # — a legacy card: results not recorded, nothing ticked, nothing written —
+        # — a legacy card: every criterion listed with its state, the tick
+        #   an unverified claim, no tracking step, nothing written (task 190) —
         self.tab("acceptance")
         before = self.card.read_text(encoding="utf-8")
         text = b.eval("document.querySelector('#dsec-acceptance').innerText")
-        self.assertIn("Acceptance results not recorded", text)
-        self.assertIn("a legacy claim, not an acceptance", text)
+        self.assertIn("Acceptance: incomplete", text)
+        self.assertIn("an unverified claim", text)
+        self.assertNotIn("Track acceptance", text)
+        self.assertFalse(b.eval("!!document.querySelector('#accTrack')"))
+        self.assertEqual(b.eval("document.querySelectorAll('#dsec-acceptance details.arow').length"), 4)
         self.assertEqual(self.card.read_text(encoding="utf-8"), before,
                          "viewing the card wrote to it")
         self.assertFalse(b.eval(f"!!document.querySelector('#board article.card[data-file=\"{FILE}\"] [data-section]')"),
                          "an untracked card wears a count")
         shot("detail-acceptance-untracked-1280x900")
 
-        # — Track: armed, then ids, pending, and the legacy tick as a claim —
-        b.click("#accTrack")
-        self.assertTrue(b.wait("document.querySelector('#accTrack').classList.contains('armed')", 5),
-                        "Track did not arm")
-        b.click("#accTrack")
-        self.assertTrue(b.wait("document.querySelectorAll('#dsec-acceptance details.arow').length === 4", 10),
-                        "tracking did not draw four criteria")
+        # — a person's decision on a criterion that has no id yet: the
+        #   decision is the write that gives the card's criteria their ids —
         reading = self.reading()
-        self.assertEqual([c["state"] for c in reading["criteria"]],
-                         ["pending", "reported", "pending", "pending"])
+        self.assertEqual([c["state"] for c in reading["items"]],
+                         ["pending", "not-verified", "pending", "pending"])
+        key = reading["items"][0]["key"]
+        dom = "_" + key[1:]
+        b.click(f"#dsec-acceptance details[data-keep=\"{key}\"] > summary")
+        b.click(f"#dsec-acceptance details[data-keep=\"{key}:decide\"] > summary")
+        b.eval(f"(() => {{ const n = document.querySelector('#acc-note-{dom}');"
+               " n.value = 'Checked by eye at 1280 and 390px: title, then next step.';"
+               " n.dispatchEvent(new Event('input'));"
+               f" const r = document.querySelector('#acc-ref-{dom}');"
+               " r.value = 'detail-overview-1280x900.png'; r.dispatchEvent(new Event('input')); })()")
+        b.click(f"[data-decide=\"{key}\"]")
+        self.assertTrue(b.wait("document.querySelector('#dsec-acceptance .acount').innerText"
+                               ".includes('1 Accepted')", 10), "the count did not reach 1 Accepted")
+        reading = self.reading()
+        self.assertTrue(all(c["id"] for c in reading["items"]), "the decision did not assign ids")
         self.assertIn("- [x] Keyboard users reach every section and tool <!-- ac:",
                       self.card.read_text(encoding="utf-8"), "the original tick was not kept")
         face = f"#board article.card[data-file=\"{FILE}\"] [data-section=\"acceptance\"]"
         self.assertTrue(b.wait(f"(document.querySelector('{face}') || {{}}).innerText"
-                               f" && document.querySelector('{face}').innerText.includes('0/4 accepted')", 10),
-                        "the face did not show 0/4 accepted")
-
-        # — a manual visual acceptance, with a note and a reference —
-        first = reading["criteria"][0]["id"]
-        b.click(f"#dsec-acceptance details[data-keep=\"{first}\"] > summary")
-        b.eval(f"(() => {{ const n = document.querySelector('#acc-note-{first}');"
-               " n.value = 'Checked by eye at 1280 and 390px: title, then next step.';"
-               " n.dispatchEvent(new Event('input'));"
-               f" const r = document.querySelector('#acc-ref-{first}');"
-               " r.value = 'detail-overview-1280x900.png'; r.dispatchEvent(new Event('input')); })()")
-        b.click(f"[data-decide=\"{first}\"]")
-        self.assertTrue(b.wait("document.querySelector('#dsec-acceptance .acount').innerText"
-                               ".includes('1 of 4')", 10), "the count did not reach 1 of 4")
-        self.assertTrue(b.wait(f"document.querySelector('{face}').innerText.includes('1/4 accepted')", 10),
+                               f" && document.querySelector('{face}').innerText.includes('1/4 accepted')", 10),
                         "the face count did not follow")
+        first = reading["items"][0]["id"]
         row = f"#dsec-acceptance details[data-keep=\"{first}\"]"
+        self.assertTrue(b.wait(f"!!document.querySelector('{row} .abox')", 10))
         self.assertEqual(b.eval(f"document.querySelector('{row} .abox').innerText"), "✓")
-        record = b.eval(f"document.querySelector('{row} .arec').innerText")
-        self.assertIn("confirmed by a person", record)
+        record = b.eval(f"document.querySelector('{row} .arec').textContent")
+        self.assertIn("decided by a person", record)
         self.assertIn("detail-overview-1280x900.png", record)
         self.assertEqual(b.eval("document.querySelectorAll('#dsec-acceptance .abox')"
                                 ".length - [...document.querySelectorAll('#dsec-acceptance .abox')]"
@@ -204,10 +207,10 @@ class StructuredDetail(unittest.TestCase):
         shot("detail-acceptance-confirmed-1280x900")
 
         # — a stale page cannot overwrite the newer decision —
-        second = reading["criteria"][2]
+        second = reading["items"][2]
         code, body = S["backend"].post("/api/card/acceptance/decide", {
             "file": FILE, "stage": "review", "criterion": first, "state": "needs-work",
-            "rev": reading["criteria"][0]["rev"], "basis": reading["criteria"][0]["basis"],
+            "rev": reading["items"][0]["rev"], "basis": None,
             "note": "from a page that never saw the acceptance"})
         self.assertEqual(code, 409, body[:200])
         self.assertTrue(json.loads(body).get("stale"))
@@ -215,7 +218,7 @@ class StructuredDetail(unittest.TestCase):
         # — survives a reload —
         self.open_card()
         self.tab("acceptance")
-        self.assertIn("1 of 4", b.eval("document.querySelector('#dsec-acceptance .acount').innerText"))
+        self.assertIn("1 Accepted", b.eval("document.querySelector('#dsec-acceptance .acount').innerText"))
 
         # — a finding, its reported fix, and the resolution on a recheck —
         self.tab("reviews")

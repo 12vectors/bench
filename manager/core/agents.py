@@ -44,6 +44,7 @@ import threading
 import time
 from pathlib import Path
 
+import acceptance
 import config
 import events
 import evidence
@@ -113,6 +114,58 @@ def _file_report(record: dict, heading: str, report: str,
     board writes; the run's own lines shaped like it were quoted by
     `reports.defuse` before reaching here."""
     reportfiling.file(record, heading, report, provenance)
+
+
+def _run_output(record: dict) -> str:
+    try:
+        return Path(record["log"]).read_text(encoding="utf-8", errors="replace")
+    except (OSError, KeyError, TypeError):
+        return ""
+
+
+def _acceptance_results(record: dict, output: str, intent: str,
+                        head: str | None) -> dict | None:
+    """What the run's own closing report says about each criterion, ready
+    for the provenance line bench writes under the report (task 190).
+
+    Filing a run's report is the authorized write that gives the card's
+    criteria their identities, so nobody has to Track acceptance: the ids
+    are assigned first (`acceptance.adopt`, a no-op once every criterion
+    has one), then the run's `ACCEPTANCE RESULTS` block is read off its full
+    output — never the clipped report — and validated against the card as
+    it is now. Only on the board the run was launched from; anything that
+    goes wrong here leaves the report to be filed as it always was, with no
+    results, which the card then says."""
+    filename = record["task"]
+    board = Path(record["tasks"]) if record.get("tasks") else config.TASKS
+    try:
+        if board.resolve() != Path(config.TASKS).resolve():
+            return None
+        stage = find_stage_of(filename)
+        if not stage:
+            return None
+        try:
+            acceptance.adopt(filename, stage)
+        except Exception:   # noqa: BLE001 — ids are bookkeeping; results bind by revision
+            pass
+        text = (config.TASKS / stage / filename).read_text(encoding="utf-8")
+        return acceptance.filing_results(output, text, filename,
+                                         acceptance.ROLE_OF_INTENT[intent], head)
+    except Exception:   # noqa: BLE001 — never stop a report being filed
+        return None
+
+
+def _work_provenance(record: dict, intent: str) -> dict | None:
+    """A work report's or PR update's board-written line: the commit the
+    run left its branch at and what it reported per criterion."""
+    head = acceptance.branch_head(record["task"])
+    results = _acceptance_results(record, _run_output(record), intent, head)
+    if results is None:
+        return None
+    return {"kind": "work" if intent == "work" else "pr-update",
+            "head": {"ref": record.get("branch"), "commit": head,
+                     "authority": "local"} if head else None,
+            "acceptance": results}
 
 
 def _session_report(record: dict, report: str) -> None:
@@ -745,6 +798,7 @@ def start_agent(filename: str, stage: str, takeover: bool = False) -> dict:
         plan=plans.brief(plan), context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
+        acceptance=acceptance.criteria_prompt(task["body"], "implementer"),
         **config.prompt_fields(filename, "in-progress"), **_progress_fields("work")))
     proc, log_file, model = launch("work", prompt, worktree, agent_id,
                                     filename, log_path, manifest)
@@ -1030,7 +1084,7 @@ def _reap_agent(agent_id: str, proc: subprocess.Popen, log_file) -> None:
                       f" (worktree {record['worktree']} kept: {kept})"))
     elif rc == 0 and not stopped:
         report = _report_of(record)
-        _file_report(record, "Work report", report)
+        _file_report(record, "Work report", report, _work_provenance(record, "work"))
         _session_report(record, report)
         if _no_new_commits(record):
             # A "clean" exit with an empty branch is how permission bugs
@@ -1146,6 +1200,7 @@ def start_pr_review(filename: str, stage: str) -> dict:
             context=profiles.prompt_block(manifest),
             verification=profiles.verification_block(
                 manifest, gatepolicy.required_lines(manifest)),
+            acceptance=acceptance.criteria_prompt(task["body"], "reviewer"),
             **githost.fragments("review-pr.md", branch),
             **config.prompt_fields(filename, stage), **_progress_fields("review")))
         proc, log_file, model = launch("review", prompt, Path(pinned["path"]),
@@ -1549,6 +1604,7 @@ def _start_pr_fix(filename: str, stage: str, operation: str | None,
         context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
+        acceptance=acceptance.criteria_prompt(task["body"], "implementer"),
         **githost.fragments("act-pr.md", branch),
         **config.prompt_fields(filename, stage), **_progress_fields("act-pr")))
     # act-pr is the one intent allowed to push: the PR must update.
@@ -1602,7 +1658,7 @@ def _reap_pr_fix(agent_id: str, proc: subprocess.Popen, log_file) -> None:
             text = ""
         idx = text.find("ADDRESSED:")
         report = _report_of(record, text[idx:] if idx >= 0 else text)
-        _file_report(record, "PR update", report)
+        _file_report(record, "PR update", report, _work_provenance(record, "act-pr"))
         _session_report(record, report)
         summary = f"{name} acted on {filename}'s PR — re-review when ready"
     elif stopped:
@@ -1667,8 +1723,14 @@ def _settle_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         report = _report_of(record, text[idx:] if idx >= 0 else text)
         match = re.search(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", report)
         verdict = match.group(1) if match else None
-        _file_report(record, _review_heading(pinned, moved), report,
-                     _pr_provenance(agent_id, pinned, moved, text))
+        prov = _pr_provenance(agent_id, pinned, moved, text)
+        # the reviewer's per-criterion results (task 190), bound to the head
+        # bench pinned the review to — never to whatever the branch is now
+        results = _acceptance_results(record, text, "review",
+                                      (pinned.get("head") or {}).get("commit"))
+        if results is not None:
+            prov["acceptance"] = results
+        _file_report(record, _review_heading(pinned, moved), report, prov)
         _session_report(record, report)
         if verdict:
             # Bench's own record of what its reviewer found, bound to the

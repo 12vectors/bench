@@ -193,7 +193,8 @@ class SignoffIsOptIn(unittest.TestCase):
         found = delivery()
         self.assertEqual(found["status"]["word"], "signoff-needed")
         self.assertEqual(found["primary"]["action"], "confirm-criteria")
-        self.assertEqual(found["primary"]["label"], "Track acceptance")
+        # task 190: no tracking step, so one action whatever the ids say
+        self.assertEqual(found["primary"]["label"], "Confirm criteria")
         b = load()
         wait_for_word("signoff-needed")
         # read as case_delivery_status reads it: the pill's word, not its
@@ -212,7 +213,7 @@ class SignoffIsOptIn(unittest.TestCase):
         self.assertEqual("signoff-needed", status["word"])
         # the heading is styled upper-case, so innerText reads it that way
         self.assertIn("sign-off needed", status["heading"].lower())
-        self.assertIn("track acceptance", status["primary"].lower())
+        self.assertIn("confirm criteria", status["primary"].lower())
         self.assertFalse(status["disabled"])
         S["metrics"]["signoffOverview"] = status
         close_detail()
@@ -238,12 +239,13 @@ class SignoffIsOptIn(unittest.TestCase):
                 f"!!document.querySelector('{OVERVIEW} .dstatus .dsacts [data-dslot]')"):
             b.click(f"{OVERVIEW} .dstatus .dsacts [data-dslot]")
         if not b.wait(opened, 15):
-            raise bv.CheckFailed("Track acceptance did not open the Acceptance section "
+            raise bv.CheckFailed("Confirm criteria did not open the Acceptance section "
                                  "with its sign-off line")
         line = b.eval("document.querySelector('#accSignoff').innerText")
         shot("signoff-acceptance-section-1280x900")
         self.assertIn("sign-off required", line.lower())
-        self.assertIn("track acceptance", line.lower())
+        self.assertIn("record your decision on each criterion", line.lower())
+        self.assertNotIn("track acceptance", line.lower())
         self.assertEqual(before, card_digest(), "opening the section wrote something")
         close_detail()
 

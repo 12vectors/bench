@@ -68,6 +68,8 @@ Do this properly:
 
 {verification}
 
+{acceptance}
+
 {progress}
 
 End your reply with a report whose FIRST line is exactly
