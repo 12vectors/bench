@@ -54,7 +54,7 @@ L12 gates brainreviews
 L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
-L16 changes brainwrite
+L16 changes brainwrite reportfiling
 L17 completion
 L18 stacks
 L19 delivery stackactions results cycletime
@@ -117,6 +117,17 @@ classification records under `brain/reviews/` (whose format it owns; the
 writer is `brainwrite`), bench's evidence records and the PR poll's last
 observation (`reviews.observed`), and writes nothing. `brainwrite` and
 `routes` import it.
+
+`reportfiling` (task 169) sits beside `brainwrite` (L16), directly
+above `sync`: filing a run's closing report as a durable operation —
+its destination, run, heading (a review's identity) and exact block
+recorded before the first append, the append made through
+`taskfiles.append_to_task` without its commit and committed through
+`taskfiles.commit_edit` so the outcome is recorded, a person's retry and
+the start-up reconciliation — and the Brain's machine-local review index,
+read beside `brainreviews.index` and written again only by an explicit
+rebuild. It needs `sync` for push status, so it cannot sit lower;
+`agents`, `routes` and `board` import it.
 
 `braindraft` (task 175) sits beside `refine` and `reasoning` (L28): a
 person's Brain drafting request, one bounded `brain`-intent run per
@@ -392,7 +403,7 @@ L11 acceptance callers
 L12 gates brainreviews
 L13 required doctor orchestrator
 L14 events drive sync commands
-L15 changes brainwrite
+L15 changes brainwrite reportfiling
 L16 completion
 L17 stacks
 L18 delivery stackactions results cycletime
@@ -485,6 +496,7 @@ neither.
 | progress records | `progress` | `progress._LOCK` | no |
 | required-check batches, review-entry record | `required` | `required._LOCK`, `_ON_REVIEW_LOCK` | no |
 | refinement jobs | `refine` | the refine registry | no |
+| report filing operations, the Brain's review index (task 169) | `reportfiling` (`agents` decides when to file) | `reportfiling.LOCK`, interprocess | yes |
 | orchestrator reasoning jobs, facts documents, retained responses (task 139) | `reasoning` | `reasoning.LOCK` | no |
 | Brain drafting requests: conversation, rounds, validated proposal, source bindings (task 175) | `braindraft` (the entry itself is `brainwrite`'s) | `braindraft.LOCK` | no |
 | drive record, scrubbed drive log | `drive` | the one drive | no |
@@ -537,6 +549,8 @@ recovery._save
 recovery.breaker_failure
 recovery.breaker_reset
 recovery.breaker_success
+reportfiling._index_write
+reportfiling._put
 settings.apply
 setupbase.write_decisions
 verify._provision_source
@@ -719,5 +733,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 166
+routes 169
 ```

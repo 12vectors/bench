@@ -269,8 +269,10 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # retarget, apply), browser-mutation; task 181 three (ask, retry,
         # cancel a question), browser-mutation; task 182 one, migrating
         # reserved capacity to shared, policy-mutation; task 168 two, a
-        # filed review's classification and override, browser-mutation
-        self.assertEqual(99, len(self.routes))
+        # filed review's classification and override, browser-mutation;
+        # task 169 two, a retained report's retry and the review index's
+        # rebuild, browser-mutation
+        self.assertEqual(101, len(self.routes))
         self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

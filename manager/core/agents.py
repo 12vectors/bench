@@ -44,7 +44,6 @@ import threading
 import time
 from pathlib import Path
 
-import acceptance
 import config
 import events
 import evidence
@@ -58,6 +57,7 @@ import plans
 import profiles
 import progress
 import records
+import reportfiling
 import reports
 import results
 import reviews
@@ -65,7 +65,7 @@ import state
 import taskfiles
 import templates
 import verify
-from taskfiles import (actor_name, append_to_task, collect, commit_edit,
+from taskfiles import (actor_name, collect, commit_edit,
                        find_stage_of, move_task, read_task, set_assignee)
 
 # A phase runs on an integration branch of its own — phases.py owns the
@@ -102,33 +102,17 @@ def _file_report(record: dict, heading: str, report: str,
     report where it went — or not at all (task 148). The stage is looked up
     on that board and the append is bound to it, so a lookup on one board
     can no longer become a write on another, and a card that has gone is
-    said to have gone rather than recreated to hold the report."""
-    if not report:
-        return
-    root = Path(record["tasks"]) if record.get("tasks") else config.TASKS
-    stage = find_stage_of(record["task"], root)
-    name = record.get("name") or "agent"
-    if not stage:
-        state.record_board_event({
-            "kind": "agent", "actor": "board", "file": record["task"],
-            "summary": (f"{name}'s {heading.lower()} on {record['task']} was "
-                        f"not filed — the card is no longer on the board at "
-                        f"{root}; the run's log still holds it")})
-        return
-    stamp = time.strftime("%Y-%m-%d %H:%M")
-    # A review carries what bench knows it was *of* (task 168), on one line
-    # under its heading that only the board writes: the run's own lines
-    # shaped like it were quoted by `reports.defuse` before reaching here.
-    # `reportSha` is the digest of exactly the text filed below it.
-    mark = ""
-    if provenance is not None:
-        mark = acceptance.provenance_line({
-            **provenance, "agent": record.get("id"), "model": record.get("model"),
-            "reviewer": name, "reportSha": acceptance.report_sha(report.strip("\n")),
-            "filed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n\n"
-    append_to_task(record["task"], stage,
-                   f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{mark}{report}\n",
-                   f"{heading} filed", root=root)
+    said to have gone rather than recreated to hold the report.
+
+    Since task 169 the filing is a durable operation (`reportfiling`): its
+    heading — a review's identity — is allocated once and kept with the
+    exact block before the first append, so a report that could not be
+    filed is retained and a person's retry files that same report, under
+    that same heading, on that same card. A review carries what bench knows
+    it was *of* (task 168) on one line under its heading that only the
+    board writes; the run's own lines shaped like it were quoted by
+    `reports.defuse` before reaching here."""
+    reportfiling.file(record, heading, report, provenance)
 
 
 def _session_report(record: dict, report: str) -> None:

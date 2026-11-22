@@ -63,6 +63,7 @@ import previews
 import reasoning
 import recovery
 import refine
+import reportfiling
 import required
 import results
 import reviews
@@ -1202,8 +1203,55 @@ def get_brain_reviews(req) -> None:
     # The reviews filed on this board's cards, as the Brain lists them
     # (task 168): read from the cards (stages and archive) with
     # acceptance's own readers, each with its classification record or
-    # Unclassified. A read — nothing is written to say Unclassified.
-    req.reply(200, {"reviews": brainreviews.index()})
+    # Unclassified. A read — nothing is written to say Unclassified. Since
+    # task 169 it also says which reviews this board's index does not list,
+    # which indexed reviews lost their source, and the reports this board
+    # has not filed; it still writes no index, operation or card.
+    req.reply(200, {"reviews": reportfiling.reading()})
+
+
+def get_report_filing(req) -> None:
+    # This board's report filing operations (task 169): one by its
+    # identity, or the newest — optionally one card's. Machine-local: a
+    # replica that never ran the report has no record of it, and says so.
+    op = _q(req, "operation")
+    try:
+        if op:
+            found = reportfiling.operation(op)
+            if found is None:
+                req.reply(404, {"error": "this board has no record of that filing "
+                                "operation; a report is retained only on the board "
+                                "whose run wrote it", "code": "not-on-this-board"})
+                return
+            req.reply(200, {"operation": found})
+            return
+        req.reply(200, {"operations": reportfiling.operations(_q(req, "card") or None)})
+    except reportfiling.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_report_filing_retry(req) -> None:
+    # A person's Retry filing, Retry commit, Retry push or Close of one
+    # retained report (task 169): filed on its original card on this board
+    # or refused, never appended twice, never written anywhere else.
+    try:
+        result = reportfiling.retry(req.body)
+    except reportfiling.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, {"operation": result})
+
+
+def post_brain_reviews_rebuild(req) -> None:
+    # The explicit rebuild of the Brain's review index from the cards (task
+    # 169), bound to the index revision the page read. It writes the index
+    # and filing records only: no card, no classification record.
+    try:
+        result = reportfiling.rebuild(req.body)
+    except reportfiling.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, {"rebuild": result})
 
 
 def get_brain_review(req) -> None:
@@ -2429,6 +2477,7 @@ ROUTES = (
     Route("GET", "/api/brain/operation", "read", get_brain_operation),
     Route("GET", "/api/brain/reviews", "read", get_brain_reviews),
     Route("GET", "/api/brain/review", "read", get_brain_review),
+    Route("GET", "/api/reports/filing", "read", get_report_filing),
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
 
@@ -2521,6 +2570,8 @@ ROUTES = (
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
+    Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),
+    Route("POST", "/api/reports/filing/retry", "browser-mutation", post_report_filing_retry),
     Route("POST", "/api/brain/draft/start", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/continue", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/cancel", "browser-mutation", post_brain_draft),

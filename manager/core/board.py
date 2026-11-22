@@ -101,6 +101,7 @@ import records  # noqa: F401
 import recovery  # noqa: F401
 import redact  # noqa: F401
 import refine
+import reportfiling
 import reports  # noqa: F401
 import required
 import resultidentity  # noqa: F401
@@ -277,6 +278,10 @@ def main() -> None:
     # the process: closed as failed, naming the restart, never re-run; an
     # Apply left unfinished is settled from the Brain's own journal (task 175).
     braindraft.recover()
+    # A run's report a dead board was filing is read against its card: one
+    # the card holds is recorded filed, one it does not is kept, unfiled,
+    # for a person's Retry filing. Nothing is appended here (task 169).
+    reportfiling.reconcile()
     # Agent-reported progress survives the restart as history. A run this
     # board was tracking is closed `unobserved` — its ending will not be
     # seen, so its last update must stop reading as "doing now".
