@@ -6,7 +6,7 @@ import { $, esc } from '../lib/dom.js';
 import { DEFAULT_RETRY_MS, resource } from '../lib/resource.js';
 import { fmtClock, fmtShort } from '../lib/time.js';
 import { toast } from '../lib/toast.js';
-import { actLabel, closeSheet, completeSheet, fireAgent, holdPhase, move, openPR, requiredSheet, runPhase, showDetail, verifySheet, wireAction } from './card.js';
+import { actLabel, closeSheet, completeSheet, fireAgent, move, openPR, requiredSheet, showDetail, verifySheet, wireAction } from './card.js';
 import { setView } from './frame.js';
 import { gateSheet } from './gates.js';
 import { fold, stopAgent } from './sessions.js';
@@ -116,9 +116,6 @@ function deliveryRun(task, a) {
     case 'start': return () => fireAgent(task, '/api/agent/start');
     case 'takeover': return () => fireAgent(task, '/api/agent/start', { takeover: true });
     case 'hold': return () => stopAgent(a.agent || (agentOnTask(task.file) || {}).id);
-    case 'run-phase': return () => runPhase(task, task.assignee && S.state.me
-      && task.assignee !== S.state.me ? { takeover: true } : undefined);
-    case 'hold-phase': return () => holdPhase(task);
     case 'act-pr': return () => fireAgent(task, '/api/agent/act-pr');
     case 'review-pr': return () => fireAgent(task, '/api/agent/review-pr');
     case 'open-pr': return () => openPR(task);

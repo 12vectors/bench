@@ -737,47 +737,13 @@ function cardSpec(task) {
     const held = task.assignee && S.state.me && task.assignee !== S.state.me
       ? task.assignee : null;
     if (task.stage === 'in-progress' && task.isPhase) {
-      // the phase's own launch, in the slot ▸ start work has on every other
-      // card: moving it here was the commitment, this is the second half
-      const ph = (S.state.phases || {})[task.file];
-      const hold = { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
-        title: 'Stop the phase — the phase branch, every card already merged '
-             + 'into it and every worktree stay exactly as they are',
-        run: () => holdPhase(task) };
-      const start = held
-        ? { glyph: '▸', label: 'take over', confirm: `take from ${held}?`,
-            busy: 'starting…',
-            title: `${held} holds this phase — running it takes the card over and `
-                 + 'this board becomes the one that advances it',
-            run: () => runPhase(task, { takeover: true }) }
-        : { glyph: '▸', label: 'run phase', confirm: 'run it?', busy: 'starting…',
-            title: ph && ph.stopped
-              ? 'Run it again — the phase carries on from where it was held'
-              : 'A branch of its own, each card in the list run on it in turn, and '
-                + 'one PR into main at the end',
-            run: () => runPhase(task) };
-      // A halt holds until the phase is run again or held. Holding is here,
-      // because a person who does not want to carry on needs a way to say
-      // so that is not walking the card backwards — but running it again is
-      // not: clearing a halt should mean having read what caused it, and
-      // the reason is in the lane, under the halt. So this points there.
-      const room = { glyph: '⟶', label: 'phases', busy: 'opening…',
-        title: 'Open the Phases view — this phase\'s lane, the halt that stopped it '
-             + 'and ▸ run again beneath it',
-        run: () => { setView('phases'); return true; } };
-      // an adopted phase is its phase scope's (task 160): ▸ run phase and
-      // ‖ hold are the runner's, which stood down, so they are not offered
-      // — the way in is the Orchestrator's Phases section
-      const life = (S.state.phaseLifecycle || {})[task.file];
-      const scoped = (life && life.owner === 'phase scope') || (ph && ph.scoped);
-      const orch = { glyph: '⟶', label: 'orchestrator', busy: 'opening…',
-        title: 'Run by its phase scope — open Orchestrator → Phases for its members, '
-             + 'its budget and the next step',
-        run: () => { setView('orchestrator'); return true; } };
-      if (scoped) actions.push(orch);
-      else if (ph && ph.running) actions.push(hold);
-      else if (ph && ph.halted) actions.push(room, hold);
-      else actions.push(start);
+      // every phase is the Orchestrator's once it is queued (task 188):
+      // there is no ▸ run phase or phase ‖ hold — the way in is
+      // Orchestrator → Phases, where it is paused and its members read
+      actions.push({ glyph: '⟶', label: 'orchestrator', busy: 'opening…',
+        title: 'Owned by the Orchestrator — open Orchestrator → Phases for its '
+             + 'members, why each waits, its budget and the next step',
+        run: () => { setView('orchestrator'); return true; } });
     } else if (task.stage === 'in-progress' && memberRow(task)
                && memberRow(task).state === 'moved-early') {
       // a member of an adopted phase sitting in in-progress/ with nothing
@@ -1459,35 +1425,6 @@ async function askCopilot(task) {
   const data = await res.json();
   toast(res.ok ? `Copilot asked to review ${task.file}'s PR`
                : (data.error || 'Copilot request failed'), !res.ok);
-  return res.ok;
-}
-
-/* Running a phase, and holding it. Both are ordinary POSTs on the one
-   action machine — armed, fired, and honest about failing — because a
-   phase is a card and its actions are card actions. What follows either
-   one is watched in the header chip and narrated in the ticker, so
-   neither says more here than what it just asked for. */
-async function runPhase(task, extra) {
-  const res = await fetch('/api/phase/run', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: task.file, stage: task.stage, ...(extra || {}) }),
-  });
-  const data = await res.json();
-  toast(res.ok ? `Phase ${task.file} running — the header chip follows it`
-               : (data.error || 'the phase did not start'), !res.ok);
-  await loadState();
-  return res.ok;
-}
-
-async function holdPhase(task) {
-  const res = await fetch('/api/phase/stop', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: task.file, stage: task.stage }),
-  });
-  const data = await res.json();
-  toast(res.ok ? 'Held — the phase branch and everything merged into it stay as they are'
-               : (data.error || 'could not hold it'), !res.ok);
-  await loadState();
   return res.ok;
 }
 
