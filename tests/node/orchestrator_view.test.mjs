@@ -247,3 +247,22 @@ test('a press dragged off its control, cancelled or never released stops holding
   assert.equal(p.held(), false, 'a lost release cannot freeze the view');
   assert.equal(asked, 3);
 });
+
+test('a target’s admission: the card holding it, and the cards queued behind it (task 189)', async () => {
+  const { admissionWords } = await load('lib/orchwords.js');
+  const names = { '81-a.md': '#81 Card A' };
+  const nameOf = (f) => names[f] || f;
+  assert.equal(admissionWords(null), null);
+  assert.equal(admissionWords({ card: '81-a.md' }), null, 'no admission named, nothing said');
+  const holds = admissionWords({ card: '81-a.md', admission: { target: 'main', owner: '81-a.md' } }, nameOf);
+  assert.equal(holds.kind, 'holds');
+  assert.equal(holds.badge, 'holds main');
+  assert.match(holds.text, /holds the admission into main/);
+  const waits = admissionWords({ card: '82-b.md', admission: { target: 'main', owner: '81-a.md' } }, nameOf);
+  assert.equal(waits.kind, 'waits');
+  assert.equal(waits.badge, 'waits for main');
+  assert.match(waits.text, /queued behind #81 Card A, which holds the admission into main/);
+  // another target is its own queue: a phase branch names its own holder
+  const other = admissionWords({ card: '83-c.md', admission: { target: 'phase/80-ship', owner: '83-c.md' } });
+  assert.equal(other.badge, 'holds phase/80-ship');
+});

@@ -260,7 +260,23 @@ const SOURCE_WORDS = {
   person: 'a person decided',
 };
 
+/* Who holds a target's admission (task 189). The final update → check →
+   admission sequence is serialized per target; the plan names, on each
+   delivery item it serialized, the target and the one card holding it.
+   `nameOf(file)` is how the view names a card. Says, decides nothing. */
+function admissionWords(item, nameOf = (f) => f) {
+  const a = item && item.admission;
+  if (!a || !a.target || !a.owner) return null;
+  if (a.owner === item.card) {
+    return { kind: 'holds', badge: `holds ${a.target}`, tone: 'working',
+      text: `this card holds the admission into ${a.target}; other cards landing there wait for it` };
+  }
+  return { kind: 'waits', badge: `waits for ${a.target}`, tone: 'idle',
+    text: `queued behind ${nameOf(a.owner)}, which holds the admission into ${a.target}` };
+}
+
 export {
+  admissionWords,
   ageWords, capacityWords, cardEntryHtml, GROUP_WORDS, stepFor, stepHere, orchHref,
   overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, STATES, workGroup
 };

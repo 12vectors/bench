@@ -313,9 +313,45 @@ class GuardsAndDuplicates(AdmissionCase):
         with integration.admission("main", A):
             delivery.forget_cached()
             held = delivery.for_card(B)["integration"]["admission"]
-            self.assertEqual(held, {"card": A, "step": "merge"})
+            self.assertEqual(held, {"card": A, "step": "merge",
+                                    "elsewhere": False})
         delivery.forget_cached()
         self.assertIsNone(delivery.for_card(B)["integration"]["admission"])
+
+    def test_an_admission_held_by_another_process_is_named(self):
+        """Another process on this machine holding the lock file (a second
+        board on the same application, say) is read from the lock file."""
+        self.both_reviewed("calls new_name\n")
+        script = (
+            "import fcntl, json, os, sys, time\n"
+            "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "os.write(fd, json.dumps({'card': '96-other.md', 'step': 'merge'}).encode())\n"
+            "print('held', flush=True)\n"
+            "sys.stdin.readline()\n")
+        path = integration._lock_path(integration.target_key("main"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        other = subprocess.Popen([sys.executable, "-c", script, str(path)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 text=True)
+        self.addCleanup(other.wait, 10)
+        try:
+            self.assertEqual(other.stdout.readline().strip(), "held")
+            found = integration.holder("main")
+            self.assertEqual((found["card"], found["elsewhere"]),
+                             ("96-other.md", True))
+            delivery.forget_cached()
+            self.assertEqual(delivery.for_card(B)["integration"]["admission"],
+                             {"card": "96-other.md", "step": "merge",
+                              "elsewhere": True})
+            with self.assertRaises(integration.Busy):
+                with integration.admission("main", B):
+                    pass
+        finally:
+            other.stdin.write("\n")
+            other.stdin.flush()
+            other.wait(10)
+        self.assertIsNone(integration.holder("main"))
 
     def test_a_concurrent_merge_into_the_same_target_merges_nothing(self):
         a_head, _ = self.both_reviewed("calls new_name\n")

@@ -8073,7 +8073,11 @@ different target never waits. Immediately before the merge the target is
 read again, here and on the remote (`git ls-remote`): a target that moved
 (another admission, a replica, a merge made outside the board), or a
 remote that cannot be read, refuses with nothing merged and names the way
-on.
+on. The card's **Against the target** block says who holds the admission
+into its target now — free, this card, or another card (also when another
+process on this machine holds it: the lock file says who) — and the
+Orchestrator's Work rows say which card holds a target's admission and
+which are queued behind it. Reading either takes no lock.
 
 **What the guards promise, said apart.**
 

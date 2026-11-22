@@ -27,14 +27,22 @@ is launched, and everything is put back.
   changes nothing; and the combined head's check reads *Integration check
   running*, then *Integration check failed*.
 
-Not drawn here: the Orchestrator's admission queue (a card waiting on
-another's admission into the same target) and the brief *Updating*
-state, which lasts only while git merges; both are held by the backend
-tests in `tests/test_admission.py` and `tests/test_orchestration_delivery.py`.
+- Who holds the target's admission (review round 3): another process on
+  this machine holding the lock is named on the card's Overview, which
+  says this card's admission waits for it, and reads *free* once released.
+
+Not drawn here: the Orchestrator's Work rows naming a target's holder and
+the cards queued behind it (they need an applied agreement and a
+scheduling pass; their words are held by `tests/node/orchestrator_view.test.mjs`
+and the plan's serialization by `tests/test_orchestration_delivery.py`),
+and the brief *Updating* state, which lasts only while git merges (held by
+`tests/test_admission.py`).
 """
 
+import fcntl
 import hashlib
 import json
+import os
 import time
 import unittest
 
@@ -217,6 +225,55 @@ class AgainstTheTarget(unittest.TestCase):
                 self.assertEqual([], b.eval("window.__posts"), "reading posted something")
                 b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
         self.assertEqual(before, self.digest(), "reading wrote something")
+
+    def test_2b_who_holds_the_targets_admission(self):
+        """Review round 3: queue ownership on the card. Another process on
+        this machine holds the admission into the card's target (the lock
+        file, written as `integration.admission` writes it); the Overview
+        names the holder and says this card's admission waits, and once it
+        is released says the admission is free. Reading posts nothing."""
+        backend = S["backend"]
+        locks = backend.tool / "manager" / "local" / "state" / "integration" / "locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        roots = {str(backend.app), str(backend.app.resolve())}
+        paths = [locks / (hashlib.sha256(f"{r}\x00{TARGET}".encode())
+                          .hexdigest()[:16] + ".lock") for r in roots]
+        fds = []
+        try:
+            for path in paths:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                os.write(fd, json.dumps({"card": "96-admitting-elsewhere.md",
+                                         "target": TARGET, "step": "merge"}).encode())
+                fds.append(fd)
+            for width, height, dark in ((1280, 900, True), (390, 844, False)):
+                with self.subTest(width=width, dark=dark):
+                    b = self.load(width, height, dark)
+                    b.eval(f"document.querySelector('{SEL}').click()")
+                    ok = b.wait("(document.querySelector('.dint') || {innerText: ''})"
+                                ".innerText.includes('96-admitting-elsewhere.md')", 20)
+                    text = b.eval("(document.querySelector('.dint') || {innerText: ''}).innerText")
+                    self.assertTrue(ok, f"the holder is not named: {text!r}")
+                    self.assertIn("Admission into the target", text)
+                    self.assertIn("admission waits for it to end", text)
+                    self.assertIn("in another process on this machine", text)
+                    b.eval("document.querySelector('.dint').scrollIntoView({block:'start'})")
+                    shot(f"admission-held-{width}-{'night' if dark else 'day'}")
+                    self.assertEqual([], b.eval("window.__posts"), "reading posted something")
+                    b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        finally:
+            for fd in fds:
+                os.ftruncate(fd, 0)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+            for path in paths:
+                path.unlink(missing_ok=True)
+        b = self.load(1280, 900, False)
+        b.eval(f"document.querySelector('{SEL}').click()")
+        self.assertTrue(b.wait("(document.querySelector('.dint') || {innerText: ''})"
+                               ".innerText.includes('free — no merge into it')", 20),
+                        "once released, the admission reads free")
+        b.eval("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
 
 
 STEM2 = "95-admission-update"

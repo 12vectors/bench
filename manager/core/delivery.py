@@ -241,7 +241,8 @@ def _integration_public(fit: dict | None) -> dict | None:
             "behind", "incoming", "provider", "guarantees", "unpushed")
     out = {k: fit.get(k) for k in keys if k in fit}
     held = fit.get("admission")
-    out["admission"] = ({"card": held.get("card"), "step": held.get("step")}
+    out["admission"] = ({"card": held.get("card"), "step": held.get("step"),
+                         "elsewhere": bool(held.get("elsewhere"))}
                         if held else None)
     attempt = fit.get("attempt")
     if attempt:
@@ -1425,7 +1426,7 @@ def _fingerprint(collected: dict, ctx: dict, tasks: list[dict]) -> str:
         # who holds each target's admission now (a merge in flight)
         "admissions": sorted((str(h.get("target")), str(h.get("card")),
                               str(h.get("step")))
-                             for h in list(integration.HOLDERS.values())),
+                             for h in integration.holders()),
         "records": len(ctx["records"]),
         "worktrees": sorted(p.name for p in config.WORKTREES.iterdir())
         if config.WORKTREES.is_dir() else [],

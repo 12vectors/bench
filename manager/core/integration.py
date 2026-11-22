@@ -52,6 +52,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import hashlib
+import json
 import os
 import re
 import threading
@@ -489,11 +490,24 @@ def admission(target: str, card: str, step: str = "merge"):
                        f"into {target} — nothing was merged")
         HOLDERS[key] = {"card": card, "target": target, "step": step,
                         "since": time.time()}
+        # say who holds it inside the lock file, for a reader in another
+        # process on this machine (`holder`); the lock is the flock, never
+        # these bytes, so a failed note changes nothing about the admission
+        try:
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, json.dumps({"card": card, "target": target,
+                                      "step": step}).encode(), 0)
+        except OSError:
+            pass
         yield {"key": key, "target": target}
     finally:
         HOLDERS.pop(key, None)
         if fd is not None:
             try:
+                try:
+                    os.ftruncate(fd, 0)
+                except OSError:
+                    pass
                 fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
@@ -501,8 +515,54 @@ def admission(target: str, card: str, step: str = "merge"):
 
 
 def holder(target: str) -> dict | None:
-    found = HOLDERS.get(target_key(target))
-    return dict(found) if found else None
+    """Who holds the admission into `target` now: this process's own
+    holder, else another process on this machine holding the lock (read
+    from what it wrote into the lock file). A read: the probe is a shared,
+    non-blocking flock released at once, and nothing is created."""
+    key = target_key(target)
+    found = HOLDERS.get(key)
+    if found:
+        return dict(found)
+    return _held_elsewhere(_lock_path(key))
+
+
+def _held_elsewhere(path: Path) -> dict | None:
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            # held exclusively: read who says they hold it
+            try:
+                said = json.loads(os.pread(fd, 4096, 0).decode() or "{}")
+            except (OSError, ValueError):
+                said = {}
+            said = said if isinstance(said, dict) else {}
+            return {"card": str(said.get("card") or "another process")[:200],
+                    "target": str(said.get("target") or "")[:200],
+                    "step": str(said.get("step") or "merge")[:40],
+                    "elsewhere": True}
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    finally:
+        os.close(fd)
+
+
+def holders() -> list[dict]:
+    """Every target whose admission is held now, in this process or another
+    on this machine. A read, for the delivery memo key."""
+    found = {k: dict(v) for k, v in HOLDERS.items()}
+    locks = state_dir() / "locks"
+    if locks.is_dir():
+        for path in sorted(locks.glob("*.lock")):
+            if path.stem not in found:
+                held = _held_elsewhere(path)
+                if held:
+                    found[path.stem] = held
+    return [found[k] for k in sorted(found)]
 
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")

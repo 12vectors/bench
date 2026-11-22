@@ -25,7 +25,7 @@ import { $, esc } from '../lib/dom.js';
 import { setHtml } from '../lib/keyed.js';
 import { md } from '../lib/md.js';
 import { pressHold } from '../lib/press.js';
-import { ageWords, capacityWords, GROUP_WORDS, stepHere, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
+import { admissionWords, ageWords, capacityWords, GROUP_WORDS, stepHere, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
 import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
 import { scheduleRender } from '../lib/schedule.js';
 import { ago } from '../lib/time.js';
@@ -929,13 +929,11 @@ function runOf(file) {
    admission sequence is serialized per target, and the plan names the one
    card holding each target and the cards waiting for it. Draws only. */
 function admissionHtml(del) {
-  const a = del && del.admission;
-  if (!a || !a.target) return '';
-  const owner = taskByFile(a.owner);
-  const who = owner ? `${num(owner) || a.owner} ${title(owner)}` : a.owner;
-  return a.owner === del.card
-    ? `<span data-admission="holds">${badge(`holds ${a.target}`, 'working')} this card holds the admission into ${esc(a.target)}; other cards landing there wait for it</span>`
-    : `<span data-admission="waits">${badge(`waits for ${a.target}`, 'idle')} queued behind ${esc(who)}, which holds the admission into ${esc(a.target)}</span>`;
+  const said = admissionWords(del, (file) => {
+    const owner = taskByFile(file);
+    return owner ? `${num(owner) || file} ${title(owner)}` : file;
+  });
+  return said ? `<span data-admission="${said.kind}">${badge(said.badge, said.tone)} ${esc(said.text)}</span>` : '';
 }
 
 function workRowHtml(c, manual) {

@@ -410,7 +410,7 @@ function integrationHtml(task, d, where) {
         : TARGET_AUTHORITY[g.authority] || '')],
     ['Admission into the target', !held ? 'free — no merge into it is in flight on this board'
       : held.card === task.file ? `held by this card (${held.step || 'merge'} in flight)`
-        : `held by ${held.card} (${held.step || 'merge'} in flight) — this card's admission waits for it to end`],
+        : `held by ${held.card} (${held.step || 'merge'} in flight${held.elsewhere ? ', in another process on this machine' : ''}) — this card's admission waits for it to end`],
     ['Candidate', g.head ? shortSha(g.head) : 'none'],
     ['Holds the target', g.fresh === true ? 'yes' : g.fresh === false
       ? `no${g.behind != null ? ` — ${g.behind} commit${g.behind === 1 ? '' : 's'} behind` : ''}` : 'not known'],

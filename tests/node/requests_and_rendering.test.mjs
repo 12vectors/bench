@@ -258,6 +258,28 @@ test('delivery: a failed read keeps the last rows, marked, and is not re-asked o
   } finally { globalThis.fetch = real; }
 });
 
+test('against the target: every authority is named, and who holds the admission (task 189)', async () => {
+  const { delivery } = await deliveryHarness();
+  const task = { file: '82-b.md', stage: 'review' };
+  const reading = (g) => ({ integration: { state: 'unknown', label: 'Integration unknown',
+    tone: 'alarm', sentence: 's', target: 'main', head: 'b'.repeat(40), ...g } });
+  const say = (g) => delivery.integrationHtml(task, reading(g), 'ov');
+  assert.match(say({ authority: 'remote-tracking', targetRef: 'origin/main', targetTip: 'c'.repeat(40) }),
+    /origin\/main, as last fetched/);
+  assert.match(say({ authority: 'local', targetTip: 'c'.repeat(40) }), /this checkout — no remote copy/);
+  assert.match(say({ authority: 'local-ahead', targetTip: 'c'.repeat(40) }),
+    /ahead of the remote’s copy|ahead of the remote's copy/);
+  assert.match(say({ authority: 'diverged' }), /have diverged — neither is read as the target/);
+  assert.match(say({ authority: 'unknown' }), /cannot be read here/);
+  assert.match(say({ admission: null }), /free — no merge into it is in flight/);
+  assert.match(say({ admission: { card: '81-a.md', step: 'merge' } }),
+    /held by 81-a\.md \(merge in flight\) — this card’s admission waits|held by 81-a\.md \(merge in flight\) — this card&#39;s admission waits|held by 81-a\.md \(merge in flight\) — this card's admission waits/);
+  assert.match(say({ admission: { card: '82-b.md', step: 'integrate' } }),
+    /held by this card \(integrate in flight\)/);
+  // what it shows is escaped
+  assert.doesNotMatch(say({ admission: { card: '<b>x</b>', step: 'merge' } }), /<b>x<\/b>/);
+});
+
 // ── lib/api.js post ────────────────────────────────────────────────────
 
 test('post: a mutation is sent once, whatever comes back', async () => {
