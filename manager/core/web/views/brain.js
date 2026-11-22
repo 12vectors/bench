@@ -220,7 +220,7 @@ function diagnosticsBlock(index) {
     'a plain Markdown file. It appears on the next reading.</p></details>';
 }
 
-/* ── browsing the library (tasks 159, 183) ────────────────────────────
+/* ── browsing the library (tasks 159, 183, 185) ────────────────────────────
 
    The list is organised by **kind** first: an All kinds view groups the
    entries by their kind, and choosing a kind narrows to it. Within a kind

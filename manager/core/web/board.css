@@ -2228,10 +2228,12 @@
     .crumbs ol{font-size:12.5px}
     .crumbs a{display:inline-flex;align-items:center;min-height:32px}
   }
-  /* the Brain's library (tasks 159, 183): kind first, the entries in the
-     main column and the way to browse them — search, kind, which
-     classifications are shown — in a sidebar on the right */
-  .b-lib{display:grid;grid-template-columns:minmax(0,1fr) 272px;grid-template-areas:"list nav";
+  /* the Brain's library (tasks 159, 183, 185): kind first, the way to
+     browse it — search, kind, which classifications are shown — in a
+     sidebar on the left, and the entries in the main column to its right.
+     The sidebar comes first in the markup too, so Tab reaches the
+     controls before the list, as the eye does */
+  .b-lib{display:grid;grid-template-columns:272px minmax(0,1fr);grid-template-areas:"nav list";
     gap:18px;align-items:start}
   .b-results{grid-area:list;display:flex;flex-direction:column;gap:12px;min-width:0}
   .b-nav{grid-area:nav;background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius);

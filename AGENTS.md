@@ -1347,7 +1347,7 @@ all:
   stable address, with a person's writes — create, edit, classify,
   override and retire (see "The Brain: maintained entries, read" and
   "Writing the Brain"), and its own search, kind and classification
-  controls in a sidebar on the right (see "Finding an entry").
+  controls in a sidebar on the left (see "Finding an entry").
 - **Orchestrator** — what the Bench scope and its phase scopes are doing,
   what waits on you, and the operating agreement they work under (see
   "The Orchestrator view"). The switcher carries how many decisions wait
@@ -1459,9 +1459,10 @@ fetches from a remote, launches and runs nothing.
 
 ### Finding an entry
 
-The Brain's list is a library organised by **kind** (task 183). The
-entries fill the main column; the way to browse them sits in a sidebar
-on the right, independent of the Board's stages:
+The Brain's list is a library organised by **kind** (task 183). The way
+to browse it sits in a sidebar on the left (task 185), independent of the
+Board's stages, and the entries fill the main column to its right — the
+sidebar comes first for Tab, as it does for the eye:
 
 - **Search** — every word typed, case blind, against each entry's
   title, summary, id, kind, file name, sources and related ids.
