@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 144164,
-   "sha256": "cc944ad7b94bf48b4b9aa0ffd3773af315fb9ad2c94c42479cc6259b5aedfefb",
+   "bytes": 145603,
+   "sha256": "e6c3f5428053b60554ae75f5e73b4960a1a6e16214bbb5131292ce772d50ad02",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -281,8 +281,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/delivery.js": {
-   "bytes": 19651,
-   "sha256": "a9c288ca14dd4b3e48a874ee4a98d128ef6776a2c086da8e8d48d8b2bf5dfd1c",
+   "bytes": 19652,
+   "sha256": "47e3f833fbb7c1a840d3ae27bbd07aca3266e195fd2158f0bd793474f6681cbe",
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/discussion.js": {
@@ -296,8 +296,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/detail/sections.js": {
-   "bytes": 118171,
-   "sha256": "f816736558cf8136ba45baf59f36933c2cca61229e11f136122d2b9307ba2d42",
+   "bytes": 123773,
+   "sha256": "1c70a1f6a34a5edb4a796135cadb78cab59922a321b8ba876320471f7741450a",
    "type": "text/javascript; charset=utf-8"
   },
   "views/doctor.js": {
