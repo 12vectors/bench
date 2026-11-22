@@ -107,9 +107,9 @@ class TheChipOnTheCard(unittest.TestCase):
         self.assertEqual(self.html.count(TRAY_GLYPH), 3,
                          "one glyph, three places: the tray, the card's chip "
                          "and the Done column's Archive all")
-        allbtn = re.search(r"function archiveAllButton\(stage\) \{(.*?)\n\}", self.html, re.S)
-        self.assertIsNotNone(allbtn, "Archive all lost its button")
-        self.assertIn(TRAY_GLYPH, allbtn.group(1))
+        start = self.html.find("function archiveAllButton(stage) {")
+        self.assertNotEqual(start, -1, "Archive all lost its button")
+        self.assertIn(TRAY_GLYPH, self.html[start:self.html.find("\n}", start)])
 
     def test_it_is_the_last_chip_in_the_row(self):
         # the chips are rendered by one builder, for the face and the tools
