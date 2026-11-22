@@ -239,7 +239,7 @@ def _integration_public(fit: dict | None) -> dict | None:
         return None
     keys = ("state", "label", "tone", "sentence", "next", "target",
             "targetTip", "targetRef", "authority", "required", "fresh",
-            "behind", "incoming", "provider", "guarantees")
+            "behind", "incoming", "provider", "guarantees", "unpushed")
     out = {k: fit.get(k) for k in keys if k in fit}
     attempt = fit.get("attempt")
     if attempt:

@@ -44,6 +44,8 @@ import delivery  # noqa: E402
 import gates  # noqa: E402
 import integration  # noqa: E402
 import operations  # noqa: E402
+import routes  # noqa: E402
+import state  # noqa: E402
 import verify  # noqa: E402
 
 A = "81-card-a.md"
@@ -373,6 +375,117 @@ class GuardsAndDuplicates(AdmissionCase):
         found = integration.require_current(
             A, {"decision": "ungated", "requirements": []}, "0" * 40, "main")
         self.assertFalse(found["applies"])
+
+
+class WhatTheCardSaysWhileSomethingRuns(AdmissionCase):
+    """Review round 1, finding 1: a review or an ordinary repair running on
+    the card is not an update against its target; only the update itself,
+    or the repair run it handed a conflict to, reads *Updating*."""
+
+    def running(self, filename: str, **record) -> None:
+        agent = f"run-{len(state.AGENTS)}-{filename}"
+        state.AGENTS[agent] = {"task": filename, "status": "running",
+                               "mode": "review", "started": 0, **record}
+        self.addCleanup(state.AGENTS.pop, agent, None)
+        delivery.forget_cached()
+
+    def test_a_review_run_on_a_stale_card_does_not_read_as_updating(self):
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        self.running(B)
+        found = delivery.for_card(B)
+        self.assertEqual(found["integration"]["state"], "target-changed")
+        shown = coordinate.update_preview(B)
+        self.assertEqual(shown["integration"]["state"], "target-changed")
+        self.assertIn("already working", shown["problem"],
+                      "a run still refuses the update itself")
+
+    def test_the_repair_an_update_handed_a_conflict_to_reads_updating(self):
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        self.running(B, mode="work", integration={"target": "main"})
+        self.assertEqual(delivery.for_card(B)["integration"]["state"],
+                         "updating")
+        self.assertEqual(coordinate.update_preview(B)["integration"]["state"],
+                         "updating")
+
+
+class APushTheRemoteRefused(AdmissionCase):
+    """Review round 1, finding 6: a clean update whose push is refused is
+    said (ok false), the card offers the update again, and that pushes the
+    same head — plainly — rather than reading 'current'."""
+
+    def test_the_refused_push_is_offered_again_and_then_published(self):
+        bare = self.origin()
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        git(self.repo, "fetch", "-q", "origin")
+        # the remote goes away between the read and the push
+        git(self.repo, "remote", "set-url", "origin", str(self.tmp / "gone"))
+        first = coordinate.update_against_target(B, {"head": b_head})
+        self.assertEqual(first["outcome"], "merged")
+        self.assertFalse(first["ok"])
+        self.assertIs(first["pushed"], False)
+        new = first["head"]
+        self.assertTrue(integration.unpushed(B, new))
+        self.checked(B, "run-b2")
+        self.reviewed(B)
+        found = delivery.for_card(B)
+        self.assertTrue(found["integration"]["unpushed"])
+        self.assertEqual(found["primary"]["action"], "update-target",
+                         "pushing comes before the merge")
+        self.assertIsNone(coordinate.update_preview(B)["problem"])
+        # the remote is back: the same action publishes the same head
+        git(self.repo, "remote", "set-url", "origin", str(bare))
+        again = coordinate.update_against_target(B, {"head": new})
+        self.assertTrue(again["ok"])
+        self.assertEqual(again["outcome"], "pushed")
+        self.assertEqual(git(bare, "rev-parse", f"task/{B[:-3]}").stdout.strip(),
+                         new)
+        self.assertFalse(integration.unpushed(B, new))
+        delivery.forget_cached()
+        self.assertEqual(delivery.for_card(B)["primary"]["action"], "complete")
+
+    def test_with_no_remote_nothing_is_owed(self):
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        done = coordinate.update_against_target(B, {"head": b_head})
+        self.assertTrue(done["ok"])
+        self.assertIsNone(done["pushed"])
+        self.assertFalse(integration.unpushed(B, done["head"]))
+
+
+class TheUpdateRoute(AdmissionCase):
+    """Review round 1, finding 5: a person's update names the head it was
+    shown; without one nothing is updated."""
+
+    def call(self, body):
+        replies = []
+
+        class Req:
+            def __init__(self):
+                self.body = body
+
+            def reply(self, code, payload):
+                replies.append((code, payload))
+
+        routes.post_card_integration_update(Req())
+        return replies[0]
+
+    def test_a_missing_or_blank_head_is_refused_with_nothing_changed(self):
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        for body in ({"file": B}, {"file": B, "head": ""},
+                     {"file": B, "head": None}, {"file": B, "head": 7}):
+            code, payload = self.call(body)
+            self.assertEqual(code, 400)
+            self.assertEqual(payload["code"], "head-required")
+        self.assertFalse(integration.attempts(B), "nothing was attempted")
+        self.assertEqual(git(self.repo, "rev-parse",
+                             f"task/{B[:-3]}").stdout.strip(), b_head)
+        code, payload = self.call({"file": B, "head": b_head})
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["result"]["outcome"], "merged")
 
 
 class OneSequencePerTarget(unittest.TestCase):
