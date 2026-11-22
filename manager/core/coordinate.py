@@ -118,7 +118,12 @@ ANSWERED_AFRESH = ("authority-revoked", "review-not-independent",
                    # task 174: a phase repair refused because something else
                    # was still working on the phase or a member is a
                    # transient wait, not a verdict on the head
-                   "busy", "operation-pending")
+                   "busy", "operation-pending",
+                   # task 189: another admission into the same target held
+                   # the lock, or the target moved past the head — the plan
+                   # reads the target again next pass and offers the update
+                   # (step 3a) instead of holding the card for a person
+                   "admission-busy", "target-changed", "target-moved")
 
 # Every code an item can carry, with the state it puts the card in. The
 # words are what the page and the card's record say.
@@ -170,6 +175,7 @@ CODES = {
     "refresh-not-delegated": "awaiting",
     "admission-queued": "waiting",
     "integration-unknown": "blocked",
+    "update-not-pushed": "blocked",
 }
 
 # Independence codes (D3): only `independent` lets a review launch, and
@@ -389,6 +395,14 @@ def _running(filename: str) -> bool:
                    for r in state.AGENTS.values())
 
 
+def _integration_run(filename: str) -> bool:
+    """Is a repair run handed an update conflict (task 189) alive on the
+    card? Only that run is the card *updating against its target*."""
+    with state.LOCK:
+        return any(r.get("task") == filename and r.get("status") == "running"
+                   and r.get("integration") for r in state.AGENTS.values())
+
+
 def _mine(filename: str, ops: list[dict]) -> list[dict]:
     return [o for o in ops if o.get("file") == filename
             and o.get("action") in ACTIONS]
@@ -605,6 +619,21 @@ def assess(task: dict, reading: dict, ops: list[dict],
         return _set(item, "refresh", f"{fit['sentence']} — update "
                     f"{head[:12]} against {fit['target']} at "
                     f"{(fit.get('targetTip') or '')[:12]}, then verify")
+    if fit.get("unpushed") and not member:
+        # its own clean update was merged here and the remote refused the
+        # push: the PR does not show this head, so it is pushed (plainly)
+        # before anything is admitted — once; a second refusal is a person's
+        if any(o.get("outcome") == "push-refused"
+               for o in _same(mine, "refresh", head)):
+            return _set(item, "update-not-pushed", f"{fit['sentence']} — the "
+                        f"remote refused the push again; settle what it said, "
+                        f"then {integration.UPDATE_ACTION}")
+        if not here["authority"]["repair"]["allowed"]:
+            return _set(item, "refresh-not-delegated", f"{fit['sentence']} — "
+                        f"the agreement does not delegate repair, so "
+                        f"{integration.UPDATE_ACTION} is yours")
+        return _set(item, "refresh", f"push {head[:12]}, this card's update "
+                    f"against {fit['target']}, so its pull request shows it")
     if member:
         if not here["authority"]["integrate"]["allowed"]:
             return _set(item, "integrate-not-delegated", f"ready to integrate "
@@ -637,7 +666,7 @@ def public_integration(found: dict) -> dict:
     """The integration reading as the plan and the page carry it."""
     keys = ("state", "label", "tone", "sentence", "next", "target",
             "targetTip", "targetRef", "authority", "head", "required",
-            "fresh", "behind", "incoming", "provider", "guarantees")
+            "fresh", "behind", "incoming", "provider", "guarantees", "unpushed")
     out = {k: found.get(k) for k in keys if k in found}
     attempt = found.get("attempt")
     if attempt:
@@ -1024,6 +1053,12 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
             return _integrate(op, task, head, again)
         return _merge(op, filename, head, task, again)
     except (ValueError, required.Refused) as exc:
+        if isinstance(exc, integration.Stale) and exc.code == "target-moved":
+            # the remote target moved past what this checkout fetched: bring
+            # the remote-tracking ref up to date (a read of the remote, no
+            # merge), so the next pass reads the head as behind and offers
+            # the update rather than refusing the same merge again
+            _fetch_target(exc.facts.get("target"))
         return _refused(op, getattr(exc, "code", None) or f"{action}-refused",
                         str(exc) or getattr(exc, "why", "") or action)
     except Exception as exc:  # noqa: BLE001 — anything unexplained is unknown
@@ -1034,6 +1069,12 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
         _receipt(done, "unknown", "the step's outcome is unknown; held")
         return {"card": filename, "action": action, "outcome": "unknown",
                 "key": op["key"]}
+
+
+def _fetch_target(target: str | None) -> None:
+    remote = config.app_remote()
+    if remote and target:
+        gitrepo.fetch_branch(remote, target, timeout=config.FETCH_TIMEOUT)
 
 
 def _verify(op: dict, filename: str, head: str) -> dict:
@@ -1440,7 +1481,8 @@ def update_preview(filename: str) -> dict:
     decision = gates.evaluate(filename, scope, task=task) if head else None
     reading = integration.reading(task, head=head, decision=decision,
                                   pr_state=changes.pr_state(filename),
-                                  updating=updating(filename) or _running(filename))
+                                  updating=updating(filename)
+                                  or _integration_run(filename))
     problem = None
     if task["stage"] != STAGE:
         problem = "Update against target runs on a card in review/"
@@ -1449,7 +1491,7 @@ def update_preview(filename: str) -> dict:
                    "‖ hold it first, or wait for it to end")
     elif not head:
         problem = "there is no implementation commit on this board to update"
-    elif reading.get("fresh"):
+    elif reading.get("fresh") and not reading.get("unpushed"):
         problem = (f"{head[:12]} already holds {reading['target']} at "
                    f"{(reading.get('targetTip') or '')[:12]}: there is "
                    f"nothing to bring in")
@@ -1538,6 +1580,23 @@ def _update(filename: str, expected: dict, actor: str, operation: str | None,
     base = {"head": head, "target": target, "targetTip": tip["commit"],
             "actor": actor, "operation": operation}
     if integration.holds(tip["commit"], head):
+        if remote and integration.unpushed(filename, head):
+            # the earlier clean update's push was refused: publish it now
+            # (a plain push — nothing is forced) so the PR shows the head
+            pushed, said = _push(remote, branch)
+            integration.record_attempt(filename, {
+                **base, "outcome": "pushed" if pushed else "push-refused",
+                "pushed": pushed, "detail": said})
+            sentence = (f"{head[:12]} already holds {target} at "
+                        f"{tip['commit'][:12]}; " + (
+                            f"its branch is now pushed to {remote}" if pushed
+                            else f"{remote} refused the push again ({said}); "
+                                 f"nothing was forced"))
+            _say(filename, f"{filename}: {sentence}")
+            return {"ok": pushed, "outcome": "pushed" if pushed
+                    else "push-refused", "head": head, "target": target,
+                    "targetTip": tip["commit"], "pushed": pushed,
+                    "sentence": sentence}
         integration.record_attempt(filename, {**base, "outcome": "current"})
         return {"ok": True, "outcome": "current", "head": head,
                 "target": target, "targetTip": tip["commit"],
@@ -1607,26 +1666,39 @@ def _update(filename: str, expected: dict, actor: str, operation: str | None,
                           "was started on it")
         return result
     new_head = gitrepo.git(path, "rev-parse", "HEAD").stdout.strip()
-    pushed = "not pushed — this application has no remote"
+    words = "not pushed — this application has no remote"
+    # None: there is no remote to push to (nothing is owed); False: the
+    # remote refused, so the PR does not show the new head and the update
+    # action offers the push again
+    pushed: bool | None = None
     if remote:
-        done = gitrepo.git(config.app_repo(), "push", remote,
-                           f"refs/heads/{branch}:refs/heads/{branch}",
-                           timeout=180)
-        said = (done.stderr.strip().splitlines() or [""])[-1][:160]
-        pushed = (f"pushed to {remote}" if done.returncode == 0 else
-                  f"not pushed — {remote} refused it ({said}); nothing was "
-                  f"forced")
+        pushed, said = _push(remote, branch)
+        words = (f"pushed to {remote}" if pushed else
+                 f"not pushed — {remote} refused it ({said}); nothing was "
+                 f"forced. {UPDATE_ACTION_AGAIN}")
     integration.record_attempt(filename, {**base, "outcome": "merged",
                                           "newHead": new_head,
-                                          "pushed": pushed.startswith("pushed")})
+                                          "pushed": pushed})
     sentence = (f"{filename}: merged {target} at {tip['commit'][:12]} into "
-                f"{branch} — new head {new_head[:12]}, {pushed}. Its required "
+                f"{branch} — new head {new_head[:12]}, {words}. Its required "
                 f"checks and a fresh review are about the new head now")
     _say(filename, sentence)
-    return {"ok": True, "outcome": "merged", "head": new_head,
+    return {"ok": pushed is not False, "outcome": "merged", "head": new_head,
             "previous": head, "target": target, "targetTip": tip["commit"],
-            "incoming": len(incoming), "pushed": pushed.startswith("pushed"),
+            "incoming": len(incoming), "pushed": pushed,
             "sentence": sentence}
+
+
+UPDATE_ACTION_AGAIN = (f"{integration.UPDATE_ACTION} again pushes it once "
+                       f"the remote accepts it")
+
+
+def _push(remote: str, branch: str) -> tuple[bool, str]:
+    """A plain push of the card's own branch — never forced. (pushed, why)."""
+    done = gitrepo.git(config.app_repo(), "push", remote,
+                       f"refs/heads/{branch}:refs/heads/{branch}", timeout=180)
+    said = (done.stderr.strip().splitlines() or [""])[-1][:160]
+    return done.returncode == 0, said
 
 
 def _say(filename: str, summary: str) -> None:

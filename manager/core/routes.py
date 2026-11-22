@@ -2404,9 +2404,17 @@ def post_card_integration_update(req) -> None:
     # conflict is aborted and handed to one ↻ act on PR run. Nothing is
     # merged into the target.
     payload = req.body
+    head = payload.get("head")
+    if not isinstance(head, str) or not head.strip():
+        # a person's update is about the head the sheet showed; without one
+        # it would update whatever the branch holds by the time it lands
+        req.reply(400, {"error": "name the head the card showed (`head`) — "
+                                 "nothing was updated",
+                        "code": "head-required"})
+        return
     try:
         found = coordinate.update_against_target(
-            payload["file"], {"head": payload.get("head")}, actor="person")
+            payload["file"], {"head": head.strip()}, actor="person")
     except agents.RepairRefused as exc:
         req.reply(409, {"error": str(exc), "code": exc.code})
         return

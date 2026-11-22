@@ -686,7 +686,11 @@ def compute(task: dict, ctx: dict | None = None, *, full: bool = False) -> dict:
             task, head=candidate.get("commit"), decision=decision,
             pr_state=changes.pr_state(filename), plan=plan,
             remote_tips=ctx["remoteTips"] if ctx["remote"] else None,
-            updating=bool(alive) or filename in ctx.get("updating", ()))
+            # only an update of this card, or the repair run one handed a
+            # conflict to, is "updating" — a review or an ordinary repair
+            # running on the card is not (the run is shown as itself)
+            updating=bool((alive or {}).get("integration"))
+            or filename in ctx.get("updating", ()))
 
     status, sentence, primary, others = _decide(
         task=task, ctx=ctx, candidate=candidate, decision=decision,
@@ -1150,6 +1154,19 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                     f"{', '.join(applied.get('gates') or [])} at {here}: "
                     f"{applied.get('reason') or ''}. Still unmet.",
                     merge, [])
+        if (fit or {}).get("unpushed"):
+            # task 189: its own clean update was refused by the remote, so
+            # the PR does not show this head; pushing it again comes first
+            busy = filename in ctx.get("updating", ())
+            push = action("update-target", integration.UPDATE_ACTION,
+                          enabled=not busy and not alive,
+                          why=("an update or a run is already working on it"
+                               if busy or alive else None),
+                          target=fit.get("target"))
+            return (word, f"Checks and review complete for {here}, but its "
+                          f"update against {fit.get('target')} was not "
+                          f"pushed: the pull request does not show it yet.",
+                    push, [merge])
         return (word, f"Ready to merge: checks and review complete for "
                       f"{here}.", merge, [])
 

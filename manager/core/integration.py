@@ -111,7 +111,11 @@ class Stale(ValueError):
 
 
 class Busy(ValueError):
-    """Another admission into the same target is in progress."""
+    """Another admission into the same target is in progress. A transient
+    wait, never a verdict on the head: the orchestrator answers it afresh
+    on the next pass rather than holding the card for a person."""
+
+    code = "admission-busy"
 
 
 # ── the target ────────────────────────────────────────────────────────
@@ -323,6 +327,7 @@ def reading(task: dict, *, head: str | None, decision: dict | None,
             if a.get("head") == head and a.get("target") == target]
     last = mine[-1] if mine else None
     out["attempt"] = last
+    out["unpushed"] = unpushed(filename, head)
     if updating:
         return _word(out, "updating", f"an update of {head[:12]} against "
                      f"{target} is in progress", None)
@@ -383,7 +388,25 @@ def reading(task: dict, *, head: str | None, decision: dict | None,
                  f"other requirements are not met yet", None)
 
 
+def unpushed(filename: str, head: str) -> bool:
+    """Is `head` this card's own clean update against its target whose push
+    the remote refused (and no later push of it went through)? Then the
+    pull request does not show it yet, and the update action pushes it
+    again — a plain push, never forced."""
+    for a in reversed(attempts(filename)):
+        if a.get("outcome") == "pushed" and a.get("head") == head:
+            return False
+        if a.get("outcome") == "merged" and a.get("newHead") == head:
+            return a.get("pushed") is False
+    return False
+
+
 def _word(out: dict, word: str, sentence: str, nxt: str | None) -> dict:
+    if out.get("unpushed") and word not in ("updating",):
+        sentence = (f"{sentence}. Its update was not pushed — the pull "
+                    f"request does not show {str(out.get('head'))[:12]} yet; "
+                    f"{UPDATE_ACTION} pushes it again")
+        nxt = nxt or "update"
     label, tone = STATES[word]
     out.update(state=word, label=label, tone=tone, sentence=sentence,
                next=nxt)
