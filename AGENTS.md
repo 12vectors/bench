@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -272,6 +272,15 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   — a digest of the bytes read. Imports `config` and `taskfiles`; it
   writes, commits, fetches and launches nothing (see "The Brain:
   maintained entries, read")
+- `brainreviews.py` — reviews in the Brain (task 168): every PR review
+  round and relevance review filed on a card, in a stage or the archive,
+  read with acceptance's own readers and `rv-`/`rl-` identities and shown
+  at `/brain/r/<card>/<review>`, with what bench recorded when it filed
+  the report and the review's classification record under
+  `brain/reviews/` (Unclassified where none exists). Imports
+  `acceptance`, `brain`, `config`, `evidence`, `reviews` and `taskfiles`;
+  it writes nothing — `brainwrite` writes the records (see "Reviews in
+  the Brain")
 - `doctor.py` — what this board would grant, run and refuse, asked
   without paying for a model: the same resolver a launch rides, read at
   four honest distances, with every diagnostic's remedy and a coverage

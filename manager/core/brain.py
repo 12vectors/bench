@@ -61,6 +61,9 @@ import taskfiles
 
 CONTRACT = 1
 DIRECTORY = "brain"
+# where the review classification records live (task 168): a directory of
+# their own under brain/, so no maintained entry's write can reach one
+REVIEWS_DIRECTORY = "reviews"
 
 KINDS = ("Review", "Investigation", "Decision", "Guide", "Prototype",
          "Attachment")
@@ -85,6 +88,9 @@ HISTORY_RE = re.compile(
     r"^-\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?Z?)?)\s+·\s+"
     r"(" + "|".join(CLASSIFICATIONS) + r")\s+·\s+([^—]{1,80}?)\s+—\s+(.+?)\s*$")
 CARD_REF_RE = re.compile(r"^#?(\d{1,6})$")
+# one filed review on a card, named as the Brain addresses it (task 168):
+# `#168/rl-0a1b2c3d4e` — the card's number and the review's identity
+REVIEW_REF_RE = re.compile(r"^#?(\d{1,6})/(r[vl]-[0-9a-f]{10})$")
 FILE_REF_RE = re.compile(r"^(plans|reference)/([A-Za-z0-9][A-Za-z0-9._-]{0,120})$")
 URL_RE = re.compile(r"^https?://[^\s<>\"']{1,400}$")
 
@@ -417,7 +423,9 @@ def _scan() -> dict:
         out.update(state="refused", why=f"brain/ could not be listed ({exc.strerror or exc})")
         return out
     for name in names:
-        if name.startswith("."):
+        if name.startswith(".") or name == REVIEWS_DIRECTORY:
+            # brain/reviews/ holds the review classification records (task
+            # 168), which brainreviews reads; it is not a skipped file
             continue
         if not name.endswith(".md"):
             out["skipped"] += 1
@@ -466,6 +474,15 @@ def _source(item: str, cards: set[str]) -> dict:
     """One `**Source:**` item, said honestly: a card on this board or not,
     a plans/ or reference/ file present or not, a web address (not
     fetched), or text bench does not interpret."""
+    review = REVIEW_REF_RE.match(item)
+    if review:
+        # a typed source naming one review: whether the card is here is
+        # known from its file name; whether the review is still on it is
+        # the review page's to say, which reads the card
+        number = taskfiles.canonical_number(review.group(1))
+        return {"kind": "review", "text": item, "card": number,
+                "review": review.group(2), "present": number in cards,
+                "address": f"/brain/r/{number}/{review.group(2)}"}
     card = CARD_REF_RE.match(item)
     if card:
         number = taskfiles.canonical_number(card.group(1))

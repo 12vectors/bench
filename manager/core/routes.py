@@ -33,6 +33,7 @@ import assets
 import agentsettings
 import brain
 import braindraft
+import brainreviews
 import brainwrite
 import commands
 import completion
@@ -510,6 +511,10 @@ def ui_path(path: str) -> bool:
     parts = path.split("/")
     if len(parts) == 4 and parts[1] == "brain" and parts[2] == "e":
         return bool(brain.ID_RE.match(parts[3]))
+    # a filed review in the Brain (task 168): `/brain/r/<card>/<review>`,
+    # the card by number or stem, the review by its rv-/rl- identity
+    if len(parts) == 5 and parts[1] == "brain" and parts[2] == "r":
+        return bool(UI_ID_RE.match(parts[3]) and brainreviews.REVIEW_ID_RE.match(parts[4]))
     if len(parts) == 2:
         return parts[1] in UI_PATHS
     if len(parts) != 3 or parts[1] not in UI_ITEM_PREFIXES:
@@ -1190,6 +1195,43 @@ def post_brain_write(req) -> None:
     except brainwrite.Refused as exc:
         req.reply(exc.status, {"error": str(exc), **exc.extra})
         return
+    req.reply(200, {"operation": result})
+
+
+def get_brain_reviews(req) -> None:
+    # The reviews filed on this board's cards, as the Brain lists them
+    # (task 168): read from the cards (stages and archive) with
+    # acceptance's own readers, each with its classification record or
+    # Unclassified. A read — nothing is written to say Unclassified.
+    req.reply(200, {"reviews": brainreviews.index()})
+
+
+def get_brain_review(req) -> None:
+    # One filed review at its Brain address, `/brain/r/<card>/<review>`:
+    # the card's stored report and what bench recorded about it. A review
+    # the card does not hold, or a card not here, is a 404 that says which;
+    # one held by two cards is a 409 naming both, never one picked.
+    try:
+        found = brainreviews.review(_q(req, "card"), _q(req, "id"))
+    except brainreviews.NotAnAddress as exc:
+        req.reply(400, {"error": str(exc), "code": "not-an-address"})
+        return
+    status = {"no-card": 404, "no-review": 404, "ambiguous": 409}.get(found["state"], 200)
+    req.reply(status, {"review": found})
+
+
+def post_brain_review_write(req) -> None:
+    # A person's classification of a filed review, or its manual override
+    # (task 168): one record under brain/reviews/, bound to the record the
+    # page read and to a request identity, through the Brain's one writer.
+    # The report and the card are never written here.
+    kind = "review-" + req.path.rsplit("/", 1)[-1]
+    try:
+        result = brainwrite.write(kind, req.body)
+    except brainwrite.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    state.broadcast({"type": "brain"})
     req.reply(200, {"operation": result})
 
 
@@ -2385,6 +2427,8 @@ ROUTES = (
     Route("GET", "/api/brain/entry", "read", get_brain_entry),
     Route("GET", "/api/brain/revisions", "read", get_brain_revisions),
     Route("GET", "/api/brain/operation", "read", get_brain_operation),
+    Route("GET", "/api/brain/reviews", "read", get_brain_reviews),
+    Route("GET", "/api/brain/review", "read", get_brain_review),
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
 
@@ -2475,6 +2519,8 @@ ROUTES = (
     Route("POST", "/api/brain/override", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retire", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
+    Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/draft/start", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/continue", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/cancel", "browser-mutation", post_brain_draft),
