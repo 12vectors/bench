@@ -8061,7 +8061,11 @@ operations — and the record, `phase-model.json` beside it, says
 `complete` only after every transfer is durable on its card. It is
 idempotent and restart-safe: a repeated upgrade, an interrupted run or a
 restart writes no second line and changes nothing more. A fresh
-installation starts on the unified model with nothing to move.
+installation starts on the unified model with nothing to move. A record
+that cannot be read (another version, a damaged file) is never written
+over: the migration stops there and says so in `GET /api/orchestration`
+(`schedule.phases.model`), and a person restores it from the recovery
+copy or removes it to migrate again.
 
 **Older boards sharing the work state.** The ownership line is what an
 older bench reads to stand its runner down. If one still writes a
