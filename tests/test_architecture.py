@@ -805,6 +805,10 @@ ROUTES: dict[str, str] = {
     "GET /api/reports/filing": "read",
     "POST /api/reports/filing/retry": "browser-mutation",
     "POST /api/brain/reviews/rebuild": "browser-mutation",
+    # the curated handbook (task 171): its reading, and one section of its
+    # membership record per write — never an entry
+    "GET /api/brain/handbook": "read",
+    "POST /api/brain/handbook": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

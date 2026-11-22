@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -1519,8 +1519,11 @@ a visit to an entry and Back, with focus returned to the entry the
 reader came from; they are not part of an address, and a reload starts
 from the default. Files that cannot be shown are listed with how to fix
 each kind of problem, and are not found by search until they are fixed.
-There is no curated handbook, no seeding and no automatic classification
-yet: those are later phases, and nothing on the page offers them.
+The curated **Project handbook** sits above the library on the same page
+(task 171, "The project handbook: curated, sourced, said as it is"); the
+library below it is unchanged and still lists every entry. There is no
+seeding and no automatic classification yet: those are later phases, and
+nothing on the page offers them.
 
 ### The page's script: modules under a policy
 
@@ -1845,9 +1848,11 @@ the Brain"), and find them with its search and filters (task 159,
 addresses of their own, without being copied (task 168, "Reviews in the
 Brain"), and a report whose filing failed is recovered from there or from
 its card (task 169, "Filing a report, and recovering one that was not
-filed"). What it does not do yet, said so nobody looks for it: a
-curated handbook, seeding a Brain from an application, adopting
-`reference/` files, and any agent classification. A run is given no
+filed"). A curated handbook of five sections links maintained entries
+and says what authority stands behind each (task 171, "The project
+handbook: curated, sourced, said as it is"). What it does not do yet,
+said so nobody looks for it: seeding a Brain from an application,
+adopting `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -1900,8 +1905,13 @@ The body, in Markdown.
 | **Override** | no | a **manual override**: `manual · <who> · <when> — <reason>`. A person fixed this classification; later automation must respect it until a person clears it |
 | **Removed** | no | makes the entry a **tombstone**: kept, said to be removed, with this reason |
 | **Replaced by** | no | the entry that took a tombstone's place |
+| **Standing** | no | what a person says the explanation stands for: `implemented`, `deployed`, `agreed-future` or `unresolved`. Absent is *not stated* — never "shipped" |
+| **Policy** | no | for a working agreement: `approved` or `inferred`, optionally `— <by whom, where>`. Only a person writes it |
+| **Bindings** | no | typed source bindings, comma-separated: `app:<path>@<commit>`, `work:<path>@<commit>`, `review:#<card>/<review>`, `deploy:<where>@<identity>` |
+| **Assessed** | no | the date the bindings were checked, `YYYY-MM-DD` |
 
-**Invalidated** and **Override** were added by task 158 within version 1:
+**Invalidated** and **Override** were added by task 158 within version 1,
+and **Standing**, **Policy**, **Bindings** and **Assessed** by task 171:
 a reader that predates them shows them as fields it ignores, and nothing
 else changes.
 
@@ -1942,6 +1952,7 @@ on the entry, never fixed up.
 | no **Brain** line | not an entry, said so |
 | a link (the directory itself included), a FIFO, a name that is not flat, a file over 256 KiB | refused, unread |
 | `brain/reviews/` | not an entry: the review classification records (see "Reviews in the Brain") |
+| `brain/handbook/` | not an entry: the handbook's membership record (see "The project handbook") |
 | anything not ending `.md`, or hidden | skipped; reserved for later versions |
 
 An id nothing carries reads **No entry … on this board**: it may belong
@@ -2080,6 +2091,8 @@ nothing in an entry grants a run any permission.
 | `POST /api/brain/retry` | `{request, action: commit \| push}` — the half that did not happen |
 | `GET /api/brain/operation?request=` | one write's state now |
 | `GET /api/brain/revisions?id=` | the entry's commits and saves |
+| `GET /api/brain/handbook` | the handbook: each section's links, coverage and source authority (task 171) |
+| `POST /api/brain/handbook` | `{request, expected, section, entries, reason}` — one section of the handbook's membership |
 
 The POSTs sit behind the browser-mutation door like every person's
 write. None launches an agent, runs a check or fetches anything.
@@ -2090,6 +2103,119 @@ failed commit: the file is saved; fix what git said (a held
 push: fix the remote, then **Retry push**, or let sync's next beat do it.
 A restart mid-write: send the same request again — the page does — and
 the journal finishes it.
+
+### The project handbook: curated, sourced, said as it is
+
+The Brain's landing leads with a **Project handbook** (task 171): five
+fixed sections a person curates from existing entries, so a reader can
+learn the project coherently without searching the library. It is not a
+second content store and not a classification. The explanations stay
+ordinary entries at `/brain/e/<id>` — edited, classified, overridden,
+retired and revisioned exactly as above — and the library below the
+handbook lists every entry as it did.
+
+| Section | For |
+| --- | --- |
+| Overview | what the project is, who it is for and what it does |
+| How it works | the architecture and how its parts fit, as built |
+| Ways of working | the working agreements people approved — kept apart from conventions someone observed |
+| Direction and open questions | accepted future work that is not built, and the questions still open |
+| Operations | how it is installed, deployed, run and recovered |
+
+**Membership is one record.** `brain/handbook/handbook.md` lists, per
+section, entry ids in order, and a history line per change:
+
+```markdown
+# Project handbook
+
+**Brain handbook:** 1
+
+## Overview
+
+- e-what-bench-is
+
+## How it works
+
+- e-architecture
+- e-verification
+
+## Handbook history
+
+- 2026-11-22T10:00:00Z · ronald — How it works: added e-verification; first pass
+```
+
+**Organizing.** Each section has **Organize**: add an existing entry,
+move a link **Up** or **Down**, **Replace with** another entry in the
+same place, **Remove**, and give a reason; **Save** writes that one
+section, attributed to this board's git identity. Any board user may do
+it. A save is one write of one file through the Brain's own writer
+(`POST /api/brain/handbook`, `{request, expected, section, entries,
+reason}`): bound to the record's revision (or `none` before the first),
+journalled under its request identity, committed alone as `board: brain
+handbook <section> updated (<who>)` under `BOARD_COMMIT_MOVES` and
+published by sync, with **Saved**, **Committed** and **Shared** said
+apart as for any entry. A record changed meanwhile — another editor, a
+hand edit, a sync — is refused with nothing written, showing **What you
+tried to save** beside **on disk now**; **Use the current version and keep
+my order** takes the current record as the base and keeps your order to
+save again. There is no multi-file transaction, because no handbook
+change needs one: an entry's text is changed on its own page, by its own
+save. Refused with nothing written: a section that is not one of the
+five, an id that is no entry here or is retired (an existing link may
+stay while its problem is shown), a key other than those five, a change
+that changes nothing, and a record broken by hand (fix it first).
+
+**What a link says.** Linking never changes an entry. Each link is drawn
+as what the entry's own record makes it:
+
+| link | means | remedy shown |
+| --- | --- | --- |
+| Current — operative | the operative explanation for this section | — |
+| Convention — not approved policy | in Ways of working, a Current entry with no `**Policy:** approved` | record the approval only if people actually approved it |
+| Historical — a source, not operative | readable, and not the current explanation | link a Current one too, or reclassify |
+| Superseded, Unclassified | not operative | replace it, or classify the entry |
+| Retired, Missing, Duplicate id, Invalid entry file | kept in the record and shown, never dropped | replace the link, restore or fix the entry |
+
+Each section says its coverage — **Not covered yet** (and what it does
+not yet explain), **No operative explanation**, **Partly covered** or
+**Covered** — and notes such as *no approved working policy is linked*
+or *deployment unknown*. A Ways of working section holding only
+conventions reads **Partly covered**: it is for what people approved.
+
+**Source authority, from the entry itself.** An entry may record its
+**Standing**, **Policy**, **Bindings** and **Assessed** date (edited in
+the entry's **Source authority** fold; see the record table above). The
+handbook and the entry's own page read them, and nothing else:
+
+- **Standing is a person's word.** A Current entry with none reads *not
+  stated — Current is not a claim that it shipped*. `implemented` is never
+  read as deployed: deployment is *recorded* only from a
+  `deploy:<where>@<identity>` binding — the person's record, which bench
+  does not verify — and *unknown* otherwise; agreed-future and unresolved
+  work is *not built, so not deployed*.
+- **A revision needs a binding.** A plain `**Source:**` item or a link
+  proves no revision. An `app:` or `work:` binding names a file at a
+  commit, and local git says whether it is **unchanged since**, **changed
+  since** (with the commit that changed it), **gone now**, **not there
+  at** the commit, **not in this history**, or an **unknown revision** —
+  `cat-file -e`, `merge-base --is-ancestor` and `log` on that one path,
+  at most 80 git commands per reading (a binding takes up to six, and
+  one past the limit reads *not checked*), memoised by the head. A
+  `review:` binding names one filed review and links to its Brain page.
+- **Disagreement is surfaced, not resolved.** One target bound at two
+  revisions, *deployed* with no deployment identity, a deployment recorded
+  on agreed-future or unresolved work, *implemented* with no source
+  revision bound, and *approved* with no source are each listed on the
+  link and the entry. Nothing is rewritten, reclassified or promoted.
+
+**Reading changes nothing.** `GET /api/brain/handbook` and the entry's
+`authority` and `handbook` fields (on `GET /api/brain/entry`) read
+`brain/` and local git metadata: no file's content, no fetch, no check,
+no agent and no write. A missing record reads as five empty sections.
+
+**Not in this version:** seeding the handbook, generating or maintaining
+its prose, inferring a working agreement, retrieving a source, adopting
+`reference/` files, and any automatic classification or freshness repair.
 
 ### Drafting with the Brain Agent
 

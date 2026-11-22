@@ -64,6 +64,9 @@ DIRECTORY = "brain"
 # where the review classification records live (task 168): a directory of
 # their own under brain/, so no maintained entry's write can reach one
 REVIEWS_DIRECTORY = "reviews"
+# where the handbook's membership record lives (task 171): a directory of
+# its own, so it is never read as an entry and no entry write reaches it
+HANDBOOK_DIRECTORY = "handbook"
 
 KINDS = ("Review", "Investigation", "Decision", "Guide", "Prototype",
          "Attachment")
@@ -94,10 +97,57 @@ REVIEW_REF_RE = re.compile(r"^#?(\d{1,6})/(r[vl]-[0-9a-f]{10})$")
 FILE_REF_RE = re.compile(r"^(plans|reference)/([A-Za-z0-9][A-Za-z0-9._-]{0,120})$")
 URL_RE = re.compile(r"^https?://[^\s<>\"']{1,400}$")
 
-# the fields version 1 reads; anything else is noted and ignored
+# What a person says an explanation stands for (task 171), kept apart from
+# its classification: Current is not shipped, and shipped is not deployed.
+STANDINGS = ("implemented", "deployed", "agreed-future", "unresolved")
+# whether a working agreement is an approved policy or a convention someone
+# observed; only a person writes `approved`
+POLICIES = ("approved", "inferred")
+# a typed source binding (task 171): what an explanation was checked
+# against, at which revision. `app:` and `work:` name a file in the
+# application or work-state repository at a commit; `review:` one review
+# filed on a card (its identity is its revision); `deploy:` a deployment
+# identity a person recorded, which bench never verifies.
+BINDING_RE = re.compile(
+    r"^(?:(app|work):([A-Za-z0-9._][A-Za-z0-9._/-]{0,199})@([0-9a-f]{7,40})"
+    r"|(review):#?(\d{1,6})/(r[vl]-[0-9a-f]{10})"
+    r"|(deploy):([A-Za-z0-9][A-Za-z0-9._-]{0,60})@([A-Za-z0-9][A-Za-z0-9._:+-]{0,80}))$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# the fields version 1 reads; anything else is noted and ignored. Standing,
+# Policy, Bindings and Assessed were added by task 171 within version 1: a
+# reader that predates them shows them as fields it ignores.
 FIELDS = ("Brain", "Id", "Kind", "Classification", "Summary", "Source",
           "Related", "Supersedes", "Superseded by", "Removed", "Replaced by",
-          "Invalidated", "Override")
+          "Invalidated", "Override", "Standing", "Policy", "Bindings", "Assessed")
+
+
+def parse_binding(item: str) -> dict | None:
+    """One `**Bindings:**` item as its parts, or None when it is not one.
+    A path that climbs (`..`) or is absolute is not a binding."""
+    m = BINDING_RE.match(item.strip())
+    if not m:
+        return None
+    if m.group(1):
+        path = m.group(2)
+        if path.startswith("/") or ".." in path.split("/") or "//" in path:
+            return None
+        return {"type": m.group(1), "target": path, "revision": m.group(3),
+                "text": item.strip()}
+    if m.group(4):
+        return {"type": "review", "card": str(int(m.group(5))), "target":
+                f"#{int(m.group(5))}/{m.group(6)}", "review": m.group(6),
+                "revision": m.group(6), "text": item.strip()}
+    return {"type": "deploy", "target": m.group(8), "revision": m.group(9),
+            "text": item.strip()}
+
+
+def parse_policy(value: str) -> tuple[str | None, str | None]:
+    """`approved — by whom, where` or `inferred — what it rests on`: the
+    word, and the note after it."""
+    word, _, note = value.partition("—")
+    word = word.strip().lower()
+    return (word if word in POLICIES else None), (_clean(note) or None)
 REQUIRED = ("Brain", "Id", "Kind", "Classification")
 
 # characters that change how text reads without being text: C0/C1 control
@@ -112,6 +162,12 @@ class NotAnId(ValueError):
 def _clean(text: str, cap: int = MAX_FIELD_CHARS) -> str:
     text = _INVISIBLE.sub("", text).strip()
     return text if len(text) <= cap else text[:cap - 1] + "…"
+
+
+def clean(text: str, cap: int = MAX_FIELD_CHARS) -> str:
+    """Text from a record made safe to show: invisible characters removed,
+    clipped to `cap`."""
+    return _clean(text, cap)
 
 
 def directory() -> Path:
@@ -328,6 +384,35 @@ def parse(name: str, data: bytes) -> dict:
                 rec["warnings"].append(f"**{key}:** {_clean(item, 70)!r} is not an "
                                        "entry id; it is ignored")
         links[out] = ids
+    # what a person says the explanation stands for (task 171). A value
+    # this version does not read is a warning and is shown as not stated,
+    # never guessed at
+    standing = seen.get("Standing", "").strip().lower() or None
+    if standing and standing not in STANDINGS:
+        rec["warnings"].append(f"**Standing:** {_clean(standing, 40)!r} is not one of "
+                               + ", ".join(STANDINGS) + "; it is shown as not stated")
+        standing = None
+    policy, policy_note = (parse_policy(seen["Policy"]) if seen.get("Policy", "").strip()
+                           else (None, None))
+    if seen.get("Policy", "").strip() and policy is None:
+        rec["warnings"].append("**Policy:** is `approved` or `inferred`, optionally followed by "
+                               "' — ' and a note; it is shown as not stated")
+    bindings = []
+    for item in _split_list(seen.get("Bindings", "")):
+        found = parse_binding(item)
+        if found is None:
+            rec["warnings"].append(
+                f"**Bindings:** {_clean(item, 80)!r} is not a binding (app:<path>@<commit>, "
+                "work:<path>@<commit>, review:#<card>/<review>, deploy:<where>@<identity>); "
+                "it is ignored")
+        else:
+            bindings.append(found)
+    assessed = seen.get("Assessed", "").strip() or None
+    if assessed and not DATE_RE.match(assessed):
+        rec["warnings"].append("**Assessed:** is a date, YYYY-MM-DD; it is shown as not recorded")
+        assessed = None
+    rec.update(standing=standing, policy=policy, policyNote=policy_note,
+               bindings=bindings, assessed=assessed)
     rec.update(
         state="invalid" if rec["problems"] else "entry",
         title=_clean(title or "", MAX_TITLE_CHARS) or None,
@@ -423,9 +508,11 @@ def _scan() -> dict:
         out.update(state="refused", why=f"brain/ could not be listed ({exc.strerror or exc})")
         return out
     for name in names:
-        if name.startswith(".") or name == REVIEWS_DIRECTORY:
+        if name.startswith(".") or name in (REVIEWS_DIRECTORY, HANDBOOK_DIRECTORY):
             # brain/reviews/ holds the review classification records (task
-            # 168), which brainreviews reads; it is not a skipped file
+            # 168), which brainreviews reads, and brain/handbook/ the
+            # handbook's membership record (task 171), which handbook reads;
+            # neither is a skipped file
             continue
         if not name.endswith(".md"):
             out["skipped"] += 1
@@ -468,6 +555,11 @@ def _cards_here() -> set[str]:
             if match and name.endswith(".md"):
                 numbers.add(taskfiles.canonical_number(match.group(1)))
     return numbers
+
+
+def cards_here() -> set[str]:
+    """The card numbers on this board or in its archive (file names only)."""
+    return _cards_here()
 
 
 def _source(item: str, cards: set[str]) -> dict:
@@ -579,6 +671,8 @@ def _listed(e: dict) -> dict:
             # the ids it names as related (task 159): the list's search
             # finds an entry by what it links to as well as by its words
             "related": list(e["related"]),
+            "standing": e["standing"], "policy": e["policy"],
+            "assessed": e["assessed"], "bindings": len(e["bindings"]),
             "warnings": len(e["warnings"])}
 
 
@@ -659,6 +753,9 @@ def entry(entry_id: str) -> dict:
         "removed": found["removed"],
         "invalidated": found["invalidated"], "override": found["override"],
         "sources": found["sourceRefs"],
+        "standing": found["standing"], "policy": found["policy"],
+        "policyNote": found["policyNote"], "bindings": found["bindings"],
+        "assessed": found["assessed"],
         "related": [name(t) for t in found["related"]],
         "supersedes": [name(t) for t in found["supersedes"]],
         "supersededBy": [name(t) for t in found["supersededBy"]],

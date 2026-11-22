@@ -36,6 +36,7 @@ import brain
 import braindraft
 import brainreviews
 import brainwrite
+import handbook
 import commands
 import completion
 import config
@@ -1157,7 +1158,20 @@ def get_brain_entry(req) -> None:
         req.reply(400, {"error": str(exc), "code": "not-an-id"})
         return
     status = {"unknown": 404, "duplicate": 409}.get(found["state"], 200)
+    if found["state"] in ("entry", "tombstone"):
+        # what the entry's own record says about its sources (task 171),
+        # and the handbook sections that link it — brain/ and local git
+        # metadata only
+        found["authority"] = handbook.authority(found)
+        found["handbook"] = handbook.membership(found["id"])
     req.reply(status, {"entry": found})
+
+
+def get_brain_handbook(req) -> None:
+    # The curated handbook (task 171): its membership record, each linked
+    # entry said as what it is, each section's coverage and every link's
+    # source authority. A read: no file content, fetch, check or launch.
+    req.reply(200, {"handbook": handbook.reading()})
 
 
 def get_brain_revisions(req) -> None:
@@ -2560,6 +2574,7 @@ ROUTES = (
     Route("GET", "/api/brain/operation", "read", get_brain_operation),
     Route("GET", "/api/brain/reviews", "read", get_brain_reviews),
     Route("GET", "/api/brain/review", "read", get_brain_review),
+    Route("GET", "/api/brain/handbook", "read", get_brain_handbook),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
@@ -2652,6 +2667,7 @@ ROUTES = (
     Route("POST", "/api/brain/override", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retire", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/handbook", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),

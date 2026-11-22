@@ -220,6 +220,11 @@ class BrainReading(unittest.TestCase):
         b.key("Tab")
         # New entry asks the Brain Agent first (task 175)
         self.assertEqual(b.eval("document.activeElement?.dataset?.bact || null"), "ag-new")
+        # the curated handbook's five sections come next (task 171), each
+        # with its Organize button, before the library's controls
+        for section in ("overview", "how-it-works", "ways-of-working", "direction", "operations"):
+            b.key("Tab")
+            self.assertEqual(b.eval("document.activeElement?.dataset?.barg || null"), section)
         b.key("Tab")
         self.assertEqual(b.eval("document.activeElement?.dataset?.bfind || null"), "q")
         for _ in range(7):
