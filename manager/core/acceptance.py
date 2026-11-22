@@ -58,6 +58,7 @@ from pathlib import Path
 
 import config
 import evidence
+import gitrepo
 import progress
 import staleness
 import taskfiles
@@ -1026,13 +1027,10 @@ def heads_by_card(stems=None) -> dict:
     branch refs — `phase/<stem>` before `task/<stem>`, the order a merge
     reads — so a whole board's acceptance costs one git call, not one per
     card. A read; nothing moves."""
-    try:
-        found = config.git_run(config.REPO, "for-each-ref", "--format=%(refname) %(objectname)",
-                               "refs/heads/" + config.TASK_BRANCH_PREFIX.rstrip("/"),
-                               "refs/heads/" + config.PHASE_BRANCH_PREFIX.rstrip("/"),
-                               timeout=10)
-    except (subprocess.SubprocessError, OSError):
-        return {}
+    found = gitrepo.git(config.REPO, "for-each-ref", "--format=%(refname) %(objectname)",
+                        "refs/heads/" + config.TASK_BRANCH_PREFIX.rstrip("/"),
+                        "refs/heads/" + config.PHASE_BRANCH_PREFIX.rstrip("/"),
+                        timeout=10)
     if found.returncode != 0:
         return {}
     task, phase = {}, {}

@@ -173,8 +173,8 @@ class OneSlotBuilderTests(unittest.TestCase):
         cls.html = pagesource.page()
 
     def test_hover_actions_and_command_chips_share_the_machine(self):
-        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 14,
-                         "exactly fourteen call sites: a card's Retry filing "
+        self.assertEqual(len(re.findall(r"(?<!function )wireAction\(btn,", self.html)), 13,
+                         "exactly thirteen call sites: a card's Retry filing "
                          "/ Retry commit of a retained report (task 169), "
                          "Show the result's "
                          "Withhold (task 133), a verifier report's "
@@ -186,8 +186,8 @@ class OneSlotBuilderTests(unittest.TestCase):
                          "sheet's gate override, the Settings view's own "
                          "executing diagnostic stages, a card "
                          "discussion's refine / retry / apply / discard / "
-                         "cancel and the Acceptance section's Track "
-                         "acceptance — all on the one machine")
+                         "cancel — all on the one machine (task 190 took "
+                         "the Acceptance section's Track acceptance away)")
 
     def test_applying_a_settings_change_is_on_the_same_machine(self):
         """The one other armed action this card's machine owes a mention:
