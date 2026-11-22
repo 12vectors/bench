@@ -102,8 +102,14 @@ class TheChipOnTheCard(unittest.TestCase):
         self.assertIn(f"pre: '{TRAY_GLYPH}'", self.push.group(1))
         tray = re.search(r"\$\('#tray'\)\.innerHTML =(.*?);", self.html, re.S)
         self.assertIn(TRAY_GLYPH, tray.group(1), "the tray lost its glyph")
-        self.assertEqual(self.html.count(TRAY_GLYPH), 2,
-                         "one glyph, two places: the tray and the card's chip")
+        # task 187 adds the third and last: the Done column's Archive all,
+        # the same action over a set
+        self.assertEqual(self.html.count(TRAY_GLYPH), 3,
+                         "one glyph, three places: the tray, the card's chip "
+                         "and the Done column's Archive all")
+        allbtn = re.search(r"function archiveAllButton\(stage\) \{(.*?)\n\}", self.html, re.S)
+        self.assertIsNotNone(allbtn, "Archive all lost its button")
+        self.assertIn(TRAY_GLYPH, allbtn.group(1))
 
     def test_it_is_the_last_chip_in_the_row(self):
         # the chips are rendered by one builder, for the face and the tools
