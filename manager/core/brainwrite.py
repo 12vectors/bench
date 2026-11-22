@@ -60,6 +60,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import acceptance
+import adoption
 import brain
 import brainreviews
 import config
@@ -352,8 +353,8 @@ def _who() -> str:
 # ── the file ───────────────────────────────────────────────────────────
 
 _ORDER = ("Brain", "Id", "Kind", "Classification", "Summary", "Source", "Related",
-          "Standing", "Policy", "Bindings", "Assessed", "Supersedes", "Superseded by", "Invalidated", "Override", "Removed",
-          "Replaced by")
+          "Standing", "Policy", "Bindings", "Assessed", "Adopted from", "Supersedes",
+          "Superseded by", "Invalidated", "Override", "Removed", "Replaced by")
 
 
 def render(title: str, fields: dict, body: str, history: list[str],
@@ -912,9 +913,72 @@ def _plan_handbook(payload: dict, reading: dict, actor: str) -> dict:
             "what": f"{section} updated"}
 
 
+ADOPT_FIELDS = {"request", "op", "name", "source", "expected", "title", "kind", "summary",
+                "body", "reason"}
+
+
+def _plan_adopt(payload: dict, reading: dict, actor: str) -> dict:
+    """One file of `reference/` adopted as one entry (task 172), held to
+    the exact source bytes and destination revision its preview showed,
+    read again here under the writer's lock. The source is never copied,
+    moved or changed; the entry starts Unclassified; a refresh changes the
+    recorded bytes and nothing a person wrote."""
+    unknown = sorted(set(payload) - ADOPT_FIELDS)
+    if unknown:
+        raise Refused(f"an adoption does not take {unknown[0]!r}", field=unknown[0])
+    op, name = payload.get("op"), payload.get("name")
+    try:
+        frozen = adoption.freeze(name, op, payload.get("source"), payload.get("expected"),
+                                 reading)
+    except adoption.Stop as exc:
+        raise Refused(str(exc), exc.status, **exc.extra) from exc
+    digest = frozen["item"]["sha256"]
+    binding = f"work:{adoption.DIRECTORY}/{name}@{frozen['commit']}" if frozen["commit"] else ""
+    if op == "refresh":
+        reason = _reason(payload.get("reason"))
+        parts = _appendable(_parts(_current_bytes(brain.directory() / frozen["file"]) or b""),
+                            frozen["entry"])
+        fields = dict(parts["fields"])
+        role = frozen["entry"]["adopted"]["role"]
+        fields["Adopted from"] = adoption.field(name, digest, role)
+        # the old binding named the old bytes; only this file's is replaced
+        prefix = f"work:{adoption.DIRECTORY}/{name}@"
+        kept = [b.strip() for b in fields.get("Bindings", "").split(",")
+                if b.strip() and not b.strip().startswith(prefix)]
+        fields["Bindings"] = ", ".join(kept + ([binding] if binding else []))
+        history = parts["history"] + [_history_line(
+            _now(), frozen["entry"]["classification"], actor,
+            f"source bytes re-recorded: {reason}")]
+        text = render(parts["title"], fields, parts["body"], history, parts["extra"])
+        return {"id": frozen["id"], "file": frozen["file"], "expected": frozen["expected"],
+                "text": text, "what": "source re-recorded"}
+    title = _title(payload.get("title"))
+    summary = _line(payload.get("summary"), "summary", cap=brain.MAX_FIELD_CHARS)
+    if op == "catalogue":
+        kind, body, related = "Attachment", adoption.catalogue_body(name), []
+    else:
+        kind = payload.get("kind")
+        if kind not in adoption.EXPLANATION_KINDS:
+            raise Refused("an explanation is one of " + ", ".join(adoption.EXPLANATION_KINDS),
+                          field="kind")
+        body = _body(payload.get("body"))
+        if not body.strip():
+            raise Refused("an explanation needs its text; write it or start from the file's",
+                          field="body")
+        related = [frozen["catalogue"]]
+    fields = {"Brain": str(brain.CONTRACT), "Id": frozen["id"], "Kind": kind,
+              "Classification": "Unclassified", "Summary": summary,
+              "Source": f"{adoption.DIRECTORY}/{name}", "Related": ", ".join(related),
+              "Bindings": binding, "Adopted from": adoption.field(name, digest, op)}
+    line = _history_line(_now(), "Unclassified", actor,
+                         f"adopted from {adoption.DIRECTORY}/{name}; not yet assessed")
+    return {"id": frozen["id"], "file": frozen["file"], "expected": None,
+            "text": render(title, fields, body, [line]), "what": f"adopted ({op})"}
+
+
 PLANS = {"create": _plan_create, "edit": _plan_edit, "classify": _plan_classify,
          "override": _plan_override, "retire": _plan_retire,
-         "handbook": _plan_handbook,
+         "handbook": _plan_handbook, "adopt": _plan_adopt,
          "review-classify": lambda p, r, a: _plan_review("review-classify", p, r, a),
          "review-override": lambda p, r, a: _plan_review("review-override", p, r, a)}
 REVIEW_KINDS = ("review-classify", "review-override")
@@ -934,7 +998,7 @@ def _entry_path(entry: dict) -> Path:
         if file != f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}":
             raise Refused("the handbook record is brain/handbook/handbook.md", 409)
         return _handbook_directory(make=True) / handbook.FILE
-    directory = _check_directory(create=entry.get("kind") == "create")
+    directory = _check_directory(create=entry.get("kind") in ("create", "adopt"))
     if not brain.NAME_RE.match(file):
         raise Refused("the entry's file name is not a plain flat name", 409)
     return directory / file
@@ -1014,7 +1078,7 @@ def write(kind: str, payload: dict) -> dict:
             return _finish(request, prior, resumed=True)
         actor = _who()
         reading = brain.reading()
-        _check_directory(create=(kind in ("create", "handbook") or kind in REVIEW_KINDS),
+        _check_directory(create=(kind in ("create", "handbook", "adopt") or kind in REVIEW_KINDS),
                          make=False)
         plan = PLANS[kind](payload, reading, actor)
         entry = {"kind": kind, "digest": digest, "status": "started", "at": _now(),

@@ -809,6 +809,11 @@ ROUTES: dict[str, str] = {
     # membership record per write — never an entry
     "GET /api/brain/handbook": "read",
     "POST /api/brain/handbook": "browser-mutation",
+    # adopting reference/ material (task 172): two reads, and one file
+    # adopted as one entry through the Brain's writer
+    "GET /api/brain/adoption": "read",
+    "GET /api/brain/adoption/preview": "read",
+    "POST /api/brain/adoption/apply": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

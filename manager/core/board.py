@@ -65,6 +65,7 @@ import braindraft
 import brainreviews  # noqa: F401
 import brainwrite  # noqa: F401
 import handbook  # noqa: F401
+import adoption  # noqa: F401
 import callers  # noqa: F401
 import changes
 import checkload
