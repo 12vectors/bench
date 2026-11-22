@@ -319,7 +319,8 @@ class UpdatingAgainstTheTarget(unittest.TestCase):
         b.eval("window.__posts = []; { const f = window.fetch; window.fetch = (u, o) => {"
                " if (o && o.method && o.method !== 'GET') window.__posts.push(String(u));"
                " return f.call(window, u, o); }; }")
-        js = (f"(document.querySelector('{SEL2} .intstat') || {{}})"
+        js = (f"!!document.querySelector('{SEL2}')" if state is None else
+              f"(document.querySelector('{SEL2} .intstat') || {{}})"
               f".dataset?.integration === '{state}'")
         deadline = time.time() + 40
         while time.time() < deadline:
@@ -407,8 +408,15 @@ class UpdatingAgainstTheTarget(unittest.TestCase):
         # its old check and review are history: the combined head needs its own
         self.assertEqual("checks-needed", found["status"]["word"])
         self.assertEqual("integration-check-needed", found["integration"]["state"])
-        b = self.load("integration-check-needed", 1280, 900, False)
+        # the face draws no integration line here (its pill already says
+        # Checks needed); the Overview's Against the target block says why
+        b = self.load(None, 1280, 900, False)
         self.open(b)
+        if not b.wait("(document.querySelector('#drawer.open #dsec-overview .dint') || {})"
+                      ".dataset?.integration === 'integration-check-needed'", 20):
+            raise bv.CheckFailed(f"the Overview read {self.overview()}")
+        self.assertIsNone(b.eval(f"document.querySelector('{SEL2} .intstat')"),
+                          "the face repeats nothing the pill already says")
         got = self.overview()
         self.assertEqual("checks-needed", got["word"])
         shot("admission-after-update-1280-day")
