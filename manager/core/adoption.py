@@ -247,7 +247,7 @@ def _inspect(name: str) -> dict:
                 sha256=facts["sha256"])
     if facts["secret"]:
         # the digest of a credential-bearing file is not published either
-        return {**item, "state": "excluded", "sha256": None, "address": address(name),
+        return {**item, "state": "excluded", "sha256": None, "address": None,
                 "why": "its content looks like it holds a credential ("
                        + ", ".join(facts["secret"]) + "), so it cannot be adopted"}
     if facts["malformed"]:
@@ -395,7 +395,8 @@ def _describe(item: dict, reading: dict, links: dict, owners: dict) -> dict:
                    "settle them by hand")
     elif catalogue and catalogue[0]["removed"] is not None:
         out.update(state="retired", why="its catalogue entry was retired; the id is not reused")
-    elif any(e["adopted"]["sha256"] != item["sha256"] for e in catalogue + explanation):
+    elif any(e["adopted"]["sha256"] != item["sha256"]
+             for e in catalogue + explanation if e["removed"] is None):
         out.update(state="changed", why="the file's bytes differ from what its entry recorded")
     elif catalogue:
         out["state"] = "catalogued"

@@ -164,6 +164,7 @@ class Inventory(_Adoption):
             self.assertEqual(by[name]["state"], "unsupported", name)
         self.assertIsNone(by["escape.md"]["sha256"])
         self.assertIsNone(by["notes.md"]["sha256"], "a credential file's digest is withheld")
+        self.assertIsNone(by["notes.md"]["address"], "a credential file is not linked")
         for name in ("escape.md", "deploy.env", "notes.md", "fake.png", "bad.md"):
             data = b"x"
             with self.assertRaises(brainwrite.Refused) as caught:
@@ -458,6 +459,21 @@ class Changed(_Adoption):
                                    "source": sha(new), "expected": e["revision"],
                                    "reason": "read the new version"})
         self.assertEqual(brain.entry(entry_id)["bindings"], [])
+
+    def test_a_retired_explanation_does_not_keep_the_file_reading_changed(self):
+        self.adopt()
+        explanation = self.adopt(op="explanation")["id"]
+        e = brain.entry(explanation)
+        brainwrite.write("retire", {"request": self.req(), "id": explanation,
+                                    "expected": e["revision"], "reason": "no longer wanted"})
+        catalogue = brain.entry(adoption.entry_id("catalogue", "api.md"))
+        new = (GUIDE + "more\n").encode()
+        (self.ref / "api.md").write_bytes(new)
+        self.edited = ("api.md",)
+        brainwrite.write("adopt", {"request": self.req(), "op": "refresh", "name": "api.md",
+                                   "source": sha(new), "expected": catalogue["revision"],
+                                   "reason": "read the new version"})
+        self.assertEqual(self.item("api.md")["state"], "catalogued")
 
     def test_an_explanation_waits_for_the_new_bytes(self):
         self.changed()
