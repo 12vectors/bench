@@ -268,8 +268,9 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # six Brain drafting steps (start, continue, cancel, discard,
         # retarget, apply), browser-mutation; task 181 three (ask, retry,
         # cancel a question), browser-mutation; task 182 one, migrating
-        # reserved capacity to shared, policy-mutation
-        self.assertEqual(97, len(self.routes))
+        # reserved capacity to shared, policy-mutation; task 168 two, a
+        # filed review's classification and override, browser-mutation
+        self.assertEqual(99, len(self.routes))
         self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

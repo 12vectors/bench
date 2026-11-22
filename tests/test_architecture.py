@@ -794,6 +794,12 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/override": "browser-mutation",
     "POST /api/brain/retire": "browser-mutation",
     "POST /api/brain/retry": "browser-mutation",
+    # reviews filed on cards, read in the Brain (task 168), and a person's
+    # classification of one — a record under brain/reviews/, never the card
+    "GET /api/brain/reviews": "read",
+    "GET /api/brain/review": "read",
+    "POST /api/brain/review/classify": "browser-mutation",
+    "POST /api/brain/review/override": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

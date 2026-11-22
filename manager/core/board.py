@@ -61,6 +61,7 @@ import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
 import braindraft
+import brainreviews  # noqa: F401
 import brainwrite  # noqa: F401
 import callers  # noqa: F401
 import changes

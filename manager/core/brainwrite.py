@@ -61,6 +61,7 @@ from pathlib import Path
 
 import acceptance
 import brain
+import brainreviews
 import config
 import gitrepo
 import records
@@ -597,8 +598,169 @@ def _plan_retire(payload: dict, reading: dict, actor: str) -> dict:
             "text": text, "what": "retired"}
 
 
+# ── a filed review's classification (task 168) ─────────────────────────
+#
+# A review's report stays on its card; what a person records about it in
+# the Brain is one small record under brain/reviews/ (the format is
+# brainreviews'). These writes name the card and the review, never a file,
+# and are refused for anything that would touch the report, the card or a
+# maintained entry.
+
+REVIEW_FIELDS = {"request", "card", "review", "expected", "classification", "reason",
+                 "supersededBy", "invalidation", "action"}
+
+
+def _review_target(payload: dict) -> tuple[dict, dict]:
+    for key in payload:
+        if key not in REVIEW_FIELDS:
+            raise Refused(f"{str(key)[:40]!r} cannot be written here: a review's report and "
+                          "its card are not edited from the Brain — only its classification "
+                          "is recorded, beside it", field=str(key)[:40])
+    card_id = payload.get("card")
+    if isinstance(card_id, int) and not isinstance(card_id, bool):
+        card_id = str(card_id)
+    try:
+        where = brainreviews.locate(card_id, payload.get("review"))
+    except brainreviews.NotAnAddress as exc:
+        raise Refused(str(exc), field="review") from exc
+    if where["state"] == "ambiguous":
+        raise Refused(f"{len(where['files'])} cards hold this review "
+                      f"({', '.join(where['files'])}); the board does not pick one — "
+                      "give one card a number of its own first", 409)
+    if where["state"] != "found":
+        raise Refused("that review is not on any card on this board; there is nothing "
+                      "to classify", 404)
+    card = where["card"]
+    if not card["number"]:
+        raise Refused(f"{card['file']} has no number, so a classification has no stable "
+                      "card to be kept under; give the card a number first", 409)
+    return card, where["review"]
+
+
+def render_review(number: str, review_id: str, fields: dict, history: list[str]) -> str:
+    """A version 1 review record from its parts (brainreviews reads it)."""
+    lines = [f"# Review classification: #{number} {review_id}", "",
+             f"**Brain review:** {brainreviews.CONTRACT}",
+             f"**Review of:** #{number}/{review_id}",
+             f"**Classification:** {fields['Classification']}"]
+    for key in ("Superseded by", "Invalidated", "Override"):
+        if fields.get(key):
+            lines.append(f"**{key}:** {fields[key]}")
+    lines.append("")
+    if history:
+        lines += [brain.HISTORY_HEADING, ""] + history
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _reviews_directory(make: bool) -> Path:
+    """brain/reviews/, refused when a write must not go through it; made
+    (with brain/) only by a write that is about to happen."""
+    _check_directory(create=True, make=make)
+    path = brainreviews.directory()
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        if make:
+            os.mkdir(path)
+        return path
+    if stat.S_ISLNK(info.st_mode):
+        raise Refused("brain/reviews/ is a link; bench never writes through one", 409)
+    if not stat.S_ISDIR(info.st_mode):
+        raise Refused("brain/reviews/ is not a directory; nothing was written", 409)
+    if config.escapes_work(path) is not None:
+        raise Refused("brain/reviews/ resolves outside the work root; nothing was written", 409)
+    return path
+
+
+def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
+    card, review = _review_target(payload)
+    number, rid = card["number"], review["id"]
+    name = brainreviews.record_name(number, rid)
+    path = _reviews_directory(make=False) / name
+    data = _current_bytes(path)
+    rec = brainreviews.parse_record(name, data) if data is not None else None
+    if rec is not None and rec["state"] != "record":
+        raise Refused(f"brain/reviews/{name} does not follow the review record format "
+                      f"({'; '.join(rec['problems'][:2])}); fix it by hand first", 409)
+    now = rec["revision"] if rec else None
+    expected = payload.get("expected") or None
+    if expected != now:
+        raise Refused(
+            f"the classification of #{number}/{rid} changed since this page read it (it "
+            f"read {str(expected or 'none')[:16]}, the record is now {now or 'none'}). "
+            "Nothing was written. Read it again and decide again.", 409, stale=True,
+            current=brainreviews.review(number, rid))
+    history = brain.split_record(data.decode("utf-8"))["history"] if data is not None else []
+    fields = {"Classification": rec["classification"] if rec else "Unclassified",
+              "Override": rec["override"] if rec else None,
+              "Superseded by": rec["supersededBy"] if rec else None,
+              "Invalidated": rec["invalidated"] if rec else None}
+    reason = _reason(payload.get("reason"))
+    at = _now()
+    if kind == "review-classify":
+        klass = _classification(payload.get("classification"))
+        fields.update({"Classification": klass, "Superseded by": None, "Invalidated": None})
+        if klass == "Superseded":
+            target = payload.get("supersededBy")
+            target = target.strip() if isinstance(target, str) else target
+            invalidation = payload.get("invalidation")
+            if target and invalidation:
+                raise Refused("Superseded names either the replacing entry or an "
+                              "invalidation decision, not both", field="supersededBy")
+            if target:
+                _ids([target], "supersededBy")
+                _targets(reading, [target], "supersededBy", self_id=None,
+                         allow_tombstone=False)
+                fields["Superseded by"] = target
+                reason = f"superseded by {target}: {reason}"
+            elif invalidation:
+                fields["Invalidated"] = _reason(invalidation, "invalidation")
+                reason = f"invalidated without a replacement: {reason}"
+            else:
+                raise Refused("Superseded needs the entry that replaces this review's "
+                              "conclusions, or an explicit invalidation decision",
+                              field="supersededBy")
+        said, what = reason, f"classified {klass}"
+    else:
+        action = payload.get("action")
+        if action not in ("set", "clear"):
+            raise Refused("an override is set or cleared", field="action")
+        if action == "set":
+            fields["Override"] = f"manual · {actor} · {at} — {reason}"
+            said = f"manual override set: {reason}"
+        else:
+            if not fields["Override"]:
+                raise Refused(f"#{number}/{rid} has no manual override to clear", 409)
+            fields["Override"] = None
+            said = f"manual override cleared: {reason}"
+        what = f"override {'set' if action == 'set' else 'cleared'}"
+    history = history + [_history_line(at, fields["Classification"], actor, said)]
+    return {"id": f"#{number}/{rid}", "file": f"{brain.REVIEWS_DIRECTORY}/{name}",
+            "expected": now, "text": render_review(number, rid, fields, history),
+            "what": what}
+
+
 PLANS = {"create": _plan_create, "edit": _plan_edit, "classify": _plan_classify,
-         "override": _plan_override, "retire": _plan_retire}
+         "override": _plan_override, "retire": _plan_retire,
+         "review-classify": lambda p, r, a: _plan_review("review-classify", p, r, a),
+         "review-override": lambda p, r, a: _plan_review("review-override", p, r, a)}
+REVIEW_KINDS = ("review-classify", "review-override")
+
+
+def _entry_path(entry: dict) -> Path:
+    """Where a journalled write lands: one flat file in brain/, or — for a
+    review's classification — one record in brain/reviews/, never anything
+    a name could carry elsewhere."""
+    file = entry.get("file") or ""
+    if entry.get("kind") in REVIEW_KINDS:
+        sub, _, name = file.partition("/")
+        if sub != brain.REVIEWS_DIRECTORY or not brainreviews.RECORD_NAME_RE.match(name):
+            raise Refused("the review record's name is not c<card>-<review id>.md", 409)
+        return _reviews_directory(make=True) / name
+    directory = _check_directory(create=entry.get("kind") == "create")
+    if not brain.NAME_RE.match(file):
+        raise Refused("the entry's file name is not a plain flat name", 409)
+    return directory / file
 
 
 # ── the operation ──────────────────────────────────────────────────────
@@ -675,7 +837,7 @@ def write(kind: str, payload: dict) -> dict:
             return _finish(request, prior, resumed=True)
         actor = _who()
         reading = brain.reading()
-        _check_directory(create=(kind == "create"), make=False)
+        _check_directory(create=(kind == "create" or kind in REVIEW_KINDS), make=False)
         plan = PLANS[kind](payload, reading, actor)
         entry = {"kind": kind, "digest": digest, "status": "started", "at": _now(),
                  "id": plan["id"], "file": plan["file"], "expected": plan["expected"],
@@ -690,10 +852,7 @@ def _finish(request: str, entry: dict, *, resumed: bool) -> dict:
     are already there, commit, and record the outcome. A file that is
     neither what the intent replaces nor what it writes is someone else's
     change: the intent is closed as refused and nothing is written."""
-    directory = _check_directory(create=entry["kind"] == "create")
-    path = directory / entry["file"]
-    if not brain.NAME_RE.match(entry["file"]):
-        raise Refused("the entry's file name is not a plain flat name", 409)
+    path = _entry_path(entry)
     current = _current_bytes(path)
     now = brain.revision(current) if current is not None else None
     if now == entry["target"]:

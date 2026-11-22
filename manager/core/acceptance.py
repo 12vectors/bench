@@ -37,6 +37,7 @@ from __future__ import annotations
 import calendar
 import getpass
 import hashlib
+import json
 import re
 import secrets
 import subprocess
@@ -100,6 +101,18 @@ RELEVANCE_VERDICT_RE = re.compile(r"^\**\s*RELEVANCE REVIEW:\**\s*(.+?)\s*$", re
 # The verdict words the relevance prompt asks for, read off the start of
 # the marker line. Anything else stays the reviewer's own words.
 RELEVANCE_WORDS = ("Still relevant", "Partly done", "Already done", "Needs rewrite")
+
+# What bench itself recorded about a review when it filed it (task 168):
+# one line directly under the report's heading, written by the board and
+# never by the run — a run's line shaped like it is quoted on the way in
+# (`reports.defuse`). It names what the review was *of*: for a relevance
+# review the brief revision the run was launched with, for a PR review the
+# full head and base it was pinned to and who said so. A report filed
+# before task 168 has none, and every field it would hold reads unknown.
+PROVENANCE_RE = re.compile(r"^<!-- bench:review (\{.*\}) -->[ \t]*$")
+PROVENANCE_VERSION = 1
+_SHA_FULL_RE = re.compile(r"^[0-9a-f]{7,64}$")
+_PROV_TEXT = 300
 
 
 # ── reading ────────────────────────────────────────────────────────────
@@ -218,6 +231,92 @@ def _effective(item: dict, records: list[dict], claim: dict | None,
     return out
 
 
+def _prov_text(value, cap: int = _PROV_TEXT):
+    if not isinstance(value, str):
+        return None
+    value = " ".join(_CONTROL.sub("", value).split())
+    return value[:cap] or None
+
+
+def _prov_ref(value) -> dict | None:
+    """A head or base as the marker keeps it: the ref, the full commit and
+    who said so (`github`, `local`, …) — each field only when it reads as
+    what it claims to be."""
+    if not isinstance(value, dict):
+        return None
+    commit = value.get("commit")
+    out = {"ref": _prov_text(value.get("ref"), 200),
+           "commit": commit if isinstance(commit, str) and _SHA_FULL_RE.match(commit) else None,
+           "authority": _prov_text(value.get("authority"), 40)}
+    return out if any(out.values()) else None
+
+
+PROVENANCE_TEXT = ("kind", "agent", "model", "reviewer", "filed", "label", "pr",
+                   "prState", "note", "published", "briefSource")
+
+
+def read_provenance(raw: str) -> dict | None:
+    """One provenance marker's JSON, read field by field: only the fields
+    version 1 names, each bounded and checked, so a hand-edited or newer
+    marker can neither inject markup nor claim a shape bench did not
+    write. Anything that does not parse is None — unknown, never guessed."""
+    try:
+        meta = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(meta, dict) or meta.get("v") != PROVENANCE_VERSION:
+        return None
+    out: dict = {"v": PROVENANCE_VERSION}
+    for key in PROVENANCE_TEXT:
+        value = _prov_text(meta.get(key))
+        if value:
+            out[key] = value
+    for key in ("briefRevision", "reportSha"):
+        value = meta.get(key)
+        if isinstance(value, str) and _SHA_FULL_RE.match(value):
+            out[key] = value
+    number = meta.get("prNumber")
+    if isinstance(number, (int, str)) and str(number).isdigit():
+        out["prNumber"] = str(number)
+    for key in ("head", "base"):
+        ref = _prov_ref(meta.get(key))
+        if ref:
+            out[key] = ref
+    found = meta.get("evidence")
+    if isinstance(found, list):
+        out["evidence"] = [e for e in found[:20]
+                           if isinstance(e, str) and evidence.is_evidence_id(e)]
+    return out
+
+
+def provenance_line(meta: dict) -> str:
+    """The marker a filed report carries under its heading — the one
+    writer of the shape `read_provenance` reads (`agents` files it)."""
+    kept = {k: v for k, v in meta.items() if v not in (None, "", [])}
+    return taskfiles.record_line("review", {**kept, "v": PROVENANCE_VERSION})
+
+
+def split_provenance(body: str) -> tuple[dict | None, str]:
+    """A report's body without the provenance marker bench wrote above it,
+    and the marker read. The report itself — the stored text a reader
+    sees, whose digest `reportSha` is — is everything after it."""
+    lines = body.split("\n")
+    at = 0
+    while at < len(lines) and not lines[at].strip():
+        at += 1
+    if at < len(lines):
+        match = PROVENANCE_RE.match(lines[at])
+        if match:
+            return read_provenance(match.group(1)), "\n".join(lines[at + 1:]).strip("\n")
+    return None, body
+
+
+def report_sha(body: str) -> str:
+    """A filed report's digest: the stored text exactly as a reader gets
+    it, so the card, the Brain and the filing record name one value."""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
+
 def rounds(text: str) -> list[dict]:
     """The card's review rounds, read off the reports agents.py appended:
     each `## PR review …` section is one round, with its reviewer, the
@@ -232,7 +331,7 @@ def rounds(text: str) -> list[dict]:
         if not match:
             continue
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = _report_body(history, head.end(), stop)
+        prov, body = split_provenance(_report_body(history, head.end(), stop))
         verdict = VERDICT_RE.search(body)
         out.append({
             "id": "rv-" + hashlib.sha256(head.group(0).strip().encode("utf-8")).hexdigest()[:10],
@@ -242,6 +341,8 @@ def rounds(text: str) -> list[dict]:
             "at": match.group(4), "reviewer": match.group(5) or "",
             "verdict": verdict.group(1) if verdict else None,
             "report": body,
+            "reportSha": report_sha(body),
+            "provenance": prov,
         })
     return out
 
@@ -293,7 +394,7 @@ def relevance_reviews(text: str) -> list[dict]:
         if not match:
             continue
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = _report_body(history, head.end(), stop)
+        prov, body = split_provenance(_report_body(history, head.end(), stop))
         said = RELEVANCE_VERDICT_RE.search(body)
         raw = said.group(1).strip() if said else None
         word = next((w for w in RELEVANCE_WORDS
@@ -304,10 +405,14 @@ def relevance_reviews(text: str) -> list[dict]:
             "heading": line.lstrip("#").strip(),
             "at": f"{date} {clock}" if clock else date,
             "reviewer": who, "verdict": word, "verdictLine": raw,
-            "briefRevision": None,
+            # the brief revision the run was *launched* with (task 168),
+            # recorded by bench when it filed the report; None — unknown —
+            # for a review filed without one, never the brief as it is now
+            "briefRevision": (prov or {}).get("briefRevision"),
             "legacy": not clock or not who,
             "report": body,
-            "reportSha": hashlib.sha256(body.encode("utf-8")).hexdigest()[:12],
+            "reportSha": report_sha(body),
+            "provenance": prov,
         })
     return out
 
@@ -327,7 +432,7 @@ def reports(text: str) -> list[dict]:
     out = []
     for index, head in enumerate(heads):
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        body = _report_body(history, head.end(), stop)
+        _prov, body = split_provenance(_report_body(history, head.end(), stop))
         kind = head.group(1).strip()
         line = head.group(0)
         item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",

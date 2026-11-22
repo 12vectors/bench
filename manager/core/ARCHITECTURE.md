@@ -50,7 +50,7 @@ L8  staleness
 L9  verify
 L10 progress checkload
 L11 acceptance callers
-L12 gates
+L12 gates brainreviews
 L13 required orchestrator
 L14 doctor
 L15 commands drive events sync
@@ -109,6 +109,14 @@ the Brain's one writer, kept apart from `brain` (L5, the reader) because
 a write needs the actor (`acceptance`), the scoped work-state commit
 (`taskfiles.commit_work_file`) and sync's status and push (`sync`), all
 above the reader. Only `routes` and `braindraft` import it.
+
+`brainreviews` (task 168) sits beside `gates` (L12), directly above
+`acceptance`: the Brain's reading of the reviews filed on cards. It reads
+each report with acceptance's own readers and identities, the review
+classification records under `brain/reviews/` (whose format it owns; the
+writer is `brainwrite`), bench's evidence records and the PR poll's last
+observation (`reviews.observed`), and writes nothing. `brainwrite` and
+`routes` import it.
 
 `braindraft` (task 175) sits beside `refine` and `reasoning` (L28): a
 person's Brain drafting request, one bounded `brain`-intent run per
@@ -381,7 +389,7 @@ L8  staleness
 L9  verify
 L10 progress checkload
 L11 acceptance callers
-L12 gates
+L12 gates brainreviews
 L13 required doctor orchestrator
 L14 events drive sync commands
 L15 changes brainwrite
@@ -493,6 +501,7 @@ neither.
 | the admission queue: who waits for capacity, first come first served (task 182) | `operations` (`scheduler` syncs, `orchestrator.admit` removes) | `operations._LOCK`, interprocess | yes |
 | recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
 | Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
+| review classification records under `brain/reviews/` (portable) (task 168) | `brainwrite` (format: `brainreviews`) | `brainwrite.LOCK`, interprocess; each write is held to the record's exact revision, or to its absence | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -710,5 +719,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 162
+routes 166
 ```

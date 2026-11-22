@@ -44,8 +44,10 @@ import threading
 import time
 from pathlib import Path
 
+import acceptance
 import config
 import events
+import evidence
 import gatepolicy
 import gates
 import githost
@@ -60,6 +62,7 @@ import reports
 import results
 import reviews
 import state
+import taskfiles
 import templates
 import verify
 from taskfiles import (actor_name, append_to_task, collect, commit_edit,
@@ -88,7 +91,8 @@ def _report_of(record: dict, text: str | None = None) -> str:
     return reports.report(text, log_path=record.get("log"))
 
 
-def _file_report(record: dict, heading: str, report: str) -> None:
+def _file_report(record: dict, heading: str, report: str,
+                 provenance: dict | None = None) -> None:
     """The report travels with the task, like every review does — and, like
     every other board-made write to a task file, it reaches git rather than
     sitting modified in one working tree (task 44).
@@ -112,8 +116,18 @@ def _file_report(record: dict, heading: str, report: str) -> None:
                         f"{root}; the run's log still holds it")})
         return
     stamp = time.strftime("%Y-%m-%d %H:%M")
+    # A review carries what bench knows it was *of* (task 168), on one line
+    # under its heading that only the board writes: the run's own lines
+    # shaped like it were quoted by `reports.defuse` before reaching here.
+    # `reportSha` is the digest of exactly the text filed below it.
+    mark = ""
+    if provenance is not None:
+        mark = acceptance.provenance_line({
+            **provenance, "agent": record.get("id"), "model": record.get("model"),
+            "reviewer": name, "reportSha": acceptance.report_sha(report.strip("\n")),
+            "filed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n\n"
     append_to_task(record["task"], stage,
-                   f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{report}\n",
+                   f"\n\n---\n\n## {heading} — {stamp} ({name})\n\n{mark}{report}\n",
                    f"{heading} filed", root=root)
 
 
@@ -792,6 +806,10 @@ def start_review(filename: str, stage: str) -> dict:
     template = templates.require("review.md")
 
     task = read_task(config.TASKS / stage / filename, stage)
+    # The brief this run is about to be given, by revision (task 168): the
+    # exact text the prompt carries, so the filed review names what it
+    # assessed — not the card as it reads when the report arrives.
+    brief_revision = taskfiles.brief_sha(taskfiles.card_parts(task["body"])["brief"])
     agent_id = f"review-{filename[:-3]}-{time.strftime('%H%M%S')}"
     log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -812,7 +830,7 @@ def start_review(filename: str, stage: str) -> dict:
         "base": None, "status": "running", "rc": None, "started": time.time(),
         "session": None, "log": str(log_path), "proc": proc,
         "origin": stage, "mode": "review", "name": name, "model": model or None,
-        "profile": profiles.summary(manifest),
+        "profile": profiles.summary(manifest), "briefRevision": brief_revision,
     }
     with state.LOCK:
         state.AGENTS[agent_id] = record
@@ -1631,7 +1649,8 @@ def _settle_pr_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         report = _report_of(record, text[idx:] if idx >= 0 else text)
         match = re.search(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", report)
         verdict = match.group(1) if match else None
-        _file_report(record, _review_heading(pinned, moved), report)
+        _file_report(record, _review_heading(pinned, moved), report,
+                     _pr_provenance(agent_id, pinned, moved, text))
         _session_report(record, report)
         if verdict:
             # Bench's own record of what its reviewer found, bound to the
@@ -1708,6 +1727,30 @@ def _publication_note(log: str) -> str | None:
     return None
 
 
+def _pr_provenance(agent_id: str, pinned: dict, moved: dict, log: str) -> dict:
+    """What a PR review's record says it was of (task 168): the full head
+    and base bench pinned and who said so, the pull request, whether its
+    head had moved by the time the review ended, and the checks this run
+    asked bench for. Read off bench's own records — the run's words are
+    in the report beneath, and decide none of this."""
+    head = dict(pinned.get("head") or {})
+    base = dict(pinned.get("base") or {})
+    label = "historical" if moved.get("historical") else (
+        "superseded" if moved.get("stale") else "current")
+    try:
+        ran = [r.get("id") for r in evidence.for_agent(agent_id)
+               if isinstance(r.get("id"), str)]
+    except (OSError, ValueError, AttributeError):
+        ran = []
+    return {"kind": "pr",
+            "head": {k: head.get(k) for k in ("ref", "commit", "authority")} if head else None,
+            "base": {k: base.get(k) for k in ("ref", "commit", "authority")} if base else None,
+            "pr": pinned.get("pr"), "prNumber": pinned.get("number"),
+            "prState": pinned.get("state"), "label": label if pinned else None,
+            "note": (moved.get("changed") or [None])[0],
+            "published": _publication_note(log), "evidence": ran[:20]}
+
+
 def _review_heading(pinned: dict, moved: dict) -> str:
     """What the permanent record calls this review.
 
@@ -1743,7 +1786,11 @@ def _reap_review(agent_id: str, proc: subprocess.Popen, log_file) -> None:
         idx = text.find("RELEVANCE REVIEW")
         report = _report_of(record, text[idx:] if idx >= 0 else text)
         verdict = report.splitlines()[0] if report else None
-        _file_report(record, "Relevance review", report)
+        # a run launched before task 168 has no recorded launch input: its
+        # binding is left out, and reads as unknown — never the brief now
+        _file_report(record, "Relevance review", report, {
+            "kind": "relevance", "briefRevision": record.get("briefRevision"),
+            "briefSource": "launch" if record.get("briefRevision") else None})
         _session_report(record, report)
 
     name = record.get("name") or "the review"

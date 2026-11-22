@@ -73,6 +73,37 @@ test('a Brain entry is addressed by its stable id, and nothing else is one (task
   assert.deepEqual(routeOf({ view: 'brain', brainEntry: null, dtab: {} }), { view: 'brain' });
 });
 
+test('a review filed on a card is addressed by the card and its rv-/rl- identity (task 168)', async () => {
+  const { parseRoute, formatRoute, routeOf } = await load('lib/route.js');
+  for (const [path, want] of [
+    ['/brain/r/168/rl-0a1b2c3d4e', { view: 'brain', review: { card: '168', id: 'rl-0a1b2c3d4e' } }],
+    ['/brain/r/07-a-card/rv-0123456789', { view: 'brain', review: { card: '07-a-card', id: 'rv-0123456789' } }],
+  ]) {
+    assert.deepEqual(parseRoute(at(path)), want, path);
+    assert.equal(formatRoute(want), path);
+  }
+  // leading zeros are the same card: read, and corrected in place
+  const alias = parseRoute(at('/brain/r/007/rv-0123456789'));
+  assert.deepEqual(alias.review, { card: '7', id: 'rv-0123456789' });
+  assert.equal(alias.alias, true);
+  for (const bad of ['/brain/r/168', '/brain/r/168/rv-01234', '/brain/r/168/rx-0123456789',
+                     '/brain/r/168/rv-0123456789/more', '/brain/r/%2e%2e/rv-0123456789',
+                     '/brain/r/168/RV-0123456789']) {
+    const got = parseRoute(at(bad));
+    assert.equal(got.view, 'brain', bad);
+    assert.equal(got.invalid, 'entry', bad);
+    assert.equal(got.review, undefined, bad);
+  }
+  assert.deepEqual(routeOf({ view: 'brain', brainReview: { card: '7', id: 'rl-0a1b2c3d4e' }, dtab: {} }),
+    { view: 'brain', review: { card: '7', id: 'rl-0a1b2c3d4e' } });
+  // the way back: one review on the card's Reviews
+  const back = parseRoute(at('/cards/7', '?tab=reviews&review=rl-0a1b2c3d4e'));
+  assert.equal(back.tab, 'reviews');
+  assert.equal(back.review, 'rl-0a1b2c3d4e');
+  assert.equal(formatRoute(back), '/cards/7?tab=reviews');
+  assert.equal(parseRoute(at('/cards/7', '?tab=reviews&review=nope')).review, undefined);
+});
+
 test('aliases are read and marked, so the page can correct them in place', async () => {
   const { parseRoute, formatRoute } = await load('lib/route.js');
   for (const [where, canonical] of [

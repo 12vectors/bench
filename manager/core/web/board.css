@@ -2040,6 +2040,14 @@
   .b-back{margin:0}
   .b-permalink{margin:4px 0 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:var(--muted)}
   .b-permalink .mono{overflow-wrap:anywhere}
+  /* a review filed on a card (task 168): whether its assessment still
+     holds, said in words, and the way back to the card it lives on */
+  .b-assess{margin:0;padding:6px 10px;border-left:3px solid var(--border);background:var(--sunken);border-radius:4px}
+  .b-assess-current{border-left-color:var(--calm)}
+  .b-assess-stale{border-left-color:var(--alarm)}
+  .b-sha{overflow-wrap:anywhere;font-size:12px}
+  .b-oncard{font-weight:600}
+  .rvbrain{margin:6px 14px}
   .b-read{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
   .b-side{display:flex;flex-direction:column;gap:12px;min-width:0}
   .b-prose{max-width:76ch;font-size:14px;line-height:1.6;min-width:0;overflow-wrap:anywhere}
