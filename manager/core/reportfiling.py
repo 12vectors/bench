@@ -172,8 +172,24 @@ def _all() -> list[dict]:
     return out
 
 
+def _commit_of(op: dict) -> dict | None:
+    """The commit state an operation reads as. A filed report whose commit
+    was never recorded — the board stopped, or a step between the receipt
+    and the commit raised — is `unknown` while committing is on (a person's
+    Retry commit settles it), and `off` while it is off. Never `None` for a
+    filed report, so nothing reads it as settled by omission."""
+    commit = op.get("commit")
+    if op.get("status") != "filed" or (commit or {}).get("state"):
+        return commit
+    if not config.COMMIT_MOVES:
+        return {"state": "off", "detail": "committing board edits is off "
+                "(BOARD_COMMIT_MOVES); the card is saved and not committed"}
+    return {"state": "unknown", "detail": "the card holds this report, and its commit "
+            "was never recorded; Retry commit commits it if it is not committed"}
+
+
 def _settled(op: dict) -> bool:
-    commit = (op.get("commit") or {}).get("state")
+    commit = (_commit_of(op) or {}).get("state")
     return (op.get("status") in ("filed", "resolved")
             and commit in ("committed", "off", None) and op.get("indexed", True))
 
@@ -209,9 +225,8 @@ def _locate(op: dict) -> dict:
     board = Path(op["board"])
     if board != config.TASKS:
         return {"state": "board-changed",
-                "detail": (f"the run was launched from the board at {board}, and this "
-                           f"board now reads {config.TASKS}; nothing is written to "
-                           "another board")}
+                "detail": ("the run was launched from another board than the one this "
+                           "process now serves; nothing is written to another board")}
     hits = []
     for slug, place in _places(board):
         path = place / op["card"]
@@ -297,19 +312,25 @@ def file(record: dict, kind: str, report: str, provenance: dict | None = None) -
     card = record["task"]
     name = record.get("name") or "agent"
     run = record.get("id") or ""
+    report = report.strip("\n")
+    rsha = acceptance.report_sha(report)
+    # A run id (`<stem>-<HHMMSS>`) names no day, so it is not a run's
+    # identity on its own: the launch time and the report's digest are in
+    # the key too. Only this run's same report, asked again, finds the
+    # first operation; a later run that happens to share the id does not.
+    started = record.get("started")
     with _LOCK, LOCK:
-        op_id = "f-" + _sha(f"{board}\0{card}\0{run}\0{kind}")[:20]
+        op_id = "f-" + _sha(f"{board}\0{card}\0{run}\0{started}\0{kind}\0{rsha}")[:20]
         existing = _read(op_id) if run else None
-        if existing is not None:
+        if existing is not None and existing.get("reportSha") == rsha:
             # the same run's same report, asked again: the first operation
             # answers, and a retry is how it is carried further
             return public(existing)
-        if not run:
+        if not run or existing is not None:
             op_id = "f-" + _sha(f"{board}\0{card}\0{kind}\0{time.time_ns()}")[:20]
         heading = _allocate_heading(kind, name, board, card)
         review, rtype = _review_of(heading)
         mark = ""
-        report = report.strip("\n")
         if provenance is not None:
             mark = acceptance.provenance_line({
                 **provenance, "agent": record.get("id"), "model": record.get("model"),
@@ -324,18 +345,59 @@ def file(record: dict, kind: str, report: str, provenance: dict | None = None) -
               "run": run or None, "runName": name, "model": record.get("model"),
               "heading": heading, "review": review, "reviewType": rtype,
               "block": block, "blockSha": _sha(block),
-              "reportSha": acceptance.report_sha(report),
+              "reportSha": rsha,
               "bytes": len(report.encode("utf-8")),
               "clipped": bool(brainreviews.CLIP_RE.search(report)),
               "created": _now(), "status": "pending", "attempts": [],
               "commit": None, "indexed": review is None}
-        _put(op)
-        _prune()
+        try:
+            _put(op)
+        except OSError as exc:
+            # The intent could not be recorded (the state directory is not
+            # writable). The report still goes to its card, as it did
+            # before filing was durable; only the retry is lost.
+            return _file_unrecorded(op, exc)
+        try:
+            _prune()
+        except OSError:
+            pass
     try:
         _fault("before-append")
         return public(_attempt(op_id, actor="board"))
     except Exception:   # noqa: BLE001 — an interruption leaves the intent; reconcile reads it
         return public(_read(op_id) or op)
+
+
+def _file_unrecorded(op: dict, exc: Exception) -> dict:
+    """File without a durable record: append once to the original card
+    (the same refusals hold) and commit as an ordinary board edit. Said in
+    the ticker, since no Retry can follow it."""
+    why = _scrub(exc)
+    where = _locate(op)
+    if where["state"] != "found":
+        op.update(status="unfiled", code=where["state"], detail=where["detail"])
+        _narrate(op, f"{op['runName']}'s {op['kind'].lower()} on {op['card']} was not "
+                     f"filed — {where['detail']}; its filing record could not be written "
+                     f"either ({why}), so the run's log is the only copy")
+        return dict(public(op, push=False), recorded=False)
+    try:
+        held = _holding(where["path"].read_text(encoding="utf-8"), op)
+    except (OSError, UnicodeDecodeError):
+        held = "absent"
+    if held == "absent":
+        wrote = taskfiles.append_to_task(op["card"], where["stage"],
+                                         f"\n\n---\n\n{op['block']}\n", _what(op),
+                                         root=Path(op["board"]))
+        held = "same" if wrote else "failed"
+    op.update(status=("filed" if held == "same" else
+                      "conflict" if held == "different" else "unfiled"),
+              stage=where["stage"], filedAt=_now())
+    if op["status"] == "filed":
+        op["commit"] = {"state": "unknown", "detail": "no filing record was kept for "
+                        "this report"}
+    _narrate(op, f"{op['card']}: {_what(op)} without a filing record — writing it "
+                 f"failed ({why}); no Retry is available for this report")
+    return dict(public(op, push=False), recorded=False)
 
 
 def _narrate(op: dict, summary: str) -> None:
@@ -366,8 +428,14 @@ def _attempt(op_id: str, *, actor: str) -> dict:
         if where["state"] != "found":
             op.update(status="unfiled", code=where["state"], detail=where["detail"])
             _put(op)
+            # The ticker names the run's board (task 148's contract, on this
+            # machine's own ticker); the record's detail, which `public`
+            # sends to the page, names no path.
+            said = (f"the run was launched from the board at {op['board']}, and this "
+                    f"board now reads {config.TASKS}; nothing is written to another "
+                    "board" if where["state"] == "board-changed" else where["detail"])
             _narrate(op, f"{op['runName']}'s {op['kind'].lower()} on {op['card']} was "
-                         f"not filed — {where['detail']}; the report is retained on "
+                         f"not filed — {said}; the report is retained on "
                          "this board's filing record")
             return op
         path, stage = where["path"], where["stage"]
@@ -407,7 +475,13 @@ def _attempt(op_id: str, *, actor: str) -> dict:
             attempt["result"] = "appended"
         else:
             attempt["result"] = "already-filed"
+        # The receipt reads the commit as unknown until the commit step
+        # records it, so an interruption between the two is never read as
+        # a settled report (`_commit_of`).
+        if (op.get("commit") or {}).get("state") != "committed":
+            op["commit"] = None
         op.update(status="filed", code=None, detail=None, stage=stage, filedAt=_now())
+        op["commit"] = _commit_of(op)
         op.pop("block", None)        # the card holds it now; the record keeps the digest
         _put(op)
         _fault("after-receipt")
@@ -416,7 +490,7 @@ def _attempt(op_id: str, *, actor: str) -> dict:
             op["indexed"] = True
             _put(op)
         _fault("after-index")
-        if attempt["result"] == "appended" or not (op.get("commit") or {}).get("state"):
+        if (op.get("commit") or {}).get("state") not in ("committed", "off"):
             op["commit"] = _commit(op, stage)
             _put(op)
         _fault("after-commit")
@@ -496,7 +570,7 @@ def retry(payload: dict) -> dict:
         if op["status"] != "filed":
             raise Refused("the report is not filed yet; file it first", 409)
         if action == "commit":
-            if (op.get("commit") or {}).get("state") == "committed":
+            if (_commit_of(op) or {}).get("state") == "committed":
                 return dict(public(op), duplicate=True)
             if not config.COMMIT_MOVES:
                 raise Refused("committing board edits is off (BOARD_COMMIT_MOVES)", 409)
@@ -515,7 +589,7 @@ def retry(payload: dict) -> dict:
             _put(op)
             state.broadcast({"type": "board"})
             return public(op)
-        if (op.get("commit") or {}).get("state") != "committed":
+        if (_commit_of(op) or {}).get("state") != "committed":
             raise Refused("there is no commit to publish yet", 409)
         if not config.SYNC:
             raise Refused("sync is off (BOARD_SYNC); push the work-state repository "
@@ -535,10 +609,18 @@ def reconcile(limit: int = 200) -> dict:
     """At start-up: every operation an earlier process left `pending` is
     read against its card. One the card holds is recorded filed (its
     commit read as unknown until a person retries it); one it does not is
-    recorded unfiled, `interrupted`, for a person's Retry. Nothing is
-    appended, committed or indexed."""
-    found = {"filed": 0, "unfiled": 0}
+    recorded unfiled, `interrupted`, for a person's Retry. A filed record
+    with no commit state at all is given one (`unknown`, or `off`). Nothing
+    is appended, committed or indexed."""
+    found = {"filed": 0, "unfiled": 0, "commitUnknown": 0}
     with _LOCK, LOCK:
+        for op in [o for o in _all() if o.get("status") == "filed"
+                   and not (o.get("commit") or {}).get("state")][:limit]:
+            # filed, and stopped before its commit state was recorded (a
+            # record written before the receipt carried one)
+            op["commit"] = _commit_of(op)
+            _put(op)
+            found["commitUnknown"] += 1
         for op in [o for o in _all() if o.get("status") == "pending"][:limit]:
             where = _locate(op)
             text = ""
@@ -591,7 +673,7 @@ NEXT = {
 
 
 def _push(op: dict) -> dict:
-    commit = op.get("commit") or {}
+    commit = _commit_of(op) or {}
     if commit.get("state") != "committed":
         return {"state": "not-committed"}
     if not config.SYNC:
@@ -627,11 +709,11 @@ def public(op: dict, *, push: bool = True) -> dict:
            "lastAttempt": (op.get("attempts") or [{}])[-1] if op.get("attempts") else None,
            "retained": "block" in op, "reportSha": op.get("reportSha"),
            "bytes": op.get("bytes"), "clipped": bool(op.get("clipped")),
-           "indexed": bool(op.get("indexed")), "commit": op.get("commit"),
+           "indexed": bool(op.get("indexed")), "commit": _commit_of(op),
            "resolvedBy": op.get("resolvedBy"), "resolvedWhy": op.get("resolvedWhy")}
     if op.get("status") == "filed":
         out["push"] = _push(op) if push else None
-        commit = (op.get("commit") or {}).get("state")
+        commit = (_commit_of(op) or {}).get("state")
         out["next"] = ("Retry commit" if commit in ("failed", "unknown")
                        else "Retry push" if out["push"] and out["push"]["state"] == "failed"
                        else None)
@@ -659,7 +741,7 @@ def operations(card: str | None = None) -> list[dict]:
 def _attention(op: dict) -> bool:
     if op.get("status") in ("pending", "unfiled", "conflict"):
         return True
-    return op.get("status") == "filed" and (op.get("commit") or {}).get("state") in (
+    return op.get("status") == "filed" and (_commit_of(op) or {}).get("state") in (
         "failed", "unknown")
 
 

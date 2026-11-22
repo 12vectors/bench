@@ -126,7 +126,7 @@ class OneReportWhateverIsInterrupted(_Filing):
         self.assertTrue(got["retained"])
         self.assertNotIn("Still relevant", self.text())
         found = reportfiling.reconcile()
-        self.assertEqual(found, {"filed": 0, "unfiled": 1})
+        self.assertEqual(found, {"filed": 0, "unfiled": 1, "commitUnknown": 0})
         op = reportfiling.operation(got["operation"])
         self.assertEqual((op["status"], op["code"]), ("unfiled", "interrupted"))
         self.assertIn("Retry filing", op["next"])
@@ -147,7 +147,8 @@ class OneReportWhateverIsInterrupted(_Filing):
         got = self.file("after-append")
         self.assertEqual(self.op(got["operation"])["status"], "pending")
         self.assertEqual(self.copies(got), 1)
-        self.assertEqual(reportfiling.reconcile(), {"filed": 1, "unfiled": 0})
+        self.assertEqual(reportfiling.reconcile(),
+                         {"filed": 1, "unfiled": 0, "commitUnknown": 0})
         op = reportfiling.operation(got["operation"])
         self.assertEqual(op["status"], "filed")
         self.assertEqual(op["commit"]["state"], "unknown")
@@ -184,6 +185,62 @@ class OneReportWhateverIsInterrupted(_Filing):
         after = reportfiling.reading()
         self.assertTrue(all(r["indexed"] for r in after["reviews"]))
         self.assertTrue(reportfiling.operation(got["operation"])["indexed"])
+
+    def test_after_the_receipt_the_uncommitted_card_is_said_and_retry_commit_cleans_it(self):
+        # Review of ed47f85, finding 1: stopped between the receipt and the
+        # commit, the card is modified and uncommitted — that must read as
+        # a commit not yet made, need a person, and never be pruned.
+        got = self.file("after-receipt")
+        self.assertNotEqual(self.dirty(), "", "the fixture stops before the commit")
+        op = reportfiling.operation(got["operation"])
+        self.assertEqual(op["commit"]["state"], "unknown")
+        self.assertEqual(op["next"], "Retry commit")
+        self.assertFalse(reportfiling._settled(self.op(got["operation"])))
+        self.assertIn(got["operation"],
+                      [a["operation"] for a in reportfiling.reading()["filing"]["attention"]])
+        done = self.retry(got["operation"], "commit")
+        self.assertEqual(done["commit"]["state"], "committed")
+        self.assertEqual(self.dirty(), "")
+        self.assertEqual(self.copies(got), 1)
+
+    def test_an_index_step_that_raises_leaves_the_commit_unknown_not_settled(self):
+        with mock.patch.object(reportfiling, "_index_add", side_effect=OSError("disk")):
+            got = self.file()
+        op = reportfiling.operation(got["operation"])
+        self.assertEqual((op["status"], op["commit"]["state"]), ("filed", "unknown"))
+        self.assertEqual(op["next"], "Retry commit")
+        self.assertEqual(self.retry(got["operation"], "commit")["commit"]["state"],
+                         "committed")
+        self.assertEqual(self.dirty(), "")
+
+    def test_a_filed_record_with_no_commit_state_is_reconciled_as_unknown(self):
+        got = self.file("after-receipt")
+        raw = self.op(got["operation"])
+        raw["commit"] = None        # a record written before the receipt carried one
+        reportfiling._put(raw)
+        self.assertEqual(reportfiling.reconcile()["commitUnknown"], 1)
+        self.assertEqual(self.op(got["operation"])["commit"]["state"], "unknown")
+
+    def test_a_later_run_sharing_a_run_id_files_its_own_report(self):
+        # Review of ed47f85, finding 2: run ids carry no day, so the same id
+        # on the same card another day must not be answered by the old record.
+        first = self.file()
+        self.record = dict(self.record, started=1.0e9)
+        later = reportfiling.file(self.record, "Relevance review",
+                                  REPORT + "\n\nAnd a day later, this.",
+                                  {"kind": "relevance", "briefRevision": None})
+        self.assertNotEqual(later["operation"], first["operation"])
+        self.assertEqual(later["status"], "filed")
+        self.assertIn("And a day later, this.", self.text())
+        self.assertEqual(self.copies(first), 1)
+
+    def test_an_intent_that_cannot_be_recorded_still_files_and_does_not_raise(self):
+        with mock.patch.object(reportfiling, "_put", side_effect=OSError("read-only")):
+            got = self.file()
+        self.assertFalse(got["recorded"])
+        self.assertEqual(got["status"], "filed")
+        self.assertEqual(self.copies(got), 1)
+        self.assertIsNone(reportfiling.operation(got["operation"]))
 
     def test_a_failed_commit_is_recorded_and_retried(self):
         with mock.patch.object(taskfiles, "commit_edit", return_value=False):
@@ -290,6 +347,8 @@ class OnlyTheOriginalDestination(_Filing):
         with mock.patch.object(config, "TASKS", other):
             out = self.retry(got["operation"])
         self.assertEqual(out["code"], "board-changed")
+        self.assertNotIn(str(other), out["detail"], "no board path reaches the page")
+        self.assertNotIn(str(self.tasks), out["detail"])
         self.assertEqual((other / "in-progress" / self.card.name).read_text(),
                          "# 12 — elsewhere\n")
         self.assertNotIn("Still relevant", self.text())
