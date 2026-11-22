@@ -32,6 +32,8 @@ const FACE_WORDS = new Set([
   'changes-requested', 'checks-running', 'checks-needed', 'review-needed',
   'signoff-needed', 'ready-to-merge', 'ready-overridden', 'merged-elsewhere',
   'waiting-for-phase', 'waiting-for-parent',
+  // task 189: met at a head that does not hold the current target
+  'target-changed', 'target-conflicts',
 ]);
 // the words whose cause is a requirement on the current commit, so the ◫
 // evidence earns the face beside them; a stale or historical row never does
@@ -46,6 +48,8 @@ function toneColours(tone) {
     case 'working': return { tint: 'var(--accent)', bg: mix('var(--accent)', 16) };
     case 'alarm': return { tint: 'var(--alarm)', bg: mix('var(--alarm)', 16) };
     case 'calm': return { tint: 'var(--calm)', bg: mix('var(--calm)', 18) };
+    // a step that lies ahead and is not a failure (task 189)
+    case 'attention': return { tint: 'var(--attention)', bg: mix('var(--attention)', 16) };
     case 'idle': return { tint: 'var(--idle)', bg: 'var(--sunken)' };
     default: return { tint: 'var(--muted)', bg: 'var(--sunken)' };
   }
@@ -125,6 +129,18 @@ function deliveryRun(task, a) {
     // the completion sheet is the confirmation: it reads what merge &
     // clean up would do before offering it, exactly as dragging to done/
     case 'complete': return () => { completeSheet(task, task.stage); return true; };
+    // task 189: armed; bound to the head the card showed. A clean update
+    // pushes the card's own branch; a conflict starts one repair run.
+    case 'update-target': return async () => {
+      const d = deliveryOf(task) || {};
+      const { ok, data } = await post('/api/card/integration/update', {
+        file: task.file, head: (d.candidate || {}).commit || null });
+      const r = data.result || {};
+      toast(!ok ? (data.error || 'nothing was updated')
+        : r.sentence || 'updated against its target', !ok || r.outcome === 'conflict');
+      await loadState();
+      return ok;
+    };
     case 'cancel-check': return async () => {
       const { ok, data } = await post('/api/verify/cancel', { id: a.evidence });
       toast(ok ? 'the check was cancelled — nothing else changed' : (data.error || 'not cancelled'), !ok);
@@ -212,7 +228,7 @@ function deliveryButtonHtml(a, slot, primary) {
 const ACT_CONFIRM = {
   start: 'start it?', takeover: 'take it over?', hold: 'hold it?', 'run-phase': 'run it?',
   'hold-phase': 'hold it?', 'act-pr': 'act on it?', 'review-pr': 'review it?',
-  'cancel-check': 'cancel it?',
+  'cancel-check': 'cancel it?', 'update-target': 'update it?',
 };
 
 function wireDeliveryButtons(root, task, actions) {
@@ -334,7 +350,8 @@ function requirementsHtml(task, d, full, where) {
     ['Read', `${fmtClock(full.read.at)} · local to this board · reading it ran nothing`],
   ].filter(([, v]) => v) : [];
   const failed = (S.dfull[task.file] || {}).error;
-  return `<section class="dreqs" aria-labelledby="dreqs-${where}">` +
+  return integrationHtml(task, d, where) +
+    `<section class="dreqs" aria-labelledby="dreqs-${where}">` +
     `<h3 id="dreqs-${where}">Merge requirements · ${esc(requirementsHeadline(d))}</h3>` +
     (failed
       ? `<p class="dnote dreqerr" role="status">The requirement rows could not be read: ${esc(failed)}. ` +
@@ -364,10 +381,66 @@ function requirementsHtml(task, d, full, where) {
     `</section>`;
 }
 
+/* The candidate against the target it lands in (task 189): the server's
+   reading, apart from the review — which target, which of its revisions,
+   what the head holds, what an update would bring in, and what the
+   provider's mergeability is (and is not) evidence of. Draws, decides
+   nothing. */
+const INTEGRATION_GLYPH = {
+  'ready-to-admit': '✓', 'up-to-date': '·', 'integration-check-needed': '○',
+  'integration-check-running': '◌', 'integration-check-failed': '✕',
+  'target-changed': '↺', conflicts: '✕', updating: '◌', unknown: '?',
+  'no-candidate': '·',
+};
+
+function integrationHtml(task, d, where) {
+  const g = d && d.integration;
+  if (!g || !g.state) return '';
+  const c = toneColours(g.tone);
+  const id = `dint-${where}`;
+  const facts = [
+    ['Target', `${g.target}${g.targetTip ? ` at ${shortSha(g.targetTip)}` : ''}` +
+      (g.authority === 'remote-tracking' ? ` (${g.targetRef}, as last fetched)`
+        : g.authority === 'local' ? ' (this checkout)' : '')],
+    ['Candidate', g.head ? shortSha(g.head) : 'none'],
+    ['Holds the target', g.fresh === true ? 'yes' : g.fresh === false
+      ? `no${g.behind != null ? ` — ${g.behind} commit${g.behind === 1 ? '' : 's'} behind` : ''}` : 'not known'],
+    ['Required for admission', g.required
+      ? 'yes — the merge rule requires a check, so it must run on the combined head'
+      : 'no — no merge rule requires a check here; shown for information'],
+    ['Provider mergeability', !g.provider || g.provider.conflicts == null ? 'not reported'
+      : (g.provider.conflicts ? 'conflicts' : 'no textual conflict') +
+        ` (about ${g.provider.about}) — a textual reading, never evidence the combination works`],
+    ['Last update', g.attempt ? `${g.attempt.outcome}${g.attempt.conflicts && g.attempt.conflicts.length
+      ? ` on ${g.attempt.conflicts.join(', ')}` : ''} · ${g.attempt.at || ''}` : 'none on this board'],
+  ];
+  const incoming = (g.incoming || []).length
+    ? `<details class="fold dreqfold" data-fold="${where}-incoming"` +
+      `${S.accOpen[`${task.file}:${where}-incoming`] ? ' open' : ''}>` +
+      `<summary>Accepted target commits it does not hold (${g.incoming.length}${g.behind > g.incoming.length ? ` of ${g.behind}` : ''})</summary>` +
+      `<div class="dfoldbody"><ul class="dhist">` +
+      g.incoming.map(i => `<li><code>${esc(shortSha(i.commit))}</code> ${esc(i.subject || '')}</li>`).join('') +
+      `</ul></div></details>` : '';
+  return `<section class="dint tone-${esc(g.tone || 'neutral')}" aria-labelledby="${id}" ` +
+    `data-integration="${esc(g.state)}">` +
+    `<h3 id="${id}">Against the target · <span style="color:${c.tint}">` +
+    `<span aria-hidden="true">${INTEGRATION_GLYPH[g.state] || '·'}</span> ${esc(g.label)}</span></h3>` +
+    `<p class="dnote">${esc(g.sentence || '')}</p>` +
+    `<dl class="dfacts">` + facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('') + `</dl>` +
+    incoming +
+    `<details class="fold dreqfold" data-fold="${where}-guarantee"` +
+    `${S.accOpen[`${task.file}:${where}-guarantee`] ? ' open' : ''}><summary>Review is not admission</summary>` +
+    `<div class="dfoldbody"><p class="dnote">A review judges this card against its brief. Admission ` +
+    `is the merge into ${esc(g.target)} as it is now: where a merge rule requires a check, the check ` +
+    `must have run on a head that holds the target's accepted tip. Bench never merges another card's ` +
+    `pending work in to find out. ${esc(g.guarantees || '')}.</p></div></details>` +
+    `</section>`;
+}
+
 export {
   ACT_CONFIRM, deliveryActions, deliveryButtonHtml, deliveryFullKey,
   deliveryFull, deliveryOf, deliveryPill, deliveryRun, deliveryStatusHtml,
-  DFULL_RETRY_MS, EVIDENCE_ON_FACE, FACE_WORDS, loadDeliveryFull,
+  DFULL_RETRY_MS, EVIDENCE_ON_FACE, FACE_WORDS, integrationHtml, loadDeliveryFull,
   REQ_GLYPH, REQ_ROW, requirementRows, requirementsHeadline,
   requirementsHtml, shortSha, storeDeliveryFull, toneColours,
   wireDeliveryButtons

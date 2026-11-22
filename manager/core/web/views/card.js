@@ -622,6 +622,25 @@ function reviewLine(task, d) {
     `<span class="srx"> — ${esc(r.sentence || '')} Opens the card's Reviews.</span></button>`;
 }
 
+/* Where a review candidate stands against the target it lands in (task
+   189): the server's integration reading, on a line of its own under the
+   review line, so "Review approved" is never read as "ready to admit".
+   Only where it says something a person acts on or waits for. */
+const INTEGRATION_FACE = new Set([
+  'target-changed', 'conflicts', 'updating', 'unknown', 'ready-to-admit',
+  'integration-check-running', 'integration-check-failed',
+]);
+
+function integrationLine(task, d) {
+  const g = d && d.integration;
+  if (task.stage !== 'review' || !g || !INTEGRATION_FACE.has(g.state)) return '';
+  if (!g.required && g.state !== 'conflicts') return '';
+  return `<div class="intstat rv-${esc(g.tone || 'neutral')}" data-integration="${esc(g.state)}" ` +
+    `title="${esc(g.sentence || '')}"><span class="rvl">${esc(g.label)}</span>` +
+    (g.target ? `<span class="rvh"> · ${esc(g.target)}</span>` : '') +
+    `<span class="srx"> — ${esc(g.sentence || '')}</span></div>`;
+}
+
 /* A member of an adopted phase, as its phase scope reads it (task 160):
    the server's row from the phase's lifecycle, or null. */
 function memberRow(task) {
@@ -1090,6 +1109,7 @@ function cardSpec(task) {
     `<div class="toprow">${top.join('')}</div>` +
     `<div class="title">${esc(cardTitle(task))}</div>` +
     reviewLine(task, d) +
+    integrationLine(task, d) +
     (showWho
       ? `<div class="whorow"><span class="initial">${esc(initial)}</span><span class="who">${esc(who)}</span>` +
         modelChip(agent) +
