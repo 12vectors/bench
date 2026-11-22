@@ -248,6 +248,20 @@ class ATextualConflict(AdmissionCase):
 
 class GuardsAndDuplicates(AdmissionCase):
 
+    def test_the_preview_reads_and_changes_nothing(self):
+        _a, b_head = self.both_reviewed("calls new_name\n")
+        completion.complete_task(A, "review")
+        refs = git(self.repo, "for-each-ref").stdout
+        shown = coordinate.update_preview(B)
+        self.assertEqual(shown["head"], b_head)
+        self.assertEqual(shown["target"], "main")
+        self.assertEqual(shown["targetTip"], self.main_tip())
+        self.assertIsNone(shown["problem"])
+        self.assertEqual(shown["integration"]["state"], "target-changed")
+        self.assertTrue(shown["integration"]["incoming"])
+        self.assertEqual(refs, git(self.repo, "for-each-ref").stdout)
+        self.assertFalse(integration.attempts(B), "reading recorded nothing")
+
     def test_a_moved_head_is_refused_with_nothing_changed(self):
         self.card_with(B, "b.txt", "x\n")
         self.review_stage(B, "82 — Card B")
