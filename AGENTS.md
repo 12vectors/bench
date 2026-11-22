@@ -8084,8 +8084,8 @@ on.
 | admission lock | one admission per target on this machine; another installation is held by the remote guard above, not by this lock |
 
 **Orchestrated.** In an orchestrator scope the same steps run under the
-authority already delegated: after a card's checks and review pass, a
-stale head is updated (`refresh`, delegated by the `repair` word; it
+authority already delegated: a stale head is updated before its checks
+and review are asked for (`refresh`, delegated by the `repair` word; it
 launches no agent, takes no slot and spends no start); a conflict found
 there is repaired by an ordinary, queued **↻ act on PR** (a repair round,
 counted against `repairRounds`) told about the incoming changes; the
