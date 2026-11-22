@@ -620,30 +620,22 @@ class Wiring(unittest.TestCase):
 
     def test_the_lane_head_holds_the_phase_and_the_log_sits_under_it(self):
         lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
-        self.assertIn("holdPhase(task)", lane)
         self.assertIn("data-open", lane)
         self.assertIn("branch", lane)
+        self.assertIn("data-phase-orch", lane, "the way to the Orchestrator")
         self.assertLess(lane.index('<div class="lstages"'), lane.index("laneLog(task)"),
                         "the log is read under the lane, after its columns")
 
-    def test_run_again_lives_here_and_not_on_the_board(self):
-        """Clearing a halt should mean having read what caused it, so the
-        action sits beneath the reason — and the Board's phase card points
-        at the room rather than offering the launch itself."""
+    def test_the_retired_runner_has_no_control_here(self):
+        """Task 188: no ▸ run again and no phase ‖ hold — a held phase is
+        resumed in Orchestrator → Phases, a member's run held on its card."""
         lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
-        self.assertIn("'run again'", lane)
-        self.assertIn("runPhase(task)", lane)
-        self.assertIn(".lhalt .lacts", lane,
-                      "▸ run again is inside the halt, under its reason")
+        self.assertNotIn("runPhase(", lane)
+        self.assertNotIn("holdPhase(", lane)
+        self.assertNotIn("holdPhase", self.html)
+        self.assertNotIn("/api/phase/stop", self.html)
         card_fn = self.body(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}")
-        self.assertIn("else if (ph && ph.halted) actions.push(room, hold);", card_fn)
-        self.assertIn("setView('phases')", card_fn)
-
-    def test_holding_stops_the_run_and_unwinds_nothing(self):
-        hold = self.body(r"async function holdPhase\(task\) \{.*?\n\}")
-        self.assertIn("/api/phase/stop", hold)
-        lane = self.body(r"function laneFor\(task, el\) \{.*?\n\}")
-        self.assertIn("stay exactly as they are", lane)
+        self.assertIn("setView('orchestrator')", card_fn)
 
     def test_nothing_here_ends_the_phase(self):
         """Merging is a board move on the phase card: one place where work

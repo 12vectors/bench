@@ -45,15 +45,9 @@ function says(flight) {
   return JSON.stringify(flight || {});
 }
 
-test('the observed scoped snapshot is never read as an unstarted runner', () => {
+test('a runner snapshot alone says nothing: the face is the lifecycle (task 188)', () => {
   S.state = { phases: { [PHASE.file]: OBSERVED } };
-  const flight = phaseFlight(PHASE);
-  assert.ok(flight, 'the face has something to say');
-  assert.ok(!/not started/.test(says(flight)), says(flight));
-  assert.ok(!/run phase/.test(says(flight)), says(flight));
-  assert.equal(flight.owner, 'phase scope');
-  assert.match(flight.line, /on #157/);
-  assert.ok(!flight.idle, 'a member being worked is work happening');
+  assert.equal(phaseFlight(PHASE), null, 'no guess from a retired runner snapshot');
 });
 
 test('with the server lifecycle, the face is that reading word for word', () => {
@@ -74,32 +68,28 @@ test('a member moved early, an unknown outcome and Backlog members say what is y
   let flight = phaseFlight(PHASE);
   assert.ok(flight.bad, 'a mistake to recover from wears the alarm');
   assert.match(flight.line, /next \(you\): move #158 back/);
-  S.state.phaseLifecycle[PHASE.file] = life('queue-needed', 'Member in Backlog',
-    '#157 is next and is in Backlog', 'move #157 into To Do to queue it');
+  // task 188: a phase still in Backlog is not queued, and the one step is
+  // the phase card's own move — never moving each member
+  S.state.phaseLifecycle[PHASE.file] = life('not-queued', 'Not queued',
+    'in Backlog: neither the phase nor its members are queued',
+    'move the phase card into To Do');
   flight = phaseFlight(PHASE);
   assert.ok(flight.idle && !flight.bad);
-  assert.equal(flight.pill, 'member in backlog');
-  assert.match(flight.line, /move #157 into To Do/);
+  assert.equal(flight.pill, 'not queued');
+  assert.match(flight.line, /move the phase card into To Do/);
+  // held by the upgrade: the alarm, with whose step it is
+  S.state.phaseLifecycle[PHASE.file] = life('migrating', 'Held by the upgrade',
+    'held by the upgrade to the unified phase model', 'resume it here');
+  flight = phaseFlight(PHASE);
+  assert.ok(flight.bad);
 });
 
-test('a legacy phase nobody started still says so, and names the runner', () => {
-  S.state = { phases: { [PHASE.file]: { running: false, stopped: false, halted: null,
-                                         scoped: false, started: false, members: [] } },
-              phaseLifecycle: { [PHASE.file]: { owner: 'phase runner', word: 'not-configured',
-                                                line: 'run by the phase runner', members: [] } } };
-  const flight = phaseFlight(PHASE);
-  assert.equal(flight.pill, 'not started');
-  assert.match(flight.line, /run phase/);
-});
-
-test('named in the agreement but not adopted says adoption is the next step', () => {
-  S.state = { phases: { [PHASE.file]: { running: false, stopped: false, halted: null,
-                                         scoped: false, started: false, members: [] } },
-              phaseLifecycle: { [PHASE.file]: {
-                owner: 'phase runner', word: 'not-adopted', label: 'Not adopted',
-                line: 'named in the agreement as phase:156 but not adopted',
-                next: { who: 'you', text: 'adopt it in Orchestrator → Phases' }, members: [] } } };
-  const flight = phaseFlight(PHASE);
-  assert.equal(flight.pill, 'not adopted');
-  assert.match(flight.line, /adopt it in Orchestrator/);
+test('no surface offers the retired runner', () => {
+  for (const word of ['preparing', 'ready', 'orchestration-off', 'not-queued']) {
+    S.state = { phases: {}, phaseLifecycle: { [PHASE.file]: {
+      owner: 'phase scope', word, label: word, line: 'x', members: [],
+      next: { who: 'board', text: 'the next pass' } } } };
+    const flight = phaseFlight(PHASE);
+    assert.ok(!/run phase|adopt/.test(says(flight)), says(flight));
+  }
 });

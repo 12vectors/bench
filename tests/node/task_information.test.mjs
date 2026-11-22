@@ -150,7 +150,13 @@ test('the Overview orders the reader\'s questions, and reading it asks the board
   for (const h of ['The work', 'Where it stands · what happens next', 'What is required',
                    'Reviews and findings', 'More about this card'])
     assert.ok(at(h) > 0, `missing ${h}`);
-  assert.ok(at('The work') < at('Where it stands') && at('Where it stands') < at('What is required') &&
+  // task 186: where it stands leads, the work directly after it
+  assert.ok(html.startsWith('<section class="ovsec ovnow"'), 'where it stands is not the first section');
+  const sections = [...html.matchAll(/<section class="ovsec ov(\w+)"/g)].map(m => m[1]);
+  assert.deepEqual(sections.slice(0, 2), ['now', 'work'], 'the work does not follow where it stands');
+  for (const h of ['Where it stands · what happens next', '>The work<', 'What is required', 'Reviews and findings'])
+    assert.equal(html.split(h).length, 2, `${h} is drawn more than once`);
+  assert.ok(at('Where it stands') < at('The work') && at('The work') < at('What is required') &&
             at('What is required') < at('Reviews and findings') && at('Reviews and findings') < at('More about this card'),
             'the sections are in the reader\'s order');
   // the tools are no longer at the foot of the Overview: by the owner's

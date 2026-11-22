@@ -607,7 +607,6 @@ class AScopedPhaseRepairsThroughTheSameTarget(ScopedPhaseCase):
         self.orchestrate(phase_agreement(authority={"review": False,
                                                     "merge": False,
                                                     **authority}))
-        phasescope.adopt(PHASE, "tester")
         for _ in range(12):
             self.tick()
             if self.stage_of(PHASE) == "review":

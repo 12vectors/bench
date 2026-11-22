@@ -982,9 +982,9 @@ SYNC_INTERVAL = float(setting("BOARD_SYNC_INTERVAL", "30"))
 # tasks/ stays a hand job.
 COMMIT_MOVES = flag("BOARD_COMMIT_MOVES") or SYNC
 
-# How often the phase runner takes a pass: recompute what each running
-# phase needs and do the one next thing. A beat, not an agent — it costs a
-# handful of git commands and nothing at all when no phase is running.
+# Retired with the phase runner (task 188): read by nothing. Kept so an
+# existing .env that sets it stays a valid one; phases are advanced by the
+# orchestration passes below.
 PHASE_INTERVAL = float(setting("BOARD_PHASE_INTERVAL", "30"))
 ORCHESTRATE_INTERVAL = float(setting("BOARD_ORCHESTRATE_INTERVAL", "30"))
 

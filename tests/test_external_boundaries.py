@@ -425,8 +425,11 @@ class AWorktreeIsItsRepository(Workspace):
         (self.worktrees / phase[:-3]).mkdir()
         (self.worktrees / phase[:-3] / "junk").write_text("x", encoding="utf-8")
 
+        # the one way a phase branch is cut, whoever asks (task 188: the
+        # phase scope's prepare step)
         with self.assertRaises(ValueError) as caught:
-            phases.start_phase(phase, "in-progress")
+            phases.ensure_branch({"file": phase, "stage": "in-progress",
+                                  "title": "60 — Ship it", "number": "60"})
 
         self.assertIn("not a git checkout", str(caught.exception))
         self.assertFalse(self.branch_exists("phase/60-ship-it"),

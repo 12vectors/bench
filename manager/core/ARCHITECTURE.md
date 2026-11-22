@@ -65,7 +65,7 @@ L23 agents previews readiness
 L24 setuptasks
 L25 setupguide
 L26 phases
-L27 phasescope
+L27 phasescope archiveall
 L28 refine reasoning coordinate braindraft
 L29 recovery
 L30 scheduler
@@ -414,7 +414,7 @@ L22 agents readiness previews
 L23 setuptasks
 L24 setupguide
 L25 phases
-L26 phasescope
+L26 phasescope archiveall
 L27 refine reasoning coordinate braindraft
 L28 recovery
 L29 scheduler
@@ -512,6 +512,7 @@ neither.
 | orchestration operations: intent and receipt (task 141) | `operations` (`scheduler` and `coordinate` decide) | `operations._LOCK`, interprocess | yes |
 | the admission queue: who waits for capacity, first come first served (task 182) | `operations` (`scheduler` syncs, `orchestrator.admit` removes) | `operations._LOCK`, interprocess | yes |
 | recovery incidents and their attempts; the circuit breaker (task 144) | `recovery` | `recovery._LOCK`, interprocess | yes |
+| the unified phase model's migration record and its one-time recovery copy (machine-local) (task 188) | `phasescope` (read by `agreements.phase_holds`) | `phasescope._MODEL_LOCK`; only the execution installation writes; the copy is written once and never overwritten | yes |
 | Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 | review classification records under `brain/reviews/` (portable) (task 168) | `brainwrite` (format: `brainreviews`) | `brainwrite.LOCK`, interprocess; each write is held to the record's exact revision, or to its absence | yes |
 
@@ -542,6 +543,8 @@ operations.begin
 operations.queue_remove
 operations.queue_sync
 operations.update
+phasescope._backup
+phasescope._write_model
 plans.record
 plans.restore
 profiles.record
@@ -733,5 +736,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 169
+routes 171
 ```

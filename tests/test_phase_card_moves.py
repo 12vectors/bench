@@ -200,9 +200,10 @@ class TheRefusal(PhaseCardCase):
         self.assertEqual(
             self.refusal(),
             "Ship the site is still working — Juno is on 31 — Stand up site/. "
-            "‖ hold stops the phase and the agent it has in flight, and leaves "
-            "the phase branch, everything merged into it and every worktree "
-            "exactly as they are. Hold it first, then move the card.")
+            "‖ hold that run on its own card (pause the phase in Orchestrator "
+            "→ Phases so nothing new starts); the phase branch, everything "
+            "merged into it and every worktree stay exactly as they are. Hold "
+            "it first, then move the card.")
 
     def test_every_working_member_is_named(self):
         """Members run one at a time, but a card started by hand under a
@@ -432,7 +433,10 @@ class AgainstARealRun(PhaseCase):
 
     def test_the_card_is_held_still_until_the_phase_is(self):
         self.adapter_is(SLEEPS)
-        phases.start_phase(PHASE, "in-progress")
+        # a member launched for real, as the phase scope launches one
+        phases.ensure_branch(phases.cards()[0][PHASE])
+        taskfiles.move_task(ONE, "backlog", "in-progress", actor="phase")
+        agents.start_agent(ONE, "in-progress")
         self.assertTrue(wait_for(lambda: any(
             record["task"] == ONE and record["status"] == "running"
             for record in state.AGENTS.values())),
@@ -444,7 +448,12 @@ class AgainstARealRun(PhaseCase):
         self.assertIn(HOLD, str(caught.exception))
         self.assertEqual(self.stage_of(PHASE), "in-progress")
 
-        phases.stop_phase(PHASE, "in-progress")
+        # ‖ hold on the member's own card (task 188: no phase hold)
+        for record in list(state.AGENTS.values()):
+            if record["task"] == ONE and record["status"] == "running":
+                agents.stop_agent(record["id"])
+        self.assertTrue(wait_for(lambda: not any(
+            r["status"] == "running" for r in state.AGENTS.values())))
 
         self.assertIsNone(phases.assert_not_working(PHASE),
                           "a held phase moves — that is what the refusal asked for")

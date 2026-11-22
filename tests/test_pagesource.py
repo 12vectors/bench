@@ -74,7 +74,7 @@ LIFTS = {
     "test_phase_card_refuses_work.py": 4,
     "test_phase_cards.py": 4,
     "test_phase_members_hidden.py": 4,
-    "test_phase_watch.py": 11,
+    "test_phase_watch.py": 9,
     "test_phases_view.py": 4,
     "test_profile_ui.py": 2,
     "test_progress_ui.py": 1,

@@ -577,8 +577,9 @@ class TheCopyMatrix(DeliveryCase):
             delivery.board(taskfiles.collect(), phases.public_state())
             [PHASE]["status"]["word"], "phase-running")
         self.assertIn("#71", found["status"]["sentence"])
+        # task 188: no phase ‖ hold — the way is the Phases view
         self.assertEqual([a["action"] for a in found["others"]],
-                         ["hold-phase"])
+                         ["phases"])
 
     def test_done_is_delivered(self):
         self.place("done")

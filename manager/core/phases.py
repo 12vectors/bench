@@ -1,4 +1,4 @@
-"""A phase runs itself, on a branch of its own.
+"""A phase's integration branch, and the log that records it.
 
 A phase is a card that lists its cards (`taskfiles.weave_phases`). Running
 one means working that list into a single integration branch: `phase/<stem>`
@@ -8,17 +8,19 @@ At the end one PR into `main`, for a human. The board never merges into
 `main` — a phase branch is the board's own, and merging into it is
 bookkeeping in the same family as committing a move.
 
-**The runner is a beat, not an agent.** Everything it decides is already
-structured state — a card's stage, a PR's CI verdict, whether one branch is
-contained in another — so an agent paid to poll would be the wrong tool at
-the wrong price.
+**Who decides is the Orchestrator (task 188).** This module used to hold
+the phase runner too: a beat that chose, launched and halted members, `▸
+run phase` and its `‖ hold`. That second execution model is retired. A
+phase is queued by moving its card into To Do, and its phase scope
+(`phasescope`, through the scheduler) owns it from there. What stays here
+is the mechanics the phase scope rides — cutting the branch, merging a
+checked member into it, keeping it fresh, finishing it — and the readers
+of the log, which remains the durable history (old halts and runs
+included, read and never acted on). `start_phase` and `stop_phase` refuse
+with `Retired`, naming the way forward.
 
-**The beat is stateless.** On each pass it recomputes, from disk and from
-git, which members are finished, which is first unfinished and what that
-one needs. It holds no registry of where a phase "is": a restarted board
-resumes a phase by looking, and the same logic answers "what now?" whether
-the last event was a launch, a merge or a crash. Two things carry the
-memory, and both are durable:
+**Nothing here is a registry.** A phase's state is recomputed from disk
+and from git. Two things carry the memory, and both are durable:
 
 - **git** — a member is merged when its branch is contained in the phase
   branch. That is what makes a restart safe from repeating a merge.
@@ -33,17 +35,11 @@ Every git command here runs against `config.REPO` — the application —
 cut from `config.APP_BASE`; the phase log it writes goes to the task file,
 which `taskfiles` commits to the work-state repository (task 56).
 
-**Halt, never skip.** Five conditions stop a phase, each of them already a
-visible state on the card: a member that declined (`NOT READY`), a run that
-exited non-zero, a clean exit that committed nothing, CI red, and a merge
-into the phase branch that is not mechanical. A phase that steps over a
-failed card builds the rest on a foundation that never landed. Halting is
-recorded in the log and nothing retries by itself; running the phase again
-is a person's decision and appends the line that clears the halt.
-
-**One board runs it.** The actor rule decides, and the phase card's
-**Assignee** is where it is written down — the same claim that gates
-starting work. A replica renders the phase and advances nothing.
+**Refuse, never skip.** A merge into the phase branch that is not
+mechanical, a member gate unmet when read again, or a member branch that
+moved off the checked head raises `Halt` with nothing merged; the phase
+scope records it as a blocker on the card and asks again about whatever
+is there next.
 """
 
 from __future__ import annotations
@@ -531,66 +527,13 @@ def _freshen(phase: dict) -> None:
         _push_phase(phase)
 
 
-# ── the beat ───────────────────────────────────────────────────────────
-
-
-def _mine(phase: dict) -> bool:
-    """State syncs; reactions don't. Only the board whose user holds the
-    phase card advances it — every replica renders the same phase and
-    launches nothing. Outside team mode there is one board, and it acts.
-
-    No local git identity is the one case that does not gate: it is exactly
-    where `agents.claim_for_launch` cannot write an assignee and so cannot
-    refuse a launch either. Gating the beat on it while the launch went
-    through would strand a phase — branch cut, run recorded — that then
-    never advances. So a board with no name is the lone actor here, the same
-    as it is for starting work."""
-    if not config.COMMIT_MOVES:
-        return True
-    me = taskfiles.actor_name()
-    if not me:
-        return True
-    return phase.get("assignee") == me
-
-
-def _unfinished_dependencies(member: dict, snapshot: dict,
-                             by_number: dict[str, dict]) -> list[str]:
-    """`**Depends on:**` guards rather than orders: the list says what runs
-    next, this says whether it may. A dependency inside the phase is
-    finished when the phase has merged it; one outside is finished when its
-    card reaches done/ — the only claim the board can make about a card it
-    is not running."""
-    inside = {m["number"]: m for m in snapshot["members"] if m["number"]}
-    unfinished = []
-    for number in member["dependsOn"]:
-        held = inside.get(number)
-        if held is not None:
-            if held["state"] != "merged":
-                unfinished.append(number)
-            continue
-        card = by_number.get(number)
-        if card is None or card["stage"] != "done":
-            unfinished.append(number)
-    return unfinished
-
-
-def _launch(phase: dict, member: dict) -> None:
-    """Start one member: move its card to in-progress if it is not there
-    yet (moving a card there is the commitment work starts from), then
-    launch the ordinary headless work agent on it — which branches from the
-    phase's tip rather than from main."""
-    if member["stage"] != "in-progress":
-        taskfiles.move_task(member["file"], member["stage"], "in-progress",
-                            actor="phase")
-    # Recorded before the launch, not after: a crash in between must leave
-    # the log saying a launch may have happened, never the reverse.
-    _record(phase, f"{member['number']} started")
-    try:
-        agents.start_agent(member["file"], "in-progress")
-    except ValueError as exc:
-        raise _Halt(f"{member['number']} would not launch: {exc}")
-    _say(phase["file"], f"{phase['file']}: started {member['number']} — "
-                        f"{member['title']}")
+# ── the mechanics a phase scope rides ──────────────────────────────────
+#
+# Task 188 retired the phase runner: the beat that chose, launched and
+# halted members, `▸ run phase` and its `‖ hold`. What is left is the
+# mechanics its successor (`phasescope`) rides — cutting the branch,
+# merging a checked member into it, keeping it fresh and finishing it —
+# and the readers of the log, which stays the durable history.
 
 
 def _merge_member(phase: dict, member: dict, expect: str | None = None) -> bool:
@@ -682,163 +625,34 @@ def _finish(phase: dict) -> None:
     changes.maybe_open_pr(phase["file"])
 
 
-def _halt(phase: dict, member: dict | None, reason: str) -> None:
-    """Stop, and say so once — at three altitudes, like every other outcome
-    a person must not miss. The log holds the halt from here on (so the next
-    pass reads it rather than saying the same thing again), the ticker keeps
-    the line, and a toast says it to whoever is looking: a halt is rare,
-    actionable, and the whole argument for starting a phase and walking away.
-    """
-    at = f" at {member['number']}" if member and member["number"] else ""
-    _write_log(phase, f"halted{at} — {reason}")   # best effort: never re-raise
-    _say(phase["file"], f"{phase['file']} halted{at} — {reason}")
-    state.broadcast({"type": "toast", "error": True,
-                     "message": f"phase {phase['file']} halted{at} — {reason}"})
+# ── the retired entry points (task 188) ────────────────────────────────
+
+RETIRED = ("the phase runner is retired: a phase is queued by moving its "
+           "card into To Do, and the Orchestrator owns it from there — its "
+           "members, Backlog ones included, start in their turn under the "
+           "operating agreement. Pause it in Orchestrator → Phases; hold one "
+           "member's run on its own card")
 
 
-def _do_pass(phase: dict, snapshot: dict, by_number: dict[str, dict]) -> list[str]:
-    """The one next thing, whatever it is. Returns what the phase is
-    waiting on when a dependency holds it; raises `_Halt` when it stops."""
-    _freshen(phase)
-    for member in snapshot["members"]:
-        if member["state"] == "merged":
-            continue
-        if member["state"] in ("running", "waiting"):
-            return []                            # nothing to do but wait
-        if member["state"] == "halt":
-            raise _Halt(member["why"], member)
-        if member["state"] == "ready":
-            if not _merge_member(phase, member):
-                return []                        # partly in: read it again
-            member["state"] = "merged"
-            phase = _reread(phase) or phase      # the log rewrote the card
-            continue
-        waiting_on = _unfinished_dependencies(member, snapshot, by_number)
-        if waiting_on:
-            return waiting_on                    # guarded, not skipped
-        _launch(phase, member)
-        return []
-    _finish(phase)
-    return []
+class Retired(ValueError):
+    """▸ run phase or its ‖ hold, asked of a board that no longer has a
+    phase runner. A ValueError, so every caller that refused before still
+    refuses, with the way forward in the message."""
 
-
-def advance(phase: dict, by_file: dict[str, dict],
-            by_number: dict[str, dict]) -> dict:
-    """One phase, one pass. Returns the snapshot the API then shows.
-
-    Nothing is carried between passes: the state is read at the top, acted
-    on once, and read back at the bottom.
-    """
-    snapshot = _snapshot(phase, by_file)
-    SNAPSHOTS[phase["file"]] = snapshot
-    if not snapshot["running"] or not snapshot["started"] or not _mine(phase):
-        return snapshot
-    waiting_on: list[str] = []
-    try:
-        waiting_on = _do_pass(phase, snapshot, by_number)
-    except _Halt as stop:
-        _halt(phase, stop.member, str(stop))
-    except (ValueError, OSError) as exc:
-        _halt(phase, None, f"the run could not continue: {exc}")
-    # The pass wrote to the card and to git, so what the API shows is read
-    # back rather than patched — the same recompute, once more.
-    before, fresh = snapshot, _reread(phase)
-    if fresh:
-        snapshot = _snapshot(fresh, _cards()[0])
-    if waiting_on:
-        snapshot["waitingOn"] = waiting_on
-    SNAPSHOTS[phase["file"]] = snapshot
-    if snapshot != before:
-        state.broadcast({"type": "board"})   # a pass that did nothing is quiet
-    return snapshot
-
-
-def _reread(phase: dict) -> dict | None:
-    """The card as it stands now — the runner writes to it as it goes, and
-    may have moved it. None once it has left the board entirely."""
-    return _cards()[0].get(phase["file"])
-
-
-def advance_all() -> dict:
-    """One pass over every phase card being run on this board."""
-    with _LOCK:
-        by_file, by_number = _cards()
-        live = {}
-        for task in by_file.values():
-            if task["isPhase"] and task["stage"] == "in-progress":
-                live[task["file"]] = advance(task, by_file, by_number)
-        for name in [n for n in SNAPSHOTS if n not in live]:
-            SNAPSHOTS.pop(name, None)
-        return live
-
-
-def beat() -> None:
-    """The runner: a plain thread, silent when no phase is running."""
-    while True:
-        time.sleep(config.PHASE_INTERVAL)
-        try:
-            advance_all()
-        except Exception:                # noqa: BLE001 — a beat never dies
-            pass
-
-
-# ── starting one, and stopping it ──────────────────────────────────────
-
-
-def _phase_card(filename: str, stage: str) -> dict:
-    """The phase card an action names, or the reason it is not one."""
-    if Path(filename).name != filename or not filename.endswith(".md"):
-        raise ValueError("bad filename")
-    if stage != "in-progress":
-        raise ValueError("a phase runs from in-progress/ — move the card there first")
-    if not (config.TASKS / stage / filename).is_file():
-        raise ValueError(f"{filename} is not in {stage}/ — refresh the board")
-    phase = _cards()[0].get(filename)
-    if phase is None or not phase["isPhase"]:
-        raise ValueError(f"{filename} is not a phase — a phase card is "
-                         f"**Type:** Phase with a ## Cards section")
-    return phase
+    code = "phase-runner-retired"
 
 
 def start_phase(filename: str, stage: str, takeover: bool = False) -> dict:
-    """Run a phase — the first time, or again after a halt or a hold.
-
-    Cutting `phase/<stem>` from the newest main is the whole of "starting":
-    everything after it is the beat looking at what is there. Running a
-    halted phase again is the person's decision that cleared the halt, so
-    it appends the line that clears it and takes one pass immediately.
-    """
-    phase = _phase_card(filename, stage)
-    if phase.get("phaseMode") == "scoped":
-        raise ValueError(f"{filename} is run by its phase scope — the "
-                         f"Orchestrator schedules its members; release the "
-                         f"scope first to run it with the phase runner")
-    if phase["phaseDrift"]:
-        raise ValueError(f"{filename} does not resolve: {phase['phaseDrift'][0]} "
-                         f"— fix the list before running it")
-    if not phase["members"]:
-        # Nothing to run, so nothing is started: no branch is cut and the
-        # card stays exactly where its author put it.
-        raise ValueError(f"{filename} lists no cards — nothing to run")
-
-    agents.claim_for_launch(filename, stage, takeover)
-    with _LOCK:                       # never alongside a pass of the beat
-        return _start(phase, filename)
+    """▸ run phase, retired (task 188): refused with the way forward.
+    Nothing is read, cut, claimed or written."""
+    raise Retired(f"{filename}: {RETIRED}")
 
 
-def _start(phase: dict, filename: str) -> dict:
-    """Cut the branch (once), record the run, and take the first pass."""
-    branch = agents.phase_branch(filename)
-    note = ensure_branch(phase)
-    if not _write_log(phase, f"run started on {branch}"):
-        raise ValueError(f"could not record the run on {filename} — its phase "
-                         f"log must be writable to run the phase safely")
-    _say(filename, f"phase {filename} is running on {branch}"
-                   + (f" — {note}" if note else ""))
-    state.broadcast({"type": "board"})
-
-    by_file, by_number = _cards()         # the log just rewrote the card
-    return advance(by_file.get(filename) or phase, by_file, by_number)
+def stop_phase(filename: str, stage: str) -> dict:
+    """‖ hold on a phase card, retired (task 188): pausing the phase is the
+    Orchestrator's, and cancelling a member's run is its own card's hold —
+    two different acts, as they always were for a scoped phase."""
+    raise Retired(f"{filename}: {RETIRED}")
 
 
 def ensure_branch(phase: dict) -> str:
@@ -912,58 +726,6 @@ def finish(phase: dict) -> None:
     _finish(phase)
 
 
-def stop_phase(filename: str, stage: str) -> dict:
-    """Hold a phase: stop, without unwinding anything.
-
-    `‖ hold` means here what it means on any other card — the work stops
-    and nothing is lost. So the line goes into the log (which is what the
-    beat reads, so the next pass stands down), and the agent the phase has
-    in flight is held exactly as its own card's hold would hold it. The
-    phase branch, every member already merged into it, and every worktree
-    are left precisely as they were: a hold is not an undo, and the only
-    way back to `main` is still the PR at the end.
-
-    A halted phase can be held too, and that is the other half of the
-    halt's promise: it holds until the phase is run again *or* stopped,
-    and a person who has read the halt and does not want to carry on needs
-    a way to say so that is not walking the card backwards.
-
-    A held member's card keeps its own work and its own state, so running
-    the phase again may well halt on it — that is the honest reading of a
-    run that ended without reaching review/, and it is a person's to settle.
-    """
-    phase = _phase_card(filename, stage)
-    if phase.get("phaseMode") == "scoped":
-        raise ValueError(f"{filename} is run by its phase scope: pause the "
-                         f"scope to stop new member work, and hold a member's "
-                         f"run on its own card to cancel it — the two are "
-                         f"separate on purpose")
-    with _LOCK:                       # never alongside a pass of the beat
-        where = run_state(log_entries(phase["body"]))
-        if where["state"] not in ("running", "halted"):
-            raise ValueError(f"{filename} is not running — nothing to hold "
-                             f"(its phase log says: {where['state']})")
-        who = taskfiles.actor_name() or "you"
-        if not _write_log(phase, f"stopped — held by {who}"):
-            raise ValueError(f"could not record the hold on {filename} — its "
-                             f"phase log must be writable, or the next beat "
-                             f"would carry on regardless")
-        held = []
-        for record in agents.working_on({m["file"] for m in phase["members"]}):
-            try:
-                agents.stop_agent(record["id"])
-            except ValueError:        # it ended between the read and the ask
-                continue
-            held.append(record["task"])
-        _say(filename, f"phase {filename} held by {who}"
-                       + (f" — {', '.join(held)} stopped with it" if held else "")
-                       + f" — {agents.phase_branch(filename)} is left as it is")
-        snapshot = _snapshot(_reread(phase) or phase, _cards()[0])
-        SNAPSHOTS[filename] = snapshot
-    state.broadcast({"type": "board"})
-    return snapshot
-
-
 # ── and not moving it while it works ───────────────────────────────────
 
 
@@ -1034,7 +796,8 @@ def assert_not_working(filename: str, doing: str = "move the card") -> None:
     # with would be the third one in a sentence that already has two
     name = taskfiles.LEADING_NUMBER_RE.sub("", phase["title"]).strip()
     raise ValueError(
-        f"{name or phase['title']} is still working — {_joined(parts)}. ‖ hold stops "
-        f"the phase and the agent it has in flight, and leaves the phase "
-        f"branch, everything merged into it and every worktree exactly as "
-        f"they are. Hold it first, then {doing}.")
+        f"{name or phase['title']} is still working — {_joined(parts)}. ‖ hold "
+        f"that run on its own card (pause the phase in Orchestrator → Phases "
+        f"so nothing new starts); the phase branch, everything merged into it "
+        f"and every worktree stay exactly as they are. Hold it first, then "
+        f"{doing}.")

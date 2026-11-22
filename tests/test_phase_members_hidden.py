@@ -49,6 +49,10 @@ PARTS = (
     r"function columnCards\(stage\) \{.*?\n\}",
     r"function columnNote\(stage, shown\) \{.*?\n\}",
     r"function phaseSummary\(task\) \{.*?\n\}",
+    # the face is the server's lifecycle reading (task 188)
+    r"const SCOPED_ALARM = [^\n]*;",
+    r"const SCOPED_QUIET = [^\n]*;",
+    r"function scopedFlight\(life\) \{.*?\n\}",
     r"function phaseFlight\(task\) \{.*?\n\}",
 )
 
@@ -388,52 +392,44 @@ class ThePhaseCardsSummary(BoardViewCase):
 
         self.assertEqual(self.summary(), "1 card")
 
+    # Task 188: the face is the server's lifecycle reading, never the
+    # retired runner's snapshot (tests/node/phase_lifecycle.test.mjs and
+    # tests/test_phase_card_refuses_work.py hold the words).
+
+    @staticmethod
+    def life(word: str, line: str, who: str = "board", step: str = "x") -> dict:
+        return {"40-the-site.md": {"owner": "phase scope", "word": word,
+                                   "label": word.replace("-", " ").title(),
+                                   "line": line, "members": [],
+                                   "next": {"who": who, "text": step}}}
+
     def test_the_member_in_flight_is_named(self):
         self.a_phase_of_two()
 
-        self.assertEqual(self.flight(phases=self.snapshot()),
-                         {"bad": False, "line": "on #32 — 32 — Serve it"})
+        flight = self.flight(phaseLifecycle=self.life("working", "on #32 — 32 — Serve it",
+                                                       who="agent"))
+        self.assertFalse(flight["bad"])
+        self.assertIn("on #32 — 32 — Serve it", flight["line"])
 
-    def test_a_dependency_holding_the_phase_is_named(self):
-        snapshot = self.snapshot()
-        snapshot["40-the-site.md"]["members"][1]["state"] = "pending"
-        snapshot["40-the-site.md"]["waitingOn"] = ["7"]
+    def test_a_runner_snapshot_alone_says_nothing(self):
         self.a_phase_of_two()
 
-        self.assertEqual(self.flight(phases=snapshot),
-                         {"bad": False, "line": "waiting on #7"})
+        self.assertIsNone(self.flight(phases=self.snapshot()))
 
-    def test_a_halt_reaches_the_card_that_stands_for_the_member(self):
-        self.a_phase_of_two()
-        halted = self.snapshot(running=False, halted="halted at 32 — it is not ready",
-                               haltedAt="32", haltedWhy="it is not ready")
-
-        self.assertEqual(self.flight(phases=halted),
-                         {"bad": True, "line": "halted at #32 — it is not ready"})
-
-    def test_a_phase_with_no_run_has_nothing_to_say(self):
+    def test_a_phase_with_no_reading_has_nothing_to_say(self):
         self.a_phase_of_two(phase_stage="to-do")
 
         self.assertIsNone(self.flight())
 
-    def test_a_phase_in_progress_with_no_run_says_it_has_not_started(self):
-        """It said nothing here once, which made a phase nobody had started
-        look exactly like one mid-run — the header chip is absent in both
-        cases. Task 54 gave the card the distinction; it is quiet, and it is
-        not work, so nothing about it breathes."""
+    def test_an_unqueued_phase_says_so_quietly(self):
         self.a_phase_of_two()
 
-        flight = self.flight(phases=self.snapshot(running=False))
+        flight = self.flight(phaseLifecycle=self.life(
+            "not-queued", "in Backlog", who="you",
+            step="move the phase card into To Do"))
 
         self.assertTrue(flight["idle"])
-        self.assertEqual(flight["pill"], "not started")
-
-    def test_a_phase_that_was_held_says_that_instead(self):
-        self.a_phase_of_two()
-
-        flight = self.flight(phases=self.snapshot(running=False, stopped=True))
-
-        self.assertEqual(flight["pill"], "held")
+        self.assertEqual(flight["pill"], "not queued")
 
 
 class Wiring(unittest.TestCase):

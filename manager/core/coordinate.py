@@ -419,8 +419,11 @@ def assess(task: dict, reading: dict, ops: list[dict],
     sid, _why = orchestrator.scope_of(task, reading)
     item["scope"] = sid
     if sid is None:
-        return _set(item, "unmanaged", "its phase is run by the phase runner, "
-                    "not by an orchestrator scope")
+        return _set(item, "unmanaged", "its phase was held back by the "
+                    "upgrade to the unified phase model, so no scope delivers "
+                    "it until that hold clears"
+                    if _why == "phase-migrating" else
+                    "no orchestrator scope manages it")
     # task 143: in an adopted phase scope, a member's last step is its
     # integration into the phase branch — never the application base — and
     # the phase card's is the merge of the final integrated head

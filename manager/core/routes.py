@@ -26,6 +26,7 @@ from typing import Callable, NamedTuple
 
 import acceptance
 import agreements
+import archiveall
 import ask
 import agents
 import artifacts
@@ -1436,20 +1437,21 @@ def post_agent_act_pr(req) -> None:
     req.reply(200, {"agent": agent})
 
 
+def _phase_runner_retired(req) -> None:
+    # ▸ run phase and its ‖ hold (task 188): the phase runner is retired.
+    # Kept as routes so a page or a script from before the upgrade is told
+    # the way forward rather than a bare 404; nothing is read or written.
+    filename = str(req.body.get("file") or "the phase")
+    req.reply(410, {"error": f"{filename}: {phases.RETIRED}",
+                    "code": phases.Retired.code})
+
+
 def post_phase_run(req) -> None:
-    payload = req.body
-    # takeover carries the same meaning it does for a launch:
-    # the deliberate second click on someone else's card
-    req.reply(200, {"phase": phases.start_phase(
-        payload["file"], payload["stage"],
-        bool(payload.get("takeover")))})
+    _phase_runner_retired(req)
 
 
 def post_phase_stop(req) -> None:
-    payload = req.body
-    # ‖ hold on a phase card: the run stops, nothing is unwound
-    req.reply(200, {"phase": phases.stop_phase(payload["file"],
-                                               payload["stage"])})
+    _phase_runner_retired(req)
 
 
 def post_phase_add(req) -> None:
@@ -1540,12 +1542,49 @@ def post_archive(req) -> None:
                     "archivedCount": taskfiles.archived_count()})
 
 
+def get_archive_all(req) -> None:
+    # What Archive all would take from done/ now, and every card it would
+    # leave with why (task 187) — or, with `request`, one batch's state.
+    request = _q(req, "request")
+    if request:
+        batch = archiveall.get(request)
+        if batch is None:
+            req.reply(404, {"error": f"no Archive all {request} on this board"})
+            return
+        req.reply(200, {"batch": batch})
+        return
+    req.reply(200, archiveall.reading())
+
+
+def post_archive_all(req) -> None:
+    # The confirmed set, frozen by the page: every card is read again and
+    # archived through `taskfiles.archive_task` on its own (task 187).
+    payload = req.body
+    batch, again = archiveall.start(payload.get("request"), payload.get("files"),
+                                    payload.get("retryOf"))
+    req.reply(200, {"batch": batch, "duplicate": again})
+
+
 def post_unarchive(req) -> None:
     with state.LOCK:
         last = state.LAST_ARCHIVED
         state.LAST_ARCHIVED = None
     if not last:
         raise ValueError("nothing to unarchive — the undo covers the last archive this board made")
+    if "batch" in last:
+        # ⌘Z after Archive all brings that whole set back (task 187)
+        result = archiveall.unarchive_batch(last["batch"])
+        names = ", ".join(r["file"] for r in result["batch"]) or "nothing"
+        refused = (f"; {len(result['refused'])} could not be"
+                   if result["refused"] else "")
+        state.record_board_event({
+            "kind": "move", "from": "archive", "to": "done", "actor": "you",
+            "summary": f"Archive all undone: {len(result['batch'])} brought "
+                       f"back to done/ ({names}){refused}"})
+        rev = state.broadcast({"type": "board"})
+        req.reply(200, {**result, "rev": rev, "boot": state.BOOT,
+                        "archivedCount": taskfiles.archived_count()})
+        return
     result = taskfiles.unarchive_task(last["file"], last["from"])
     state.record_board_event({
         "kind": "move", "file": result["file"], "from": "archive",
@@ -1879,16 +1918,19 @@ def post_orchestration_installation(req) -> None:
 
 
 def post_orchestration_phase(req) -> None:
-    # Adopt a phase into its phase scope, or release it back to the phase
-    # runner (task 143). Refused while anything still works it; writes one
-    # line to the phase log and touches no branch, worktree or member.
+    # Task 188: adoption and release are retired (every phase is its
+    # scope's), and both answer 410 with the way forward. What remains is
+    # a person's `resume` of a phase the one-time upgrade held because it
+    # was halted or held under the retired runner: the decision the old
+    # ▸ run phase made, made once, here.
     body, action = req.body, str(req.body.get("action") or "")
     card = str(body.get("card") or "")
-    if action not in ("adopt", "release"):
-        req.reply(400, {"error": "action is adopt or release"})
+    if action not in ("adopt", "release", "resume"):
+        req.reply(400, {"error": "action is resume"})
         return
     try:
-        result = (phasescope.adopt if action == "adopt" else
+        result = (phasescope.resume if action == "resume" else
+                  phasescope.adopt if action == "adopt" else
                   phasescope.release)(card, taskfiles.actor_name() or None)
     except phasescope.Refused as exc:
         req.reply(exc.status, {"error": str(exc), "code": exc.code, **exc.extra})
@@ -2456,6 +2498,7 @@ ROUTES = (
     Route("GET", "/api/preview/log", "read", get_preview_log),
     Route("GET", "/api/card", "read", get_card),
     Route("GET", "/api/card/locate", "read", get_card_locate),
+    Route("GET", "/api/archive/all", "read", get_archive_all),
     Route("GET", "/api/card/discussion", "read", get_card_discussion),
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/decisions", "read", get_card_decisions),
@@ -2499,6 +2542,7 @@ ROUTES = (
     Route("POST", "/api/task/complete/forget", "browser-mutation", post_task_complete_forget),
     Route("POST", "/api/archive", "browser-mutation", post_archive),
     Route("POST", "/api/unarchive", "browser-mutation", post_unarchive),
+    Route("POST", "/api/archive/all", "browser-mutation", post_archive_all),
     Route("POST", "/api/command/run", "browser-mutation", post_command_run),
     Route("POST", "/api/drive/start", "browser-mutation", post_drive_start),
     Route("POST", "/api/drive/stop", "browser-mutation", post_drive_stop),

@@ -208,20 +208,22 @@ function sinceRound(r, acc) {
   return bits.join(' · ');
 }
 
-/* ── The Overview, ordered by a reader's questions (task 149) ───────────
+/* ── The Overview, ordered by a reader's questions (tasks 149, 186) ─────
 
-   A busy reader opens a card to learn four things, in this order, and the
-   Overview answers them in this order before anything else:
+   A busy reader opens a card to learn four things, and the Overview
+   answers them in this order before anything else. Where the card stands
+   leads (task 186): its status and next action are read before the work's
+   narrative, which follows directly after it.
 
-   1. What is the work and why? — `workHtml`: excerpts of the brief as it
-      reads now (`taskfiles.brief_outline`, served with the card's text),
-      each labelled with the section it came from, and the way to the
-      whole brief. Never a paraphrase, never persisted, never a model's.
-   2. Where does it stand, and what happens next? — `standsHtml`: the
+   1. Where does it stand, and what happens next? — `standsHtml`: the
       server's one delivery status (word, sentence, primary action and who
       holds it — task 99, never a cascade of this page's own), a failed
       run, what the latest run says it is doing, and the last recorded
       result, labelled as the run's own account.
+   2. What is the work and why? — `workHtml`: excerpts of the brief as it
+      reads now (`taskfiles.brief_outline`, served with the card's text),
+      each labelled with the section it came from, and the way to the
+      whole brief. Never a paraphrase, never persisted, never a model's.
    3. What is required? — `requiredHtml`: what the work needs (inputs,
       dependencies, criteria) apart from what a merge needs (the merge
       requirements, unchanged).
@@ -237,8 +239,8 @@ function overviewHtml(t, acc, failBlock, signals, plan, members) {
   const full = loadDeliveryFull(t, () => {
     if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer();
   });
-  return workHtml(t) +
-    standsHtml(t, d, acc, failBlock) +
+  return standsHtml(t, d, acc, failBlock) +
+    workHtml(t) +
     requiredHtml(t, d, full, acc) +
     reviewFactsHtml(t, acc) +
     `<div class="ovdetail" role="group" aria-labelledby="ov-more-h">` +
@@ -258,7 +260,7 @@ function ovSection(key, title, inner, extra = '') {
 
 const ovFact = (dt, dd, cls = '') => dd ? `<dt>${dt}</dt><dd${cls ? ` class="${cls}"` : ''}>${dd}</dd>` : '';
 
-/* 1. What the work is: the brief's own words, quoted. The outline is read
+/* 2. What the work is: the brief's own words, quoted. The outline is read
    with the card's text, so it is never older than the brief the Brief
    section shows; while a newer revision is being read, it says so. */
 function workHtml(listed) {
@@ -323,7 +325,7 @@ function lastResultHtml(t, acc) {
     `the run's own account, not a check result</span> · <button class="dlink" data-goto="activity">read it in Activity</button>`;
 }
 
-/* 2. Where it stands and what happens next: the server's delivery
+/* 1. Where it stands and what happens next: the server's delivery
    reading leads, then the facts that say what is active, what failed and
    what was last recorded. */
 function standsHtml(t, d, acc, failBlock) {

@@ -7,6 +7,7 @@ than importing each other's internals.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import queue
 import threading
@@ -190,12 +191,37 @@ def release_completing(filename: str) -> None:
         publish_completing()
 
 
+_HELD = threading.local()
+
+
+@contextlib.contextmanager
+def commit_hooks_held():
+    """Hold this thread's commit hooks for the duration: every board commit
+    made on it is listed instead of published one by one. Other threads'
+    commits are untouched. Yields the list of held filenames; the caller
+    publishes once (Archive all asks `sync.push_now` at its end)."""
+    held: list[str] = []
+    previous = getattr(_HELD, "files", None)
+    _HELD.files = held
+    try:
+        yield held
+    finally:
+        _HELD.files = previous
+
+
 def task_committed(filename: str) -> None:
     """A board-made move committed itself. Registered hooks turn that into
     whatever else should follow — sync.py's push, when the gate is on. The
     hook is a registry rather than an import so taskfiles stays to the left
     of everything that reacts to it; a hook that raises must never break a
-    move that has already happened on disk."""
+    move that has already happened on disk.
+
+    A thread inside `commit_hooks_held()` (Archive all, task 187) collects
+    the filenames instead; it publishes once itself when its batch ends."""
+    held = getattr(_HELD, "files", None)
+    if held is not None:
+        held.append(filename)
+        return
     for hook in list(COMMIT_HOOKS):
         try:
             hook(filename)

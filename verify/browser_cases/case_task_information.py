@@ -6,10 +6,13 @@ open questions, a card in review with a request for changes, a card whose
 brief has nothing to quote and a delivered card with no recorded result —
 are put on the disposable board and opened. For each:
 
-1. the Overview's four sections stand in the reader's order — the work,
-   where it stands and what happens next, what is required, the reviews —
-   ahead of the supporting detail and the tools; the work is the brief's
-   own words (or says there are none), never the title;
+1. the Overview's four sections stand in the reader's order — where it
+   stands and what happens next, then the work (task 186), what is
+   required, the reviews — ahead of the supporting detail, under the
+   tools; the work is the brief's own words (or says there are none),
+   never the title. The order is held as laid out and as the DOM holds
+   it, on a task and a phase card, narrow and expanded, at desktop and
+   phone widths, in both themes, and across a live redraw;
 2. at 1280x900 the delivery status is on screen when the card opens;
 3. nothing scrolls sideways or is clipped at 1280px, 390px or 320px wide,
    in both themes; 320 CSS px is the reflow width WCAG 1.4.10 names for
@@ -40,9 +43,35 @@ STAGES = {"Backlog": "backlog", "To Do": "to-do", "In Progress": "in-progress",
 DRAWER = "document.querySelector('#drawerbody')"
 ORDER = ("(() => { const y = s => { const e = document.querySelector(s);"
          " return e ? e.getBoundingClientRect().top : -1; };"
-         " return [y('#dsec-overview .ovwork'), y('#dsec-overview .ovnow'),"
+         " return [y('#dsec-overview .ovnow'), y('#dsec-overview .ovwork'),"
          " y('#dsec-overview .ovreq'), y('#dsec-overview .ovrev'),"
          " y('#dsec-overview .ovdetail')]; })()")
+# task 186: the Overview's content, as laid out and as the DOM holds it —
+# the keys of its top-level blocks in document order, each block's box,
+# and where the sticky head and the tools end, read at scrollTop 0
+LAYOUT = ("(() => { const sec = document.querySelector('#dsec-overview');"
+          " const kids = [...sec.children].filter(e => e.getBoundingClientRect().height > 0);"
+          " const key = e => (e.className.match(/\\bov(now|work|req|rev|detail)\\b/) || [, e.className])[1];"
+          " const box = e => { const r = e.getBoundingClientRect(); return [r.top, r.bottom]; };"
+          " const tools = document.querySelector('#drawerbody > #drawertools');"
+          " return { keys: kids.map(key), boxes: kids.map(box),"
+          " head: document.querySelector('#drawer .dsticky').getBoundingClientRect().bottom,"
+          " tools: tools ? box(tools) : null,"
+          # the headings are uppercased by CSS; their text is what is read
+          " heads: [...sec.querySelectorAll('h3.ovh')].map(h => h.textContent.trim()),"
+          " view: document.querySelector('#drawerbody').getBoundingClientRect().bottom }; })()")
+PHASE = """# 207 — Ship the overview reorder
+
+**Status:** In Progress
+**Priority:** Medium
+**Type:** Phase
+
+A phase card, to hold the Overview's order on a phase as well as a task.
+
+## Cards
+
+- 990 — a member not on this board
+"""
 
 
 def setUpModule():
@@ -76,6 +105,9 @@ class TaskInformation(unittest.TestCase):
             dest = tasks / stage_of(text) / src.name
             shutil.copyfile(src, dest)
             cls.placed[src.name] = dest
+        phase = tasks / "in-progress" / "207-phase-overview-order.md"
+        phase.write_text(PHASE, encoding="utf-8")
+        cls.placed[phase.name] = phase
         cls.measured = {}
 
     @classmethod
@@ -155,6 +187,72 @@ class TaskInformation(unittest.TestCase):
                 self.measured[name] = {"order": order, "statusTop": top, "status": word}
                 self.no_sideways(f"1280x900 {name}")
                 shot(f"task-info-{name[:-3]}-overview-1280x900")
+
+    def status_leads(self, where: str):
+        """At scrollTop 0 the first content block is where the card stands,
+        the work directly after it, then what is required, the reviews and
+        the supporting detail — once each, with the DOM in the same order
+        as the boxes, and nothing sticky over the first section."""
+        b = S["browser"]
+        b.eval(f"{DRAWER}.scrollTop = 0")
+        m = b.eval(LAYOUT)
+        self.assertEqual(m["keys"], ["now", "work", "req", "rev", "detail"],
+                         f"{where}: the Overview's blocks are {m['keys']}")
+        self.assertEqual(m["heads"][:4], ["Where it stands · what happens next", "The work",
+                                          "What is required", "Reviews and findings"], where)
+        self.assertEqual(len(m["heads"]), len(set(m["heads"])), f"{where}: a section is drawn twice")
+        tops = [bx[0] for bx in m["boxes"]]
+        self.assertEqual(tops, sorted(tops), f"{where}: the visual order differs from the DOM order {tops}")
+        for (a_top, a_bot), (b_top, _) in zip(m["boxes"], m["boxes"][1:]):
+            self.assertLessEqual(a_bot, b_top + 1, f"{where}: two sections overlap")
+        first = m["boxes"][0][0]
+        self.assertIsNotNone(m["tools"], f"{where}: the tools are not above the Overview")
+        self.assertGreaterEqual(first - m["tools"][1], 12, f"{where}: where it stands sits against the tools")
+        self.assertGreater(first, m["head"], f"{where}: the sticky head covers where it stands")
+        self.assertLess(first, m["view"], f"{where}: where it stands is not on screen at scrollTop 0")
+        # keyboard order follows: the status's first control comes before the work's
+        order = b.eval("(() => { const all = [...document.querySelectorAll('#dsec-overview a, #dsec-overview button')];"
+                       " const i = s => all.findIndex(e => e.closest(s));"
+                       " return [i('.ovnow'), i('.ovwork')]; })()")
+        if order[0] >= 0 and order[1] >= 0:
+            self.assertLess(order[0], order[1], f"{where}: the tab order reaches the work before the status")
+        self.measured.setdefault("status-first", {})[where] = {"keys": m["keys"], "firstTop": round(first)}
+
+    def test_where_it_stands_leads_then_the_work(self):
+        for name in ("164-legacy-long.md", "204-review-findings.md", "207-phase-overview-order.md"):
+            for dark in (False, True):
+                mode = "dark" if dark else "light"
+                for w, h in ((1280, 900), (390, 844)):
+                    with self.subTest(card=name, mode=mode, width=w):
+                        b = self.open_card(name, width=w, height=h, dark=dark)
+                        where = f"{name} {w}x{h} {mode}"
+                        self.status_leads(where)
+                        shot(f"task-info-status-first-{name[:-3]}-{w}x{h}-{mode}")
+                        if w == 1280:
+                            b.click("#dwide")
+                            self.assertTrue(b.wait("S.dwide === true", 5))
+                            self.status_leads(f"{where} expanded")
+                            shot(f"task-info-status-first-{name[:-3]}-expanded-{w}x{h}-{mode}")
+                            b.click("#dwide")
+                            self.assertTrue(b.wait("S.dwide === false", 5))
+        # a live redraw keeps the order, the reader's focus and place
+        b = self.open_card("204-review-findings.md", width=1280, height=700)
+        b.eval("document.querySelector('#dsec-overview .ovwork [data-goto=\"brief\"]').focus()")
+        b.eval(f"{DRAWER}.scrollTop = 40")
+        before = b.eval(f"{DRAWER}.scrollTop")
+        for _ in range(2):
+            b.eval("loadState()")
+            time.sleep(0.8)
+            b.eval("renderDrawer()")
+        self.assertLessEqual(abs(b.eval(f"{DRAWER}.scrollTop") - before), 2, "a redraw moved the reader")
+        self.assertTrue(b.eval("!!document.activeElement && document.activeElement.matches("
+                               "'#dsec-overview .ovwork [data-goto=\"brief\"]')"), "a redraw dropped focus")
+        self.status_leads("204 after a redraw")
+        # reading the card moved nothing and launched nothing
+        self.assertTrue(self.placed["204-review-findings.md"].exists(), "the card left its stage")
+        self.assertEqual(b.eval("((S.state && S.state.agents) || [])"
+                                ".filter(a => a.task === '204-review-findings.md').length"), 0,
+                         "opening a card launched an agent")
 
     def test_truthful_states_on_the_fixtures(self):
         b = self.open_card("206-unavailable-evidence.md")
