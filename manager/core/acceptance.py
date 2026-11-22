@@ -1048,7 +1048,7 @@ def for_card(filename: str, stage: str) -> dict:
     card's branch tip (the candidate a run's result must be about), and
     writes nothing."""
     text = _card_path(filename, stage).read_text(encoding="utf-8")
-    out = read_text(text, filename, head=_branch_head(filename))
+    out = read_text(text, filename, head=branch_head(filename))
     out.update(stage=stage, reports=reports(text), actor=actor(),
                persistence={"commits": bool(config.COMMIT_MOVES),
                             "syncs": bool(getattr(config, "SYNC", False))})
@@ -1154,7 +1154,7 @@ def _record_id(prefix: str, filename: str, request) -> str:
     return f"{prefix}-{secrets.token_hex(5)}"
 
 
-def _branch_head(filename: str) -> str | None:
+def branch_head(filename: str) -> str | None:
     """The tip of the card's branch in the application, if it has one — the
     code revision a manual decision was made against. Read, never moved.
 
@@ -1391,7 +1391,7 @@ def decide(filename: str, stage: str, *, criterion: str, state: str,
             record.update(evidence=ev["id"], check=ev.get("check"),
                           scope=ev.get("scope"), commit=ev.get("commit"))
         else:
-            head = _branch_head(filename)
+            head = branch_head(filename)
             if head:
                 record["commit"] = head
         if newest:
@@ -1477,7 +1477,7 @@ def finding(filename: str, stage: str, *, event: str, finding_id=None,
                 record.update(evidence=ev["id"], check=ev.get("check"),
                               commit=ev.get("commit"))
             else:
-                head = _branch_head(filename)
+                head = branch_head(filename)
                 if head:
                     record["commit"] = head
         updated = taskfiles.append_record(

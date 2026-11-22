@@ -2531,7 +2531,7 @@ def changed_sections(before: str, after: str) -> list[str]:
 
 def replace_brief(filename: str, stage: str, *, expected_sha: str,
                   new_brief: str, decision: dict, title: str, body: str,
-                  affected: list[str]) -> dict:
+                  affected: list[str], finish=None) -> dict:
     """Apply a refinement: the brief replaced, affected acceptance records
     marked for recheck and the decision recorded — one file write and one
     commit, or nothing at all.
@@ -2568,6 +2568,10 @@ def replace_brief(filename: str, stage: str, *, expected_sha: str,
                                    f"brief revised by {decision.get('proposal')}",
                                    decision.get("at") or now_iso())
         updated = _insert_entry(updated, _entry_block(decision, title, body))
+        if finish is not None:
+            # the caller's last word on the same write (task 190: new
+            # criteria get their ids here, in the one commit)
+            updated = finish(updated)
         if path.read_text(encoding="utf-8") != text:
             raise StaleCard(f"{filename} changed while the proposal was being "
                             f"applied — nothing was applied; try again")

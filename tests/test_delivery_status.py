@@ -611,7 +611,8 @@ class TheCopyMatrix(DeliveryCase):
         path.write_text(path.read_text() + "\n## Acceptance\n\n"
                         "- [ ] The thing works\n", encoding="utf-8")
         found = self.expect("signoff-needed", "confirm-criteria")
-        self.assertEqual(found["primary"]["label"], "Track acceptance")
+        # task 190: no tracking step — one action, whatever the ids say
+        self.assertEqual(found["primary"]["label"], "Confirm criteria")
         self.assertTrue(found["primary"]["enabled"])
         self.assertEqual(found["counts"], {"required": 3, "met": 2})
 

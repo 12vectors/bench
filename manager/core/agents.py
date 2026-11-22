@@ -158,7 +158,7 @@ def _acceptance_results(record: dict, output: str, intent: str,
 def _work_provenance(record: dict, intent: str) -> dict | None:
     """A work report's or PR update's board-written line: the commit the
     run left its branch at and what it reported per criterion."""
-    head = acceptance._branch_head(record["task"])
+    head = acceptance.branch_head(record["task"])
     results = _acceptance_results(record, _run_output(record), intent, head)
     if results is None:
         return None

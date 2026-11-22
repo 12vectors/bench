@@ -705,18 +705,15 @@ def apply(job_id: str) -> dict:
             filename, job["stage"], expected_sha=job["briefSha"],
             new_brief=job["proposedBrief"], decision=decision,
             title=f"Applied {job['id']} — {decision['author']} · {taskfiles.stamp(at)}",
-            body=body, affected=job.get("affected") or [])
+            body=body, affected=job.get("affected") or [],
+            # An explicit brief save is one of the authorized writes that
+            # gives new criteria their ids (task 190), in the same write and
+            # commit, so nobody has to Track acceptance
+            finish=lambda text: acceptance.assign_ids(
+                text, {"name": decision["author"], "source": "git"}, at)[0])
         job.update({"status": "applied", "decidedBy": decision["author"],
                     "decidedAt": at, "committed": result["committed"]})
         _save(job)
-    # An explicit brief save is one of the authorized writes that gives new
-    # criteria their ids (task 190), so nobody has to Track acceptance. A
-    # no-op when every criterion already has one; never a reason the
-    # applied brief is undone.
-    try:
-        acceptance.adopt(filename, job["stage"])
-    except Exception:   # noqa: BLE001
-        pass
     state.record_board_event({
         "kind": "agent", "actor": "you", "file": filename,
         "summary": (f"{filename}: brief refined from comment {job['comment']} "
