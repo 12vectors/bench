@@ -122,7 +122,9 @@ test('what the work needs is apart from what a merge needs; dependencies say whe
   const words = text(html);
   assert.ok(words.indexOf('To do the work') < words.indexOf('To merge it'));
   assert.match(words, /Depends on #202 In progress · #999 not on this board/);
-  assert.match(words, /2 criteria in the brief · Acceptance results not recorded/);
+  // task 190: where the criteria stand is the outcome under "Where it
+  // stands"; here they are a requirement of the work, with a link to each
+  assert.match(words, /2 criteria in the brief · see each result/);
   assert.match(html, /href="\/cards\/202"/, 'a dependency is a link to it');
 });
 
