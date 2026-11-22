@@ -322,11 +322,12 @@ class WrappersKeepTheirWording(unittest.TestCase):
                                            timed_out="timed out")
         self.assertEqual((made["problem"], made["detail"]), ("add-failed", "timed out"))
 
-    def test_phase_runner_worktree_adds_say_timed_out(self):
-        """Both of the phase runner's worktree adds — the halt written into
-        the phase log and the refusal to cut the branch — read exactly
-        "timed out", as `phases._git` always did, and never an argument
-        list naming this machine's paths."""
+    def test_phase_branch_worktree_adds_say_timed_out(self):
+        """Both of a phase's worktree adds — the refusal to put a worktree
+        on the branch and the refusal to cut it (`ensure_branch`, the one
+        way a phase branch is cut since task 188) — read exactly "timed
+        out", as `phases._git` always did, and never an argument list
+        naming this machine's paths."""
         phase = {"file": "53-a-phase.md"}
         with mock.patch.object(config, "WORKTREES", self.tmp), \
                 mock.patch.object(gitrepo, "worktree_mismatch", lambda p: None), \
@@ -337,7 +338,7 @@ class WrappersKeepTheirWording(unittest.TestCase):
                     mock.patch.object(gitrepo, "fresh_branch_point",
                                       lambda: ("main", None)), \
                     self.assertRaises(ValueError) as refused:
-                phases._start(phase, phase["file"])
+                phases.ensure_branch(phase)
         self.assertEqual(str(halted.exception),
                          "could not put a worktree on phase/53-a-phase: timed out")
         self.assertEqual(str(refused.exception),
