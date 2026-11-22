@@ -60,6 +60,10 @@ async function read(url) {
   }
 }
 
+function onBackdrop(e) {
+  if (e.target === e.currentTarget && sheet()) close();
+}
+
 /* The entry point: `closeSheet` is the page's own, handed in by main.js
    so this module imports no other view. */
 async function openArchiveAll(closeSheet) {
@@ -68,7 +72,9 @@ async function openArchiveAll(closeSheet) {
   wrap.innerHTML = `<div class="sheet" id="${SHEET}" role="dialog" aria-label="Archive all done tasks">` +
     `${head()}<p role="status">Reading what Archive all would take…</p></div>`;
   wrap.classList.add('open');
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  // one named listener: adding it again on the next open is a no-op, so
+  // backdrop clicks never stack up across openings
+  wrap.addEventListener('click', onBackdrop);
   const r = await read('/api/archive/all');
   if (!sheet()) return;
   if (!r.ok) {
@@ -208,7 +214,16 @@ function itemsList(batch) {
 
 function syncLine(batch) {
   const s = batch.sync;
-  if (!s || !s.enabled) return 'Sync is off: the archive is committed on this board only.';
+  if (!s || !s.enabled) {
+    const committed = (batch.commits || 0) > 0 ||
+      (batch.items || []).some(i => i.committed === true);
+    if (committed) return 'Sync is off: the archive is committed on this board only.';
+    if (batch.archived) {
+      return 'Sync is off, and board commits are off: the cards are moved on this ' +
+        'board and nothing was committed — commit tasks/archive/ yourself.';
+    }
+    return 'Sync is off: nothing was published.';
+  }
   const st = s.status || {};
   if (st.state === 'ok') return 'Sync: published — the other boards will see it.';
   return `Sync: not published yet (${st.state || s.outcome || 'unknown'})` +

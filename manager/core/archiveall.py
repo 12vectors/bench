@@ -33,9 +33,14 @@ only what a set needs on top:
   them again). Skipped cards are not outstanding: they changed, and the
   person decides again from a fresh reading.
 - **Local is not shared.** Archiving is local to this board's work state;
-  with `BOARD_SYNC` on, the batch asks sync to publish once at the end and
-  records what sync said, so "archived here" and "published" are two
-  facts.
+  with `BOARD_SYNC` on, the batch holds the push each card's commit would
+  start (`state.commit_hooks_held`) and asks sync to publish once at the
+  end, recording what sync said, so "archived here" and "published" are
+  two facts.
+- **One parse per batch.** The board is parsed once and parsed again only
+  when a card file changed under the batch (`_BoardCache`), so each card
+  is still read against what is on disk without the batch costing the
+  square of the board.
 - **Interrupted is recorded.** Each batch's record is written under
   `manager/local/state/archive/bulk/` as it goes. A batch a restart cut
   short reads `interrupted`, with the cards it had not reached as
@@ -46,6 +51,7 @@ or touches a card outside `done/`.
 """
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -112,6 +118,58 @@ def _board() -> tuple[list[dict], dict[str, dict]]:
     stages = taskfiles.collect()["stages"]
     tasks = [task for stage in stages for task in stage["tasks"]]
     return tasks, {task["file"]: task for task in tasks}
+
+
+def _signature() -> tuple:
+    """Every card file in the five stages, with its size and mtime: what a
+    re-read of the board would read. Stat calls only — no card is parsed."""
+    found = []
+    for slug in config.STAGE_DIRS:
+        directory = config.TASKS / slug
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.endswith(".md"):
+                try:
+                    info = entry.stat()
+                except OSError:
+                    continue
+                found.append((slug, entry.name, info.st_mtime_ns, info.st_size))
+    return tuple(sorted(found))
+
+
+class _BoardCache:
+    """The board one batch reads its cards against, parsed again only when
+    a card file changed under it. A batch's own archives are accounted
+    for (the card left done/, nothing else did), so a batch of n cards
+    parses the board once rather than n times; anyone else's change — a
+    move, an edit, a phase gaining a member — reads as a different
+    signature and the board is parsed again before the next card."""
+
+    def __init__(self) -> None:
+        self.sig: tuple | None = None
+        self.by_file: dict[str, dict] = {}
+
+    def get(self) -> dict[str, dict]:
+        now = _signature()
+        if now != self.sig:
+            _tasks, self.by_file = _board()
+            self.sig = now
+        return self.by_file
+
+    def archived(self, filename: str) -> None:
+        if self.sig is None:
+            return
+        expected = tuple(row for row in self.sig
+                         if not (row[0] == STAGE and row[1] == filename))
+        now = _signature()
+        if now == expected:
+            self.sig = now
+            self.by_file.pop(filename, None)
+        else:
+            self.sig = None             # something else changed too: re-read
 
 
 def _row(task: dict) -> dict:
@@ -268,20 +326,27 @@ def start(request, files, retry_of=None, *, background: bool = True) -> tuple[di
     return get(request), False
 
 
-def _one(filename: str, commit_retry: bool) -> dict:
+def _one(filename: str, commit_retry: bool, board: _BoardCache) -> dict:
     """Read the card again, then archive it through the single door — or
     say why not."""
     stage = taskfiles.find_stage_of(filename)
     in_archive = (config.TASKS / "archive" / filename).is_file()
     if stage is None and in_archive:
-        if commit_retry and config.COMMIT_MOVES:
+        # a retry of a failed commit, or a move a crash cut off before its
+        # commit (the batch never recorded it): either way git does not
+        # hold the archive yet, so commit it now — without moving it again
+        if commit_retry or taskfiles.move_uncommitted(filename, "archive"):
+            if not config.COMMIT_MOVES:
+                return {"outcome": "already-archived",
+                        "reason": "already in the archive — nothing to do"}
             committed = taskfiles.commit_edit(filename, "archive", "archived")
-            if committed:
+            if committed and not taskfiles.move_uncommitted(filename, "archive"):
                 return {"outcome": "committed", "committed": True,
-                        "reason": "its archive is now committed"}
+                        "reason": "already in the archive; its archive is now committed"}
             return {"outcome": "archived", "committed": False,
-                    "reason": "archived, and committing it failed again — the "
-                              "activity log says why"}
+                    "reason": "in the archive, and committing it failed — the "
+                              "activity log says why; commit tasks/archive/ "
+                              "by hand if a retry fails again"}
         return {"outcome": "already-archived",
                 "reason": "already in the archive — nothing to do"}
     if stage is None:
@@ -290,7 +355,7 @@ def _one(filename: str, commit_retry: bool) -> dict:
     if stage != STAGE:
         return {"outcome": "skipped", "code": "moved",
                 "reason": f"moved to {stage}/ since you confirmed — not archived"}
-    _tasks, by_file = _board()
+    by_file = board.get()
     task = by_file.get(filename)
     if task is None or task.get("stage") != STAGE:
         return {"outcome": "skipped", "code": "moved",
@@ -304,6 +369,7 @@ def _one(filename: str, commit_retry: bool) -> dict:
         result = taskfiles.archive_task(filename, STAGE)
     except (ValueError, OSError) as exc:
         return {"outcome": "failed", "reason": str(exc) or exc.__class__.__name__}
+    board.archived(filename)
     committed = result.get("committed")
     item = {"outcome": "archived", "committed": committed}
     if committed is False:
@@ -316,35 +382,47 @@ def _execute(batch: dict) -> None:
     global _RUNNING
     archived: list[dict] = []
     finished = False
+    held: list[str] = []
+    published = False
     try:
-        for filename in batch["files"]:
-            with _LOCK:
-                batch["current"] = filename
-            try:
-                item = _one(filename, filename in batch["commitRetry"])
-            except Exception as exc:  # noqa: BLE001 — one card never stops the rest
-                item = {"outcome": "failed",
-                        "reason": f"{exc.__class__.__name__}: {exc}"}
-            item = {"file": filename, **item}
-            if item["outcome"] == "archived":
-                archived.append({"file": filename, "from": STAGE})
-            with _LOCK:
-                batch["items"].append(item)
-                _summarise(batch)
-            _persist(batch)
-            state.broadcast({"type": "board"})
+        board = _BoardCache()
+        # each card's commit would start its own push; the batch holds them
+        # and publishes once at its end instead
+        with state.commit_hooks_held() as held:
+            for filename in batch["files"]:
+                with _LOCK:
+                    batch["current"] = filename
+                try:
+                    item = _one(filename, filename in batch["commitRetry"], board)
+                except Exception as exc:  # noqa: BLE001 — one card never stops the rest
+                    item = {"outcome": "failed",
+                            "reason": f"{exc.__class__.__name__}: {exc}"}
+                item = {"file": filename, **item}
+                if item["outcome"] == "archived":
+                    archived.append({"file": filename, "from": STAGE})
+                with _LOCK:
+                    batch["items"].append(item)
+                    _summarise(batch)
+                _persist(batch)
+                state.broadcast({"type": "board"})
         sync_said = None
-        if config.SYNC and (archived or batch.get("commitRetry")):
+        if config.SYNC and held:
+            published = True
             try:
                 sync_said = sync.push_now()
             except Exception as exc:  # noqa: BLE001
                 sync_said = f"error: {exc}"
         with _LOCK:
+            batch["commits"] = len(held)
             batch["sync"] = ({"enabled": True, "outcome": sync_said,
                               "status": sync.status()} if config.SYNC
                              else {"enabled": False})
         finished = True
     finally:
+        if held and not published:
+            # cut short before its one publish: hand the commits back to
+            # the ordinary hooks rather than leave them unannounced
+            state.task_committed(held[-1])
         if archived:
             # ⌘Z covers the last archive this board made: here, the whole
             # set — in place before the batch reads as ended, so an undo

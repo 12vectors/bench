@@ -320,6 +320,64 @@ class ArchiveAll(unittest.TestCase):
         self.assertEqual(batch["sync"]["outcome"], "offline")
         self.assertEqual(batch["sync"]["status"]["state"], "offline")
 
+    def test_a_crash_between_move_and_commit_is_committed_by_the_next_batch(self):
+        # the board's own move whose commit failed, then a restart lost the
+        # batch's record: the journal names the move, the batch does not
+        lock = self.repo / ".git" / "index.lock"
+        lock.write_text("")
+        try:
+            self.run_batch("req-20", ["71-first.md"])
+        finally:
+            lock.unlink()
+        archiveall._BATCHES.clear()
+        archiveall._path("req-20").unlink()
+        count = self.commits()
+
+        batch, _ = self.run_batch("req-21", ["71-first.md", "72-second.md"])
+        self.assertEqual(self.outcomes(batch), {"71-first.md": "committed",
+                                                "72-second.md": "archived"})
+        self.assertEqual(self.commits(), count + 2, "no second move of 71")
+        self.assertEqual(git(self.repo, "status", "--porcelain").stdout, "")
+
+    def test_a_move_with_no_record_at_all_is_said_uncommitted_not_hidden(self):
+        # a crash before even the journal line: bench will not attribute a
+        # move it cannot account for, and says the card is not committed
+        text = (self.repo / "tasks/done/71-first.md").read_text()
+        (self.repo / "tasks/archive/71-first.md").write_text(
+            text.replace("**Status:** Done", "**Status:** Archived"))
+        (self.repo / "tasks/done/71-first.md").unlink()
+        batch, _ = self.run_batch("req-22", ["71-first.md"])
+        item = batch["items"][0]
+        self.assertEqual((item["outcome"], item["committed"]), ("archived", False))
+        self.assertEqual(batch["outstanding"], ["71-first.md"])
+        self.assertIn("by hand", item["reason"])
+
+    def test_the_board_is_parsed_once_for_a_batch_nobody_else_touches(self):
+        real = taskfiles.collect
+        with mock.patch.object(taskfiles, "collect", side_effect=real) as spy:
+            batch, _ = self.run_batch("req-23", ["71-first.md", "72-second.md",
+                                                 "73-third.md"])
+        self.assertEqual(batch["archived"], 3)
+        self.assertEqual(spy.call_count, 1)
+
+    def test_a_change_made_mid_batch_is_read_before_the_next_card(self):
+        # 72 becomes a member of the open phase while 71 is being archived
+        real = taskfiles.archive_task
+
+        def archive_then_join(filename, source, *rest):
+            result = real(filename, source, *rest)
+            if filename == "71-first.md":
+                phase = self.repo / "tasks/in-progress/80-phase.md"
+                phase.write_text(phase.read_text() + "- 72 — Second\n")
+            return result
+
+        with mock.patch.object(taskfiles, "archive_task", archive_then_join):
+            batch, _ = self.run_batch("req-24", ["71-first.md", "72-second.md"])
+        got = {i["file"]: (i["outcome"], i.get("code")) for i in batch["items"]}
+        self.assertEqual(got, {"71-first.md": ("archived", None),
+                               "72-second.md": ("skipped", "in-phase")})
+        self.assertEqual(self.where("72-second.md"), "done")
+
     def test_undo_brings_the_whole_set_back_to_done(self):
         self.run_batch("req-14", ["71-first.md", "72-second.md"])
         req = Req()
@@ -352,6 +410,62 @@ class ArchiveAll(unittest.TestCase):
         missing = Req(request="nope")
         routes.get_archive_all(missing)
         self.assertEqual(missing.status, 404)
+
+
+class ArchiveAllSync(ArchiveAll):
+    """The same board, syncing through a disposable bare remote: the batch
+    publishes once at its end, and a refused push leaves the cards archived
+    here and says so."""
+
+    def setUp(self):
+        super().setUp()
+        self.origin = self.repo.parent / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)],
+                       check=True, capture_output=True)
+        git(self.repo, "remote", "add", "origin", str(self.origin))
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "branch", "-q", "--set-upstream-to=origin/main", "main")
+        self.patch(SYNC=True, FETCH_TIMEOUT=10.0)
+        saved = list(state.COMMIT_HOOKS)
+        self.addCleanup(lambda: state.COMMIT_HOOKS.__setitem__(slice(None), saved))
+        state.COMMIT_HOOKS[:] = []
+        self.hooked: list[str] = []
+        state.COMMIT_HOOKS.append(self.hooked.append)
+        sync._NOTES.clear()
+        self.addCleanup(sync._NOTES.clear)
+
+    def origin_head(self):
+        return git(self.origin, "rev-parse", "main").stdout.strip()
+
+    def test_a_batch_publishes_once_at_its_end(self):
+        real = sync.push_now
+        with mock.patch.object(sync, "push_now", side_effect=real) as push:
+            batch, _ = self.run_batch("req-30", ["71-first.md", "72-second.md",
+                                                 "73-third.md"])
+        self.assertEqual(batch["archived"], 3)
+        self.assertEqual(batch["commits"], 3)
+        self.assertEqual(push.call_count, 1, "one publish for the batch")
+        self.assertEqual(self.hooked, [], "no per-card push was started")
+        self.assertEqual(batch["sync"]["outcome"], "ok")
+        self.assertEqual(self.origin_head(),
+                         git(self.repo, "rev-parse", "HEAD").stdout.strip())
+
+    def test_a_refused_push_leaves_the_cards_archived_and_says_so(self):
+        hook = self.origin / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho 'protected' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        before = self.origin_head()
+        batch, _ = self.run_batch("req-31", ["71-first.md", "72-second.md"])
+        self.assertEqual(batch["archived"], 2)
+        self.assertEqual(batch["outstanding"], [], "the archive itself succeeded")
+        self.assertNotEqual(batch["sync"]["outcome"], "ok")
+        self.assertEqual(self.origin_head(), before, "nothing reached the remote")
+        self.assertEqual(self.where("71-first.md"), "archive")
+        self.assertEqual(git(self.repo, "status", "--porcelain").stdout, "")
+
+    def test_sync_is_recorded_apart_from_the_local_archive(self):
+        # the mocked flavour of the base class is covered by the two above
+        pass
 
 
 if __name__ == "__main__":

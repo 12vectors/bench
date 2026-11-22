@@ -585,8 +585,16 @@ exact set and its count:
   restart cut short reads *interrupted*, with the cards it had not
   reached as outstanding.
 - **Archived here, published apart.** With `BOARD_SYNC` on, the batch
-  asks sync to publish once at the end and the summary says whether it
-  did; the cards are archived on this board either way.
+  holds the push each card's commit would start and asks sync to publish
+  once at the end (a batch cut short hands its commits back to the
+  ordinary push); the summary says whether it did, and the cards are
+  archived on this board either way. With `BOARD_COMMIT_MOVES` off the
+  summary says nothing was committed.
+- **A crash between a move and its commit** is caught by the next Archive
+  all naming the card: one found in the archive that git does not hold
+  yet is committed (under the failed move's journal line), never moved
+  again; one with no record of the move at all is reported *not
+  committed*, to commit by hand.
 
 **⌘Z after Archive all brings that whole set back** to `done/`, each card
 through the single restore door; a card moved since is reported rather

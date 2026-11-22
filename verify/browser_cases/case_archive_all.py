@@ -153,9 +153,19 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
                " if (String(u).startsWith('/api/archive/all?request='))"
                "   await new Promise(r => setTimeout(r, 400));"
                " return f(u, o); }; }")
+        # every progress line the sheet draws, in order
+        b.eval("window.__progress = []; window.__progressObs = new MutationObserver(() => {"
+               f" const p = document.querySelector('{SHEET} .aa-progress');"
+               " if (p && window.__progress[window.__progress.length - 1] !== p.innerText)"
+               "   window.__progress.push(p.innerText); });"
+               " window.__progressObs.observe(document.body, {subtree: true, childList: true});")
         b.click(f"{SHEET} #aa-go")
         self.assertTrue(b.wait(f"!!document.querySelector('{SHEET} .aa-summary')", 20),
                         "no summary after confirming")
+        progress = b.eval("window.__progressObs.disconnect(), window.__progress")
+        self.assertTrue(progress, "the sheet drew no progress before its summary")
+        self.assertIn("Archiving…", progress[0])
+        self.assertIn(f"of {len(CARDS)} read", progress[0])
         summary = b.eval(f"document.querySelector('{SHEET} .aa-summary').innerText")
         self.assertIn("archived", summary)
         shot("archive-all-summary-1440-day")
@@ -164,7 +174,9 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
             self.assertIn("**Status:** Archived", (self.archive / name).read_text("utf-8"))
         self.assertEqual("done", self.where(LATE), "a card completed after confirmation was taken")
         self.assertEqual("done", self.where(PHASE), "the phase card was archived")
-        self.assertIn("this board only",
+        # the fixture runs with board commits off: the summary says nothing
+        # was committed rather than claiming a commit on this board
+        self.assertIn("nothing was committed",
                       b.eval(f"document.querySelector('{SHEET} .aa-sync').innerText"))
         b.click(f"{SHEET} #aa-close")
         # discoverable: the archive tray counts them
@@ -181,6 +193,34 @@ class ArchiveAllFromTheDoneColumn(unittest.TestCase):
             self.assertEqual("done", self.where(name))
         self.assertTrue(b.wait(f"!!document.querySelector('#board article.card"
                                f"[data-file=\"{next(iter(CARDS))}\"]')", 10))
+
+    # — the single archive still works beside it —
+
+    def test_the_single_archive_chip_still_archives_one_card_and_undoes(self):
+        b = self.load(1440, 900, dark=True)
+        one = "11-archive-all-third.md"
+        chip = (f"#board .drop[data-stage=done] article.card[data-file=\"{one}\"] "
+                f"> .chiprow [data-arch]")
+        self.assertTrue(b.eval(f"!!document.querySelector('{chip}')"),
+                        "the done card has no archive chip")
+        b.eval(f"document.querySelector('{chip}').click()")        # arms
+        self.assertEqual("done", self.where(one), "the first click archived")
+        b.eval(f"document.querySelector('{chip}').click()")        # fires
+        deadline = time.time() + 10
+        while self.where(one) != "archive" and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertEqual("archive", self.where(one), "the chip did not archive the card")
+        for name in CARDS:
+            if name != one:
+                self.assertEqual("done", self.where(name), "the chip archived another card")
+        self.assertTrue(b.wait(f"!document.querySelector('#board article.card[data-file=\"{one}\"]')", 10))
+        # the Archive all reading no longer lists it
+        self.assertNotIn(one, [r["file"] for r in self.eligible()["eligible"]])
+        b.eval("document.body.dispatchEvent(new KeyboardEvent('keydown',"
+               " {key: 'z', ctrlKey: true, bubbles: true}))")
+        self.assertTrue(b.wait(f"!!document.querySelector('#board article.card[data-file=\"{one}\"]')", 10),
+                        "⌘Z did not bring the single archive back")
+        self.assertEqual("done", self.where(one))
 
     # — partial failure and a retry of only what is outstanding —
 

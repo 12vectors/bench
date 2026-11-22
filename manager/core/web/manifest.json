@@ -266,8 +266,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/archiveall.js": {
-   "bytes": 10864,
-   "sha256": "80240a418374755d3884a2d2f16d927812ad62707385828f25ae09bbe8bf3e4c",
+   "bytes": 11422,
+   "sha256": "f2f8486f843c51cef103d6970e0682086c05d42d664a56ae4f5b72e04a5d2ea2",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {

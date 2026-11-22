@@ -1087,6 +1087,26 @@ def _stale_copies(path: Path, also: Path | None = None) -> list[str]:
     return stale
 
 
+def move_uncommitted(filename: str, stage: str) -> bool:
+    """Whether the card in `stage` sits there uncommitted: git still records
+    another copy of it that is gone from disk, or does not know this path.
+    False with `BOARD_COMMIT_MOVES` off or no work-state repository — there
+    is nothing the board would have committed. Archive all asks it of a
+    card it finds already archived (task 187): a move a crash cut off
+    before its commit."""
+    root = config.state_repo()
+    if not config.COMMIT_MOVES or root is None:
+        return False
+    path = config.TASKS / stage / filename
+    if _stale_copies(path):
+        return True
+    try:
+        listed = _git("ls-files", "-z", "--full-name", "--", str(path))
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return listed.returncode == 0 and not listed.stdout.strip("\0")
+
+
 def _unrecorded_move(filename: str, stage: str,
                      stale: list[str]) -> dict | None:
     """The board's own move of `filename` into `stage` whose commit
