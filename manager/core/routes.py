@@ -32,6 +32,7 @@ import agents
 import artifacts
 import assets
 import agentsettings
+import adoption
 import brain
 import braindraft
 import brainreviews
@@ -1145,7 +1146,9 @@ def get_files(req) -> None:
 def get_brain(req) -> None:
     # The Brain's index (task 157): a read of brain/ under the work root
     # and nothing else — no directory made, no git, no fetch, no launch.
-    req.reply(200, {"brain": brain.index()})
+    # `referenceFiles` (task 172) says whether there is legacy material to
+    # offer for review: one directory listing, no file opened
+    req.reply(200, {"brain": {**brain.index(), "referenceFiles": adoption.count()}})
 
 
 def get_brain_entry(req) -> None:
@@ -1164,6 +1167,7 @@ def get_brain_entry(req) -> None:
         # metadata only
         found["authority"] = handbook.authority(found)
         found["handbook"] = handbook.membership(found["id"])
+        found["adoption"] = adoption.about(found)
     req.reply(status, {"entry": found})
 
 
@@ -1172,6 +1176,33 @@ def get_brain_handbook(req) -> None:
     # entry said as what it is, each section's coverage and every link's
     # source authority. A read: no file content, fetch, check or launch.
     req.reply(200, {"handbook": handbook.reading()})
+
+
+def get_brain_adoption(req) -> None:
+    # What is in reference/ and what adopting it would mean (task 172): a
+    # read of the files, the cards and local git metadata. Nothing is
+    # written, fetched, launched or run.
+    req.reply(200, {"adoption": adoption.inventory()})
+
+
+def get_brain_adoption_preview(req) -> None:
+    # One file's choices, with the exact bytes and destination an Apply
+    # will be held to. A read, like the inventory.
+    try:
+        req.reply(200, {"preview": adoption.preview(_q(req, "name"))})
+    except adoption.NotAName as exc:
+        req.reply(400, {"error": str(exc), "code": "not-a-name"})
+
+
+def post_brain_adoption_apply(req) -> None:
+    # One file adopted as one entry, through the Brain's one writer: bound
+    # to the previewed source and destination and to a request identity.
+    try:
+        result = brainwrite.write("adopt", req.body)
+    except brainwrite.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, {"operation": result})
 
 
 def get_brain_revisions(req) -> None:
@@ -2575,6 +2606,8 @@ ROUTES = (
     Route("GET", "/api/brain/reviews", "read", get_brain_reviews),
     Route("GET", "/api/brain/review", "read", get_brain_review),
     Route("GET", "/api/brain/handbook", "read", get_brain_handbook),
+    Route("GET", "/api/brain/adoption", "read", get_brain_adoption),
+    Route("GET", "/api/brain/adoption/preview", "read", get_brain_adoption_preview),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
@@ -2668,6 +2701,7 @@ ROUTES = (
     Route("POST", "/api/brain/retire", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/handbook", "browser-mutation", post_brain_write),
+    Route("POST", "/api/brain/adoption/apply", "browser-mutation", post_brain_adoption_apply),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),

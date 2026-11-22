@@ -119,7 +119,13 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # reader that predates them shows them as fields it ignores.
 FIELDS = ("Brain", "Id", "Kind", "Classification", "Summary", "Source",
           "Related", "Supersedes", "Superseded by", "Removed", "Replaced by",
-          "Invalidated", "Override", "Standing", "Policy", "Bindings", "Assessed")
+          "Invalidated", "Override", "Standing", "Policy", "Bindings", "Assessed",
+          "Adopted from")
+# which retained `reference/` file an adopted entry came from (task 172): the
+# file, the exact bytes it recorded, and whether it catalogues the file or
+# explains it. Added within version 1, like the fields above.
+ADOPTED_RE = re.compile(r"^reference/([A-Za-z0-9][A-Za-z0-9._-]{0,120})@([0-9a-f]{64})"
+                        r" · (catalogue|explanation)$")
 
 
 def parse_binding(item: str) -> dict | None:
@@ -411,8 +417,16 @@ def parse(name: str, data: bytes) -> dict:
     if assessed and not DATE_RE.match(assessed):
         rec["warnings"].append("**Assessed:** is a date, YYYY-MM-DD; it is shown as not recorded")
         assessed = None
+    adopted = None
+    if seen.get("Adopted from", "").strip():
+        match = ADOPTED_RE.match(seen["Adopted from"].strip())
+        if match:
+            adopted = {"name": match.group(1), "sha256": match.group(2), "role": match.group(3)}
+        else:
+            rec["warnings"].append("**Adopted from:** is not reference/<file>@<sha256> · "
+                                   "catalogue or explanation; it is ignored")
     rec.update(standing=standing, policy=policy, policyNote=policy_note,
-               bindings=bindings, assessed=assessed)
+               bindings=bindings, assessed=assessed, adopted=adopted)
     rec.update(
         state="invalid" if rec["problems"] else "entry",
         title=_clean(title or "", MAX_TITLE_CHARS) or None,
@@ -673,6 +687,7 @@ def _listed(e: dict) -> dict:
             "related": list(e["related"]),
             "standing": e["standing"], "policy": e["policy"],
             "assessed": e["assessed"], "bindings": len(e["bindings"]),
+            "adopted": e["adopted"],
             "warnings": len(e["warnings"])}
 
 
@@ -755,7 +770,7 @@ def entry(entry_id: str) -> dict:
         "sources": found["sourceRefs"],
         "standing": found["standing"], "policy": found["policy"],
         "policyNote": found["policyNote"], "bindings": found["bindings"],
-        "assessed": found["assessed"],
+        "assessed": found["assessed"], "adopted": found["adopted"],
         "related": [name(t) for t in found["related"]],
         "supersedes": [name(t) for t in found["supersedes"]],
         "supersededBy": [name(t) for t in found["supersededBy"]],

@@ -274,8 +274,9 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # rebuild, browser-mutation; task 187 one, Archive all,
         # browser-mutation; task 189 one, Update against target and
         # verify, browser-mutation; task 171 one, one section of the
-        # handbook's membership, browser-mutation
-        self.assertEqual(104, len(self.routes))
+        # handbook's membership, browser-mutation; task 172 one, adopting
+        # one reference file as one entry, browser-mutation
+        self.assertEqual(105, len(self.routes))
         self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

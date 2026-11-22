@@ -44,7 +44,7 @@ L2  githost assets agreements operations decisiontrace
 L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice handbook
+L6  gatepolicy reviews inputs basechoice handbook adoption
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
@@ -125,6 +125,13 @@ the reading of each linked entry's source authority — the entry's own
 Standing, Policy, Bindings and Assessed fields, and local git metadata
 for an `app:` or `work:` binding. It imports `brain`, `config` and
 `gitrepo` and writes nothing; `brainwrite`, `routes` and `board` import
+it.
+
+`adoption` (task 172) sits beside `handbook` (L6), directly above
+`brain`: the inventory and per-file preview of legacy `reference/`
+material, and the freeze `brainwrite` asks under its lock before an
+`adopt` write. It imports `brain`, `config`, `gitrepo`, `redact` and
+`taskfiles` and writes nothing; `brainwrite`, `routes` and `board` import
 it.
 
 `brainreviews` (task 168) sits beside `gates` (L12), directly above
@@ -411,7 +418,7 @@ L2  state reports templates gitrepo assets verifierreport agreements operations 
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice handbook
+L6  gatepolicy reviews inputs basechoice handbook adoption
 L7  evidence resultidentity artifacts
 L8  staleness
 L9  verify
@@ -755,5 +762,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 175
+routes 178
 ```

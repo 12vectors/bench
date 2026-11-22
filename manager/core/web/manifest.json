@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 150800,
-   "sha256": "b9fc1380bf700a156e0b06105c819065fee19386319e6ed32119e4ae93fe3124",
+   "bytes": 152166,
+   "sha256": "16560a3dca38c419b01620096336c724a729d3389dac2653f32ece8ba81de2c4",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -276,8 +276,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 140596,
-   "sha256": "b7ff6397a3177bd82a94d53b2e6e3ae9c74cada29db8e0bfc738398da1c12699",
+   "bytes": 158122,
+   "sha256": "03e89da83fb27aad8d6978ef2fe5b080c4624853ac371e2ef8a54c1c6cf1d699",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {

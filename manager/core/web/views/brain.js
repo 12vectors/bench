@@ -584,7 +584,7 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) {
-    return head + stale + requestsHtml() + handbookHtml(false) + emptyGuidance(index.directory) + filingHtml() +
+    return head + stale + requestsHtml() + handbookHtml(false) + adoptHtml() + emptyGuidance(index.directory) + filingHtml() +
       diagnosticsBlock(index) + reviewsNote();
   }
   const t = tally(index);
@@ -607,7 +607,7 @@ function listHtml(slot) {
   // reviews filed on cards are listed in the library and are not entries
   // a section can link
   const linkable = slot.data.entries.some(e => !e.tombstone);
-  return head + stale + requestsHtml() + handbookHtml(linkable) +
+  return head + stale + requestsHtml() + handbookHtml(linkable) + adoptHtml() +
     '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
@@ -852,6 +852,326 @@ function authorityHtml(e) {
       a.contradictions.map(c => `<li>${esc(c)}</li>`).join('') + '</ul>' : '') +
     (a.gaps.length ? '<ul class="b-hbnotes">' + a.gaps.map(g => `<li>${esc(g)}</li>`).join('') + '</ul>' : '') +
     '</div>';
+}
+
+/* ── adopting reference/ material (task 172) ──────────────────────────
+
+   Nothing here is read until a person opens the panel, and opening it,
+   choosing a file and comparing write nothing. Apply takes two presses and
+   sends the exact source digest and destination revision the preview
+   showed; the server reads both again. One file becomes one entry. */
+
+let ad = null;   // {items, error, name, preview, op, draft, request, busy, confirm, error2, lost}
+const ADOPT_OP = '@adopt';
+const AD_STATE = { ready: 'Not adopted', catalogued: 'Catalogued', changed: 'Changed since adopted',
+                   excluded: 'Excluded', unsupported: 'Cannot be adopted', conflict: 'Conflict',
+                   retired: 'Entry retired', missing: 'Missing', 'source-missing': 'Source missing' };
+const AD_OP = { catalogue: 'Catalogue the retained file',
+                explanation: 'Write a maintained explanation',
+                refresh: 'Record the new bytes' };
+const adBytes = (n) => n == null ? '—' : n < 1024 ? `${n} B`
+  : n < 1048576 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / 1048576).toFixed(1)} MiB`;
+
+async function adLoad() {
+  try {
+    const res = await fetch('/api/brain/adoption');
+    const data = await res.json().catch(() => ({}));
+    if (!ad) return;
+    ad.inventory = data.adoption || null;
+    ad.listError = data.adoption ? null : (data.error || 'reference/ could not be read');
+  } catch (e) {
+    if (ad) ad.listError = 'the board could not be asked';
+  }
+  renderBrain(true);
+}
+
+async function adPreview(name) {
+  const mine = ad;
+  try {
+    const res = await fetch('/api/brain/adoption/preview?name=' + encodeURIComponent(name));
+    const data = await res.json().catch(() => ({}));
+    if (ad !== mine || mine.name !== name) return;
+    mine.preview = data.preview || null;
+    mine.previewError = data.preview ? null : (data.error || 'the file could not be read');
+  } catch (e) {
+    if (ad === mine) mine.previewError = 'the board could not be asked';
+  }
+  if (ad !== mine) return;
+  const choices = (mine.preview && mine.preview.choices) || [];
+  const keep = choices.find(c => c.op === mine.op && c.available);
+  adChoose((keep || choices.find(c => c.available) || {}).op || null, !!keep);
+  renderBrain(true);
+}
+
+/* A choice's fields start from the preview; what a person typed for this
+   same choice is kept across a re-read. */
+function adChoose(op, keepDraft) {
+  ad.op = op;
+  ad.confirm = false;
+  const c = ((ad.preview && ad.preview.choices) || []).find(x => x.op === op);
+  if (!c) { ad.draft = null; return; }
+  if (keepDraft && ad.draft) return;
+  const d = c.defaults || {};
+  ad.draft = { title: d.title || '', summary: d.summary || '', kind: d.kind || 'Guide',
+               body: d.body || '', reason: '' };
+  ad.request = newRequest();
+}
+
+function adItemHtml(i) {
+  const held = i.catalogue || i.explanation;
+  return `<li class="b-aditem" data-aditem="${esc(i.name)}"><div class="b-adrow">` +
+    `<button type="button" class="b-btn" data-bact="ad-pick" data-barg="${esc(i.name)}" ` +
+    `aria-label="Preview ${esc(i.name)}">${esc(i.name)}</button>` +
+    `<span class="b-chip b-ad-${esc(i.state)}">${esc(AD_STATE[i.state] || i.state)}</span>` +
+    `<span class="b-note">${esc(i.type || 'unread')} · ${esc(adBytes(i.size))} · ` +
+    `${i.inboundCount} inbound link${i.inboundCount === 1 ? '' : 's'} · owner ` +
+    `${i.owner.state === 'known' ? esc(i.owner.name) : 'unknown'}</span></div>` +
+    (i.why ? `<p class="b-note">${esc(i.why)}</p>` : '') +
+    (held ? `<p class="b-note">Entry: <a href="${esc(entryHref(held.id))}" data-route ` +
+      `data-brain-id="${esc(held.id)}">${esc(held.title || held.id)}</a></p>` : '') + '</li>';
+}
+
+function adPreviewHtml() {
+  const p = ad.preview;
+  const head = `<div class="b-headrow"><h3>${esc(ad.name)}</h3>${button('ad-back', 'Back to the list')}</div>`;
+  if (ad.previewError) return head + `<p class="b-warn" role="alert">${esc(ad.previewError)}</p>`;
+  if (!p) return head + '<p class="b-loading" role="status" aria-busy="true">Reading the file…</p>';
+  const facts = '<dl class="b-facts">' +
+    `<dt>Type</dt><dd>${esc(p.type || 'unread')}</dd><dt>Size</dt><dd>${esc(adBytes(p.size))}</dd>` +
+    `<dt>SHA-256</dt><dd class="mono b-adhash">${esc(p.sha256 || 'withheld')}</dd>` +
+    `<dt>Address</dt><dd>${p.address ? `<a href="${esc(p.address)}" target="_blank" rel="noopener noreferrer">` +
+      `${esc(p.address)}</a> <span class="b-note">stays exactly as it is</span>` : '<span class="b-none">none</span>'}</dd>` +
+    `<dt>Owner</dt><dd>${p.owner && p.owner.state === 'known' ? esc(p.owner.name) +
+      (p.owner.dirty ? ' <span class="b-note">— uncommitted changes on disk</span>' : '')
+      : '<span class="b-none">unknown</span>'}</dd>` +
+    `<dt>Inbound links</dt><dd>${(p.inbound || []).length ? '<ul class="b-links">' + p.inbound.map(h =>
+      `<li>${esc(h.kind)}: ${h.address ? `<a href="${esc(h.address)}">${esc(h.name)}</a>` : esc(h.name)}</li>`).join('') +
+      '</ul>' + (p.inboundCount > p.inbound.length ? `<span class="b-note">and ${p.inboundCount - p.inbound.length} more</span>` : '')
+      : '<span class="b-none">none found</span>'}</dd>` +
+    ((p.citedBy || []).length ? `<dt>Cited by</dt><dd>${p.citedBy.map(entryLink).join(', ')}</dd>` : '') +
+    '</dl>';
+  if (!p.choices.length) {
+    return head + facts + `<p class="b-warn" role="alert">${esc(p.why || 'This file cannot be adopted.')} ` +
+      'Nothing was written.</p>';
+  }
+  const radios = '<fieldset class="b-adops"><legend>What should adopting it do?</legend>' +
+    p.choices.map(c => `<label class="b-adop"><input type="radio" name="ad-op" data-adop="${esc(c.op)}" ` +
+      `value="${esc(c.op)}"${ad.op === c.op ? ' checked' : ''}${c.available ? '' : ' disabled'}> ` +
+      `<span>${esc(AD_OP[c.op])}${c.default ? ' <span class="b-note">(default)</span>' : ''}` +
+      (c.role ? ` <span class="b-note">on the ${esc(c.role)} entry</span>` : '') +
+      (c.why ? `<br><span class="b-note">${esc(c.why)}</span>` : '') + '</span></label>').join('') + '</fieldset>';
+  return head + facts + radios + adFormHtml(p);
+}
+
+function adFormHtml(p) {
+  const c = p.choices.find(x => x.op === ad.op);
+  if (!c || !ad.draft) return '<p class="b-note">No choice is available for this file now.</p>';
+  const d = ad.draft;
+  const field = (name, label, value) => `<label class="b-field"><span>${label}</span>` +
+    `<input type="text" data-ad="${name}" value="${esc(value)}"></label>`;
+  let form = '';
+  if (ad.op === 'refresh') {
+    form = '<p class="b-note">Records that a person read the changed file. The entry\'s text, ' +
+      'classification and override stay as they are.</p>' +
+      `<p class="b-note mono b-adhash">recorded ${esc(c.recorded)}<br>on disk&nbsp; ${esc(p.sha256)}</p>` +
+      (c.previousAvailable && p.sourceText !== null ? bodyDiff(p.previousText, p.sourceText)
+        : '<p class="b-note">The earlier bytes are not available to compare, or this file is not text.</p>') +
+      field('reason', 'Why this is being recorded (required)', d.reason);
+  } else {
+    form = field('title', 'Title', d.title) + field('summary', 'Summary (optional)', d.summary);
+    if (ad.op === 'catalogue') {
+      form += '<p class="b-note">Creates one <strong>Attachment</strong> entry linking this file. The file is ' +
+        'not copied, moved or changed. It starts <strong>Unclassified</strong>: a person assesses it afterwards.</p>';
+    } else {
+      form += '<label class="b-field"><span>Kind</span><select data-ad="kind">' +
+        ['Guide', 'Investigation', 'Decision'].map(k =>
+          `<option value="${k}"${d.kind === k ? ' selected' : ''}>${k}</option>`).join('') + '</select></label>' +
+        `<label class="b-field"><span>Explanation (Markdown)</span><textarea data-ad="body" rows="12">${esc(d.body)}</textarea></label>` +
+        '<p class="b-note">A separate entry that cites the retained file and its catalogue entry. It starts ' +
+        '<strong>Unclassified</strong>; the original stays at its address.</p>' +
+        (c.seeded ? '<h4>Your text against the file</h4><div data-addiff>' + bodyDiff(p.sourceText, d.body) + '</div>'
+          : '<p class="b-note">This file is not converted to text: write the explanation yourself.</p>');
+    }
+  }
+  const ready = ad.op === 'refresh' ? d.reason.trim().length >= 3
+    : d.title.trim() && (ad.op === 'catalogue' || d.body.trim());
+  const apply = ad.confirm
+    ? `<p class="b-warn" role="status">This writes one file, <code>brain/${esc(c.destination.id)}.md</code>, ` +
+      'and commits it where this board commits. Nothing else changes.</p>' +
+      button('ad-apply', ad.busy ? 'Applying…' : 'Confirm: apply', { primary: true, disabled: ad.busy }) +
+      button('ad-unconfirm', 'Not yet')
+    : button('ad-confirm', 'Apply…', { primary: true, disabled: !ready });
+  return `<div class="b-form b-adform">${form}` +
+    (ad.applyError ? `<p class="b-warn" role="alert" tabindex="-1">${esc(ad.applyError)}</p>` : '') +
+    (ad.lost ? '<p class="b-warn" role="alert">No answer reached this page. Apply again: the same request ' +
+      'cannot write twice.</p>' : '') +
+    `<div class="b-adactions">${apply}</div></div>`;
+}
+
+function adoptHtml() {
+  if (!ad) {
+    // no control for nothing: a board with no reference files is not asked
+    if (!(cache.index && cache.index.data && cache.index.data.referenceFiles)) return '';
+    return '<section class="b-adopt" aria-labelledby="ad-h"><h2 id="ad-h">Existing reference material</h2>' +
+      '<p class="b-note"><code>reference/</code> is kept for what is already there; new knowledge belongs in the ' +
+      `Brain. Adopting is one file at a time and leaves every original at its address.</p>${button('ad-open', 'Review reference files')}</section>`;
+  }
+  const inv = ad.inventory;
+  let inner;
+  if (ad.name) inner = adPreviewHtml();
+  else if (ad.listError) inner = `<p class="b-warn" role="alert">${esc(ad.listError)}</p>`;
+  else if (!inv) inner = '<p class="b-loading" role="status" aria-busy="true">Reading reference/…</p>';
+  else if (inv.directory.state === 'refused') inner = `<p class="b-warn" role="alert">${esc(inv.directory.why)}</p>`;
+  else if (!inv.items.length) inner = '<p class="b-none">There is nothing in <code>reference/</code> to adopt.</p>';
+  else {
+    inner = `<ul class="b-adlist">${inv.items.map(adItemHtml).join('')}</ul>` +
+      (inv.truncated ? `<p class="b-warn">Only the first ${inv.limits.files} files are listed.</p>` : '') +
+      (inv.linksTruncated ? '<p class="b-note">Inbound links were not all read; a count may be low.</p>' : '');
+  }
+  return '<section class="b-adopt b-panel" aria-labelledby="ad-h"><div class="b-headrow">' +
+    `<h2 id="ad-h">Existing reference material</h2>${button('ad-close', 'Close')}</div>` +
+    '<p class="b-note">Reading this list writes nothing, fetches nothing and runs nothing. Adopting grants no ' +
+    `agent access and no authority.</p>${writeStatus(ADOPT_OP)}${inner}</section>`;
+}
+
+async function adApply() {
+  if (!ad || ad.busy || !ad.preview) return;
+  const mine = ad;
+  const p = mine.preview;
+  const c = p.choices.find(x => x.op === mine.op);
+  if (!c) return;
+  mine.busy = true;
+  mine.applyError = null;
+  mine.lost = false;
+  renderBrain(true);
+  const d = mine.draft;
+  const body = { request: mine.request, op: mine.op, name: p.name, source: p.sha256,
+                 expected: c.destination.revision };
+  if (mine.op === 'refresh') body.reason = d.reason;
+  else {
+    body.title = d.title;
+    body.summary = d.summary;
+    if (mine.op === 'explanation') { body.kind = d.kind; body.body = d.body; }
+  }
+  const res = await post('/api/brain/adoption/apply', body);
+  mine.busy = false;
+  if (ad !== mine) return;
+  const landed = (op) => {
+    ops[ADOPT_OP] = { request: mine.request, op, at: Date.now() };
+    forget();
+    mine.confirm = false;
+    mine.name = null;
+    mine.preview = null;
+    mine.draft = null;
+    mine.op = null;
+    adLoad();
+  };
+  if (res.ok) {
+    const op = res.data.operation;
+    landed(op);
+    toast(op.duplicate ? 'Already adopted — answered from the record.'
+      : `Saved: ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
+      !!(op.commit && op.commit.state === 'failed'));
+    renderBrain(true);
+    $('#bshell .b-adopt .b-status')?.setAttribute('tabindex', '-1');
+    $('#bshell .b-adopt .b-status')?.focus();
+    return;
+  }
+  if (res.status === 0) {
+    // no answer: the record says whether it landed; the same request is kept
+    mine.lost = true;
+    try {
+      const r = await fetch('/api/brain/operation?request=' + encodeURIComponent(mine.request));
+      const data = await r.json().catch(() => ({}));
+      if (data.operation && data.operation.saved) {
+        landed(data.operation);
+        mine.lost = false;
+        toast('The adoption had landed — the board\'s record says so.');
+      }
+    } catch (e) { /* the warning stands */ }
+    renderBrain(true);
+    return;
+  }
+  // refused: nothing was written. What it was held to is read again
+  mine.request = newRequest();
+  mine.confirm = false;
+  mine.applyError = res.error;
+  renderBrain(true);
+  if (res.data && res.data.stale) adPreview(mine.name);
+  $('#bshell .b-adform [role="alert"]')?.focus();
+}
+
+function adAct(name, arg) {
+  if (name === 'ad-open') {
+    ad = { inventory: null, name: null, preview: null, op: null, draft: null, request: newRequest(),
+           busy: false, confirm: false };
+    adLoad();
+    renderBrain(true);
+    $('#bshell [data-bact="ad-close"]')?.focus();
+    return;
+  }
+  if (!ad) return;
+  if (name === 'ad-close') {
+    ad = null;
+    delete ops[ADOPT_OP];
+    renderBrain(true);
+    $('#bshell [data-bact="ad-open"]')?.focus();
+    return;
+  }
+  if (name === 'ad-pick') {
+    ad.name = arg;
+    ad.preview = null;
+    ad.previewError = null;
+    ad.applyError = null;
+    ad.op = null;
+    ad.draft = null;
+    ad.confirm = false;
+    adPreview(arg);
+    renderBrain(true);
+    $('#bshell [data-bact="ad-back"]')?.focus();
+    return;
+  }
+  if (name === 'ad-back') {
+    const was = ad.name;
+    ad.name = null;
+    ad.preview = null;
+    ad.draft = null;
+    ad.confirm = false;
+    ad.applyError = null;
+    adLoad();
+    renderBrain(true);
+    $(`#bshell [data-bact="ad-pick"][data-barg="${CSS.escape(was || '')}"]`)?.focus();
+    return;
+  }
+  if (name === 'ad-confirm') {
+    ad.confirm = true;
+    renderBrain(true);
+    $('#bshell [data-bact="ad-apply"]')?.focus();
+    return;
+  }
+  if (name === 'ad-unconfirm') {
+    ad.confirm = false;
+    renderBrain(true);
+    $('#bshell [data-bact="ad-confirm"]')?.focus();
+    return;
+  }
+  if (name === 'ad-apply') adApply();
+}
+
+/* An adopted entry's relationship to the file it came from, read now. */
+function adoptionHtml(e) {
+  const a = e.adoption;
+  if (!a) return '';
+  const word = { unchanged: 'Unchanged since adopted', changed: 'Changed since adopted',
+                 missing: 'The file is gone', unreadable: 'Cannot be read' }[a.state] || a.state;
+  return '<div class="b-panel b-adoption"><h2>Adopted from</h2><dl class="b-facts">' +
+    `<dt>File</dt><dd><a href="${esc(a.address)}" target="_blank" rel="noopener noreferrer">reference/${esc(a.name)}</a></dd>` +
+    `<dt>Role</dt><dd>${a.role === 'catalogue' ? 'Catalogues the retained file' : 'Maintained explanation of it'}</dd>` +
+    `<dt>Source now</dt><dd>${esc(word)}</dd>` +
+    `<dt>Recorded</dt><dd class="mono b-adhash">${esc(a.recorded)}</dd>` +
+    (a.counterpart ? `<dt>${a.counterpart.role === 'catalogue' ? 'Retained source' : 'Explanation'}</dt>` +
+      `<dd>${entryLink(a.counterpart)} ${classChip(a.counterpart.classification)}</dd>` : '') +
+    '</dl><p class="b-note">Adoption records where this came from. It is not a claim that the content is correct.</p></div>';
 }
 
 async function hbSave() {
@@ -1266,7 +1586,7 @@ function entryHtml(slot, id) {
     writeStatus(e.id) + entryActions(e) + editing + removed + superseded +
     `<div class="b-read"><div class="b-prose">${md(e.body, { base: 2 }) ||
       '<p class="b-none">This entry has no body.</p>'}</div>` +
-    `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>${authorityHtml(e)}` +
+    `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>${adoptionHtml(e)}${authorityHtml(e)}` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
     warnings + '</article>';
 }
@@ -2067,6 +2387,7 @@ function act(name, arg) {
   }
   if (name.startsWith('rf-')) { rfAct(name, arg); return; }
   if (name.startsWith('hb-')) { hbAct(name, arg); return; }
+  if (name.startsWith('ad-')) { adAct(name, arg); return; }
   if (name.startsWith('rv-')) {
     // a filed review's classification (task 168): a mode of its page
     const slot = cache.entries[key()];
@@ -2211,6 +2532,31 @@ function wire(el) {
       }
       return;
     }
+    if (ad && f.dataset && f.dataset.adop) {
+      // choosing what adopting does: a view of the preview, nothing is sent
+      if (ev.type !== 'change' || !f.checked) return;
+      adChoose(f.dataset.adop, false);
+      renderBrain(true);
+      $(`#bshell [data-adop="${CSS.escape(f.dataset.adop)}"]`)?.focus();
+      return;
+    }
+    if (ad && ad.draft && f.dataset && f.dataset.ad) {
+      // kept here, sent nothing until Apply. An edit after the first press
+      // is a different entry from the one confirmed, so it asks again
+      ad.draft[f.dataset.ad] = f.value;
+      if (ad.confirm) { ad.confirm = false; renderBrain(true); return; }
+      const c = ad.preview.choices.find(x => x.op === ad.op);
+      const box = el.querySelector('[data-addiff]');
+      // compared when the field is left: the comparison is too heavy for a keystroke
+      if (ev.type === 'change' && box && f.dataset.ad === 'body' && c && c.seeded) box.innerHTML = bodyDiff(ad.preview.sourceText, f.value);
+      const go = el.querySelector('[data-bact="ad-confirm"]');
+      if (go) {
+        const d = ad.draft;
+        go.disabled = !(ad.op === 'refresh' ? d.reason.trim().length >= 3
+          : d.title.trim() && (ad.op === 'catalogue' || d.body.trim()));
+      }
+      return;
+    }
     if (f.dataset && f.dataset.rfreason) {
       // why a report is left unfiled: kept here, sent only with Close
       rfReasons[f.dataset.rfreason] = f.value;
@@ -2301,6 +2647,7 @@ function renderBrain(force) {
   if (ed && ((ed.mode === 'create') !== (k === 'index') || (ed.id && k !== 'e:' + ed.id))) ed = null;
   if (red && red.key !== k) red = null;
   if (hb && k !== 'index') hb = null;
+  if (ad && k !== 'index') { ad = null; delete ops[ADOPT_OP]; }
   // held while a person types, and while a pointer is down on the view
   // `live` (the Brain Agent's preflight arriving) paints under a person's
   // typing — the caret is kept below — but never under a pressed pointer
@@ -2371,7 +2718,7 @@ function renderBrain(force) {
     // forced repaint — the current version read in — lands while typing)
     const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
       ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf ||
-        active.dataset.hb) &&
+        active.dataset.hb || active.dataset.ad) &&
         (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
@@ -2384,6 +2731,8 @@ function renderBrain(force) {
         : active.dataset.agq ? `[data-agq="${CSS.escape(active.dataset.agq)}"]`
         : active.dataset.age && active.type !== 'radio' ? `[data-age="${CSS.escape(active.dataset.age)}"]`
         : active.dataset.hb ? `[data-hb="${CSS.escape(active.dataset.hb)}"]`
+        : active.dataset.ad ? `[data-ad="${CSS.escape(active.dataset.ad)}"]`
+        : active.dataset.adop ? `[data-adop="${CSS.escape(active.dataset.adop)}"]`
         : active.dataset.hbrep ? `[data-hbrep="${CSS.escape(active.dataset.hbrep)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]` +
