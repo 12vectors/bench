@@ -19,6 +19,8 @@ const S = {
   // null for the list; and what an address named that is not an entry
   brainEntry: null,
   brainBad: null,
+  // the filed review the Brain shows (task 168): {card, id}, or null
+  brainReview: null,
   // file -> true (a person opened a lane that closed itself because every
   // member is merged in) or false (they closed it again). The page
   // session's memory only (task 161): a lane that stops being complete
@@ -38,6 +40,7 @@ const S = {
   detail: {},
   dfull: {},             // file -> {data, key, error}: the full delivery reading
   accOpen: {},           // `${file}:${criterion|finding}` -> expanded in the detail view
+  reviewTarget: null,    // {file, id}: a review an address asked to be shown (task 168)
   accDraft: {},          // form key -> unsent note text, kept across redraws
   dwide: false,          // the detail view's expanded reading width
   // the session Sessions and Focus show when one was chosen or named by an

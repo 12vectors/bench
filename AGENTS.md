@@ -1751,8 +1751,10 @@ investigations, decisions and guides, each a Markdown file in
 `<work root>/brain/` with a stable address (task 157). Any person who can
 reach the board can write and classify them there (task 158, "Writing
 the Brain"), and find them with its search and filters (task 159,
-"Finding an entry"). What it does not do yet, said so nobody looks for
-it: reviews appearing in the Brain, a
+"Finding an entry"). The reviews filed on cards are read there too, at
+addresses of their own, without being copied (task 168, "Reviews in the
+Brain"). What it does not do yet, said so nobody looks for it: recovering
+a review whose filing failed (#169), a
 curated handbook, seeding a Brain from an application, adopting
 `reference/` files, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
@@ -2183,6 +2185,130 @@ review projections, more than one entry per Apply, and any edit of code,
 cards, configuration or policy. A proposal is one person-requested
 update of one entry, never a claim that the whole Brain is fresh.
 
+### Reviews in the Brain
+
+Every review filed on a card — each **PR review** round and each
+**relevance review**, on a card in any stage or in the archive — is
+readable in the Brain at an address of its own (task 168):
+
+```text
+/brain/r/<card>/<review>        e.g. /brain/r/168/rl-0a1b2c3d4e
+```
+
+`<card>` is the card's number, kept for life (a card with no number is
+named by its file stem, which a rename changes); `<review>` is the
+identity the card's Reviews section already files the review under —
+`rv-` for a PR review round, `rl-` for a relevance review, a hash of the
+heading line bench wrote, so every board computes the same one. A rename,
+a move to another stage and archiving keep the address. Two cards
+sharing a number are told apart by the review: an address held by both
+names both files and shows neither; one the card does not hold says *No
+review … on card …*, and a number no card here carries says *No card …
+on this board*. No other review is ever shown in its place.
+
+**The report stays on its card.** The Brain reads it with the card's own
+readers (`acceptance.rounds`, `acceptance.relevance_reviews`): the same
+stored text, the same digest (`reportSha`), and the clipping notice where
+the record was clipped when it was filed. Nothing is copied into
+`brain/`, no report is made editable there, and no verdict is read
+differently: a PR review's **APPROVE** is Bench's review verdict, not a
+formal GitHub approval, and the merge rules read it on their own terms.
+Report text is untrusted data: drawn through the page's Markdown renderer
+(raw HTML stays text), never followed as an instruction.
+
+**What bench records when it files a review.** Since task 168 a filed
+review carries one line under its heading that only the board writes —
+`<!-- bench:review {…} -->`, version 1; a run's own line shaped like it is
+quoted on the way in. It says what the review was *of*:
+
+| field | for | what it is |
+| --- | --- | --- |
+| `briefRevision`, `briefSource` | relevance | the digest of the brief the run was **launched** with (`launch`) — never the brief when the report arrived, so an edit made while the review ran does not move it |
+| `head`, `base` | PR | the full commit, ref and authority (`github`, `local`, …) bench pinned the review to, and the pull request's base |
+| `pr`, `prNumber`, `prState`, `label`, `note` | PR | the pull request, its state then, and whether its head had moved (`superseded`) or it had ended (`historical`) by the time the review ended |
+| `evidence` | PR | the checks the run asked bench for, by evidence id |
+| `agent`, `model`, `reviewer`, `filed`, `reportSha` | both | who filed it, on which model, when, and the digest of the text filed |
+
+A review filed before task 168 has none of it, and each field reads
+**unknown** — never filled in from the card as it reads now. A PR round's
+heading still names the head's first 12 characters, which the page shows
+as that prefix, with no authority. The card's Reviews section shows the
+recorded brief revision too (*not recorded* where there is none).
+
+**On the page.** The Brain's list has the reviews under kind **Review**,
+newest first, found by search like any entry (the card's number and
+title, the reviewer, the verdict, the identity). A review's page shows
+the report, and beside it: the card (stage, or archived), the kind and
+round, the reviewer and model where recorded, the verdict, the filing
+time, the brief revision or the head and base assessed with who said so,
+the pull request, the report digest and whether it matches what bench
+recorded filing, the evidence ids — each *not on this board* where this
+board has no such record, since evidence is machine-local — and whether
+this board holds the review checkout's own record. Then an
+**assessment**: *Current* (the brief, or the PR head the poll last saw,
+is what was assessed), *Stale assessment* (it has moved since, or the
+review was filed superseded or historical) or *Unknown* (nothing was
+recorded, or this board has not observed the PR's head since it
+started). **Open on the card** lands on that review in the card's
+Reviews, unfolded and focused (`/cards/<card>?tab=reviews&review=<id>`),
+and each review there has **Read in the Brain** — the two link both ways.
+Maintained entries that cite the review (`**Source:** #168/rl-…`, a
+typed source) or its card (`#168`) are listed under **Cited by**; a
+`#<card>/<review>` source on an entry links to the review's page.
+
+**Classification is a separate record.** A review nobody has classified
+reads **Unclassified**, and nothing is written to say so: the list is
+rebuilt from the cards and the records on every reading, so a rebuild can
+lose no reason. **Classify** and **Set override** / **Clear override**
+write one small file per review under `brain/reviews/`:
+
+```markdown
+# Review classification: #168 rl-0a1b2c3d4e
+
+**Brain review:** 1
+**Review of:** #168/rl-0a1b2c3d4e
+**Classification:** Current
+**Override:** manual · ronald · 2026-11-22T10:00:00Z — reason
+
+## Classification history
+
+- 2026-11-22T10:00:00Z · Current · ronald — reason
+```
+
+The file is named `c<card>-<review>.md`, keyed by the card's number and
+the review's identity; it has no body, because the report is on the card.
+Writes go through the Brain's one writer with everything a maintained
+entry's write has: the record's exact revision (or its absence) as
+`expected`, a request identity journalled before the file is touched,
+this board's identity as the actor, a scoped work-state commit and sync,
+and the reason rules (one line, no markup). Superseded names the
+maintained entry that replaces the review's conclusions, or an explicit
+invalidation. A write naming a report field (`body`, `report`, `title`, a
+file) is refused, as is a review not on this board, a card with no number
+(it has no stable key) and a `brain/reviews/` that is a link. A
+maintained entry's create, edit, classify or retire never reaches
+`brain/reviews/` or a card. A record whose review is no longer here is
+kept and listed as a record whose source is missing; one that does not
+follow the format is listed with what is wrong. No agent classifies a
+review.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/reviews` | every filed review with its classification, the records whose source is missing, and the records that could not be read |
+| `GET /api/brain/review?card=&id=` | one review: `200`, `404` (`no-card` or `no-review`), `409` (`ambiguous`, naming the files) or `400` (not an address) |
+| `POST /api/brain/review/classify` | `{request, card, review, expected, classification, reason, supersededBy? \| invalidation?}` |
+| `POST /api/brain/review/override` | `{request, card, review, expected, action: set \| clear, reason}` |
+
+The reads list the stage and archive directories, read the card files and
+`brain/reviews/`, and ask the PR poll's memory what head it last saw:
+they write nothing, launch nothing, run no check and fetch nothing. The
+POSTs sit behind the browser-mutation door.
+
+**Not yet:** a report whose filing failed is not recovered here (the
+card's own history and the run's log are where it is); index rebuilding
+and authorized retry of an unfiled report are #169's. No live migration
+adds provenance to reviews filed before this change.
+
 ## Addresses: a link to every view and card
 
 Every place the page can show has an address (task 134). Open a card,
@@ -2195,8 +2321,10 @@ once the board has been read.
 | --- | --- |
 | `/board` | the Board. `/` is the same page, and the bar is corrected to `/board` |
 | `/brain`, `/brain/e/<id>` | the Brain's list, and one entry by its stable id (task 157) |
+| `/brain/r/<card>/<review>` | one review filed on a card, by the card's number (its stem if it has none) and the review's `rv-`/`rl-` identity (task 168) |
 | `/cards/<card>` | the card's detail view, on its Overview, over the Board |
 | `/cards/<card>?tab=<section>` | one of its sections: `brief`, `inputs`, `acceptance`, `reviews`, `activity` |
+| `/cards/<card>?tab=reviews&review=<review>` | that review where it lives on the card, unfolded and focused; the bar is corrected to `?tab=reviews` (task 168) |
 | `/phases`, `/phases/<card>` | Board › Phases, and one phase drilled into: its lane alone, under its breadcrumb (task 159) |
 | `/sessions`, `/sessions/<session>` | the whole board's Sessions, and one session |
 | `/focus`, `/focus/<session>` | Focus, and one session |

@@ -35,7 +35,10 @@ const ABOUT = {
 // a reading is asked again at most this often while the view repaints
 const FRESH_MS = 4000;
 
-const cache = { index: null, entries: {}, revisions: {} };   // key -> {data, status, at, error}
+// key -> {data, status, at, error}. `reviews` is the reviews filed on the
+// board's cards (task 168); `entries` holds both entries (`e:<id>`) and
+// reviews (`r:<card>/<review>`) as one page each
+const cache = { index: null, reviews: null, entries: {}, revisions: {} };
 const inflight = new Set();
 let painted = '';
 let paintedKey = null;
@@ -54,7 +57,25 @@ let wired = false;
 let press = null;
 let revsOpen = null;     // the entry whose Revisions fold is open
 
-function key() { return S.brainEntry ? 'e:' + S.brainEntry : 'index'; }
+function key() {
+  if (S.brainReview) return `r:${S.brainReview.card}/${S.brainReview.id}`;
+  return S.brainEntry ? 'e:' + S.brainEntry : 'index';
+}
+const reviewHref = (card, id) => `/brain/r/${encodeURIComponent(card)}/${encodeURIComponent(id)}`;
+
+function urlOf(k) {
+  if (k === 'index') return '/api/brain';
+  if (k === 'reviews') return '/api/brain/reviews';
+  if (k.startsWith('r:')) {
+    const [card, id] = k.slice(2).split('/');
+    return '/api/brain/review?card=' + encodeURIComponent(card) + '&id=' + encodeURIComponent(id);
+  }
+  return '/api/brain/entry?id=' + encodeURIComponent(k.slice(2));
+}
+
+function slotOf(k) {
+  return k === 'index' ? cache.index : k === 'reviews' ? cache.reviews : cache.entries[k];
+}
 function newRequest() {
   return 'bw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
@@ -62,23 +83,30 @@ function newRequest() {
 async function load(k) {
   if (inflight.has(k)) return;
   inflight.add(k);
-  const url = k === 'index' ? '/api/brain'
-    : '/api/brain/entry?id=' + encodeURIComponent(k.slice(2));
+  const url = urlOf(k);
   const started = Date.now();
   let slot;
   try {
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
-    slot = { status: res.status, data: k === 'index' ? data.brain : data.entry,
+    slot = { status: res.status,
+             data: k === 'index' ? data.brain : k === 'reviews' ? data.reviews
+               : k.startsWith('r:') ? data.review : data.entry,
              error: data.error || null, at: Date.now() };
   } catch (e) {
     slot = { status: 0, data: null, error: 'the board could not be asked', at: Date.now() };
   }
   inflight.delete(k);
   // a failed re-read keeps what was last read, marked
-  const old = k === 'index' ? cache.index : cache.entries[k];
+  const old = slotOf(k);
   if (!slot.data && old && old.data) slot = { ...old, error: slot.error, at: slot.at };
-  if (k === 'index') cache.index = slot; else cache.entries[k] = slot;
+  if (k === 'index') cache.index = slot;
+  else if (k === 'reviews') cache.reviews = slot;
+  else cache.entries[k] = slot;
+  if (k === 'reviews') {
+    if (S.view === 'brain' && key() === 'index') renderBrain();
+    return;
+  }
   if (ed && ed.rereading && ed.id && k === 'e:' + ed.id) {
     // "Use the current version": the base is what a reading asked after
     // the click says is on disk, never a revision guessed earlier
@@ -143,6 +171,7 @@ async function loadOp(id) {
    into "Reading…" under the person who just saved. */
 function forget() {
   if (cache.index) cache.index.at = 0;
+  if (cache.reviews) cache.reviews.at = 0;
   Object.values(cache.entries).forEach(slot => { slot.at = 0; });
   cache.revisions = {};
 }
@@ -171,7 +200,8 @@ function emptyGuidance(dir) {
     'work repository like the cards are. Ask the Brain Agent for one with <strong>New entry</strong> ' +
     '(it reads the project and proposes a draft you review and apply), write it yourself, or by hand ' +
     'following the version 1 format in AGENTS.md (“The Brain”); a file appears here as soon as it ' +
-    'is saved.</p><p class="b-note">Nothing here imports reviews or reference/ files.</p></div>';
+    'is saved.</p><p class="b-note">Reviews filed on cards appear here by themselves, as kind Review, ' +
+    'read from their cards and never copied. Nothing imports reference/ files.</p></div>';
 }
 
 function diagnosticsBlock(index) {
@@ -303,9 +333,30 @@ function navHtml(index, t) {
     `</div></aside>`;
 }
 
+/* The reviews filed on the board's cards (task 168), as rows of the
+   library: kind Review, their classification (Unclassified where no
+   record exists), found by search like any entry. A row is a link to the
+   review's page; the report itself is read from its card there. */
+function reviewRows() {
+  const d = cache.reviews && cache.reviews.data;
+  if (!d || !Array.isArray(d.reviews)) return [];
+  return d.reviews.map(r => ({
+    id: r.key, title: r.title, kind: 'Review', classification: r.classification,
+    summary: `${r.kindWord}${r.rounds > 1 ? ` ${r.round} of ${r.rounds}` : ''} · ` +
+      `${r.verdict || 'no verdict line'} · ${r.reviewer || 'reviewer not recorded'} · ${r.at}` +
+      (r.archived ? ' · card archived' : ''),
+    file: r.file, sources: [{ text: r.card ? `#${r.card}` : r.file }],
+    related: [r.review], tombstone: false, override: r.override, review: r,
+  }));
+}
+
 function rowHtml(e) {
-  return `<li class="b-row${e.tombstone ? ' b-tomb' : ''}"><div class="b-rowhead">${entryLink(e)}` +
+  const link = e.review
+    ? `<a href="${esc(e.review.address)}" data-route data-brain-id="${esc(e.id)}">${esc(e.title)}</a>`
+    : entryLink(e);
+  return `<li class="b-row${e.tombstone ? ' b-tomb' : ''}${e.review ? ' b-reviewrow' : ''}"><div class="b-rowhead">${link}` +
     classChip(e.classification) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
+    (e.review && !e.review.classified ? chip('b-note', 'not yet classified', 'no classification is recorded for this review') : '') +
     (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
     '</div>' +
     (e.summary ? `<p class="b-sum">${esc(e.summary)}</p>` : '<p class="b-sum b-none">No summary.</p>') +
@@ -369,12 +420,36 @@ function noResults(index, t) {
     `<p>${actions}</p></div>`;
 }
 
+/* What the reviews' reading could not account for: a classification
+   recorded for a review this board does not have, and a record that
+   could not be read — each said, nothing merged or guessed. */
+function reviewsNote() {
+  const slot = cache.reviews;
+  if (!slot) return '<p class="b-note" role="status">Reading the reviews filed on cards…</p>';
+  if (!slot.data) return `<p class="b-warn" role="status">The reviews filed on cards could not be read: ${esc(slot.error || 'no answer')}.</p>`;
+  const d = slot.data;
+  const rows = [];
+  for (const o of d.orphans || []) {
+    rows.push(`<li><a href="${esc(o.address)}" data-route>#${esc(o.card)} ${esc(o.review)}</a> — classified ` +
+      `${esc(o.classification)} in <code>brain/${esc(o.file)}</code>, but ` +
+      (o.why === 'card-missing' ? 'no card on this board has that number' : 'the card no longer holds that review') +
+      '. The record is kept.</li>');
+  }
+  for (const x of d.diagnostics || []) {
+    rows.push(`<li><code>brain/reviews/${esc(x.file)}</code> — <strong>${esc(x.code)}</strong>: ${esc(x.message)}</li>`);
+  }
+  const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading of the reviews.</p>` : '';
+  return stale + (rows.length ? `<details class="b-panel b-diag"><summary>${rows.length} review record` +
+    `${rows.length === 1 ? '' : 's'} could not be matched or read</summary><ul>${rows.join('')}</ul></details>` : '');
+}
+
 function listHtml(slot) {
-  const index = slot.data;
+  const index = { ...slot.data, entries: slot.data.entries.concat(reviewRows()) };
   const head = '<header class="b-head"><div class="b-headrow"><h1 class="b-title" tabindex="-1">Brain</h1>' +
     (index.directory.state !== 'refused' ? button('ag-new', 'New entry', { primary: true }) : '') + '</div>' +
     '<p class="b-lede">Maintained project knowledge kept in the work repository\'s ' +
-    '<code>brain/</code>, organised by kind. Each entry has a stable address that survives a rename, ' +
+    '<code>brain/</code>, organised by kind, and the reviews filed on cards, read from the cards ' +
+    'themselves. Each has a stable address that survives a rename, ' +
     'a new title or a new classification. An entry explains; it does not override configuration, ' +
     'merge rules or a person\'s decision.</p></header>';
   const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading.</p>` : '';
@@ -383,7 +458,8 @@ function listHtml(slot) {
       `${esc(index.directory.why)}.</p></div>`;
   }
   if (!index.entries.length) {
-    return head + stale + requestsHtml() + emptyGuidance(index.directory) + diagnosticsBlock(index);
+    return head + stale + requestsHtml() + emptyGuidance(index.directory) + diagnosticsBlock(index) +
+      reviewsNote();
   }
   const t = tally(index);
   const total = index.entries.length;
@@ -403,7 +479,7 @@ function listHtml(slot) {
     ? noResults(index, t)
     : kinds.map(k => kindSection(index, k, t)).join('');
   return head + stale + requestsHtml() + `<div class="b-lib">` + navHtml(index, t) +
-    `<div class="b-results">${status}${results}${diagnosticsBlock(index)}` +
+    `<div class="b-results">${status}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
 
@@ -733,6 +809,228 @@ function entryHtml(slot, id) {
     `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
     warnings + '</article>';
+}
+
+/* ── a review filed on a card (task 168) ──────────────────────────────
+
+   The page reads `GET /api/brain/review`: the card's stored report — the
+   very text and digest the card's Reviews section shows, with any
+   clipping notice — what bench recorded when it filed it, whether that
+   still holds, and the review's classification. Nothing on this page
+   edits the report: Classify and the manual override write one record
+   under brain/reviews/, through the Brain's one writer, held to the
+   record this page read. */
+
+let red = null;   // the review classification in progress: {key, mode, draft, busy, error, request}
+
+const ASSESS = { current: 'Current', stale: 'Stale assessment', unknown: 'Unknown' };
+const unknownWord = (why) => `<span class="b-none">unknown — ${esc(why)}</span>`;
+
+function refHtml(ref, what) {
+  if (!ref || !(ref.commit || ref.ref)) return unknownWord(`the ${what} was not recorded when this review was filed`);
+  return (ref.commit ? `<span class="mono b-sha">${esc(ref.commit)}</span>` : '') +
+    (ref.prefix ? ' <span class="b-note">(the 12 characters its heading names)</span>' : '') +
+    (ref.ref ? ` <span class="b-note">on</span> <span class="mono">${esc(ref.ref)}</span>` : '') +
+    `<span class="b-note"> · said by ${esc(ref.authority || 'nobody recorded')}</span>`;
+}
+
+function reviewFacts(v) {
+  const p = v.provenance;
+  const r = v.report;
+  const rows = [];
+  rows.push(`<dt>Card</dt><dd><a href="${esc(v.source.address)}" data-route>${v.source.number
+    ? '#' + esc(v.source.number) : esc(v.source.file)} — ${esc(v.source.title)}</a>` +
+    `<span class="b-note"> · ${v.source.archived ? 'archived' : esc(v.source.stage)}</span></dd>`);
+  rows.push(`<dt>Kind</dt><dd>${esc(r.kindWord)}${r.rounds > 1 ? ` · ${r.round} of ${r.rounds} on this card` : ''}</dd>`);
+  rows.push(`<dt>Reviewer</dt><dd>${esc(r.reviewer || p.reviewer || 'not recorded')}</dd>`);
+  rows.push(`<dt>Model</dt><dd>${p.model ? `<span class="mono">${esc(p.model)}</span>` : '<span class="b-none">not recorded</span>'}</dd>`);
+  rows.push(`<dt>Verdict</dt><dd>${esc(r.verdict || r.verdictLine || 'no verdict line')}` +
+    (r.type === 'pr' ? '<p class="b-note">Bench\'s review verdict, as filed. It is not a formal GitHub approval, ' +
+      'and the merge rules read it on their own terms.</p>' : '') + '</dd>');
+  rows.push(`<dt>Filed</dt><dd>${esc(r.at)}${p.filed ? ` <span class="b-note mono">(${esc(p.filed)})</span>` : ''}` +
+    (r.legacy ? '<p class="b-note">Filed in an older format; nothing more was recorded.</p>' : '') + '</dd>');
+  if (r.type === 'relevance') {
+    rows.push(`<dt>Brief assessed</dt><dd>${p.briefRevision
+      ? `<span class="mono b-sha">${esc(p.briefRevision.slice(0, 12))}</span> <span class="b-note">— the revision the run was launched with</span>`
+      : unknownWord('the revision this review read was not recorded')}` +
+      `<p class="b-note">The brief now: <span class="mono">${esc(v.source.brief)}</span></p></dd>`);
+  } else {
+    rows.push(`<dt>Head assessed</dt><dd>${refHtml(p.head, 'head')}</dd>`);
+    rows.push(`<dt>Base</dt><dd>${refHtml(p.base, 'base')}</dd>`);
+    rows.push(`<dt>Pull request</dt><dd>${p.pr ? `<a href="${esc(p.pr)}" target="_blank" rel="noopener noreferrer">` +
+      `${p.prNumber ? '#' + esc(p.prNumber) : esc(p.pr)}</a>${p.prState ? ` <span class="b-note">${esc(p.prState.toLowerCase())} when reviewed</span>` : ''}`
+      : '<span class="b-none">not recorded</span>'}` +
+      (p.label ? `<p class="b-note">Filed as ${esc(p.label)}${p.note ? ` — ${esc(p.note)}` : ''}</p>` : '') +
+      (p.published ? `<p class="b-note">${esc(p.published)}</p>` : '') + '</dd>');
+  }
+  rows.push(`<dt>Report digest</dt><dd><span class="mono">${esc(r.reportSha)}</span>` +
+    `<span class="b-note"> · ${p.digestAgrees === true ? 'the same text bench recorded filing'
+      : p.digestAgrees === false ? 'differs from what bench recorded filing — the card was edited since'
+        : 'no digest was recorded at filing'}</span></dd>`);
+  rows.push(`<dt>Evidence</dt><dd>${p.evidence.length ? '<ul class="b-links">' + p.evidence.map(x => x.found
+    ? `<li><span class="mono">${esc(x.id)}</span> — ${esc(x.check || '')} ${esc(x.outcome || '')}` +
+      `${x.commit ? ` at <span class="mono">${esc(x.commit)}</span>` : ''}</li>`
+    : `<li><span class="mono">${esc(x.id)}</span> <span class="b-missing">not on this board</span> ` +
+      '<span class="b-note">— evidence is machine-local to the board that ran it</span></li>').join('') + '</ul>'
+    : '<span class="b-none">none recorded</span>'}</dd>`);
+  if (p.localRecord) {
+    rows.push(`<dt>Review checkout record</dt><dd>${p.localRecord === 'present' ? 'on this board'
+      : '<span class="b-missing">unavailable on this board</span> <span class="b-note">— machine-local; ' +
+        'the provenance above travelled with the card</span>'}</dd>`);
+  }
+  rows.push(`<dt>Identity</dt><dd class="mono">${esc(r.id)}</dd>`);
+  return `<dl class="b-facts">${rows.join('')}</dl>`;
+}
+
+function reviewClassHtml(v) {
+  const c = v.classification;
+  const history = c.history.length
+    ? '<ol class="b-history">' + c.history.slice().reverse().map(h =>
+        `<li><span class="mono">${esc(h.at)}</span> ${classChip(h.classification)} ` +
+        `<span>${esc(h.actor)}</span> — ${esc(h.reason)}</li>`).join('') + '</ol>'
+    : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
+      'and nothing was written to say so.</p>';
+  return `<div class="b-panel"><h2>Classification</h2><p>${classChip(c.classification)} ` +
+    `<span class="b-note">${esc(ABOUT[c.classification] || '')}</span></p>` +
+    (c.override ? `<p class="b-note">Manual override: ${esc(c.override)}</p>` : '') +
+    (c.supersededBy ? `<p class="b-note">Superseded by <a href="${esc(entryHref(c.supersededBy))}" data-route>${esc(c.supersededBy)}</a></p>` : '') +
+    (c.invalidated ? `<p class="b-note">Invalidated: ${esc(c.invalidated)}</p>` : '') +
+    history + (c.file ? `<p class="b-note mono">brain/${esc(c.file)}</p>` : '') + '</div>';
+}
+
+function reviewFormHtml(v) {
+  const d = red.draft;
+  const sel = (name, value, options) => `<select data-rvf="${name}">` + options.map(([val, label]) =>
+    `<option value="${esc(val)}"${val === value ? ' selected' : ''}>${esc(label)}</option>`).join('') + '</select>';
+  const entriesHere = ((cache.index && cache.index.data && cache.index.data.entries) || []).filter(e => !e.tombstone);
+  let fields = '';
+  if (red.mode === 'classify') {
+    fields += `<label class="b-field"><span>Classification</span>${sel('classification', d.classification,
+      CLASSES.map(c => [c, c]))}</label>`;
+    if (d.classification === 'Superseded') {
+      fields += `<label class="b-field"><span>Replaced by entry</span>${sel('supersededBy', d.supersededBy || '',
+        [['', 'none — invalidated with no replacement']].concat(entriesHere.map(e => [e.id, `${e.title} (${e.id})`])))}</label>`;
+      if (!d.supersededBy) {
+        fields += `<label class="b-field"><span>Why it no longer holds</span><input type="text" data-rvf="invalidation" ` +
+          `value="${esc(d.invalidation || '')}" maxlength="500"></label>`;
+      }
+    }
+  }
+  fields += `<label class="b-field"><span>Reason</span><input type="text" data-rvf="reason" value="${esc(d.reason || '')}" ` +
+    'maxlength="500" required></label>';
+  const title = red.mode === 'classify' ? 'Classify this review'
+    : (v.classification.override ? 'Clear the manual override' : 'Set a manual override');
+  return `<section class="b-panel b-form" aria-label="${esc(title)}"><h2>${esc(title)}</h2>` +
+    '<p class="b-note">Writes one record under <code>brain/reviews/</code>, attributed to this board\'s identity. ' +
+    'The report on the card is not changed.</p>' + fields +
+    (red.error ? `<p class="b-warn" role="alert">Not saved: ${esc(red.error)}</p>` : '') +
+    '<div class="b-actions">' + button('rv-save', red.busy ? 'Saving…' : 'Save', { primary: true, busy: red.busy, disabled: red.busy }) +
+    button('rv-cancel', 'Cancel', { disabled: red.busy }) + '</div></section>';
+}
+
+function reviewHtml(slot, k) {
+  const v = slot.data;
+  const [cardRaw, rid] = k.slice(2).split('/');
+  const backLink = '<p class="b-back"><a href="/brain" data-route>All Brain entries</a></p>';
+  if (!v) {
+    return backLink + `<div class="b-panel b-bad" role="alert"><h1 class="b-title" tabindex="-1">Review ` +
+      `${esc(rid)}</h1><p>${esc(slot.error || 'the review could not be read')}</p></div>`;
+  }
+  const recorded = v.classification
+    ? `<p>A classification is still recorded for it (${classChip(v.classification.classification)}, ` +
+      `<code>brain/${esc(v.classification.file)}</code>): its source is missing, and the record is kept.</p>` : '';
+  if (v.state === 'no-card') {
+    return backLink + `<div class="b-panel" role="alert"><h1 class="b-title" tabindex="-1">No card ${esc(cardRaw)} ` +
+      'on this board</h1><p>No card in a stage or in the archive carries this number, so the review ' +
+      `<span class="mono">${esc(rid)}</span> cannot be read here. It may belong to another board.</p>${recorded}</div>`;
+  }
+  if (v.state === 'no-review') {
+    return backLink + `<div class="b-panel" role="alert"><h1 class="b-title" tabindex="-1">No review ${esc(rid)} ` +
+      `on card ${esc(cardRaw)}</h1><p>The card is here (${v.files.map(f => `<code>${esc(f)}</code>`).join(', ')}), ` +
+      'and none of the reviews filed on it has this identity. No other review is shown in its place.</p>' +
+      `${recorded}<p><a href="/cards/${esc(encodeURIComponent(cardRaw))}?tab=reviews" data-route>The card's reviews</a></p></div>`;
+  }
+  if (v.state === 'ambiguous') {
+    return backLink + `<div class="b-panel b-bad" role="alert"><h1 class="b-title" tabindex="-1">${v.files.length} cards ` +
+      `numbered ${esc(cardRaw)} hold review ${esc(rid)}</h1><p>The board does not pick one. Each card:</p><ul>` +
+      v.files.map(f => `<li><code>${esc(f)}</code></li>`).join('') + '</ul></div>';
+  }
+  const r = v.report;
+  const a = v.assessment;
+  const shared = v.source.sharedNumber.length
+    ? `<p class="b-note">Another card here shares the number #${esc(v.source.number)} ` +
+      `(${v.source.sharedNumber.map(f => `<code>${esc(f)}</code>`).join(', ')}); this review is on ` +
+      `<code>${esc(v.source.stage)}/${esc(v.source.file)}</code> alone.</p>` : '';
+  const actions = red && red.key === k ? reviewFormHtml(v)
+    : '<div class="b-actions b-entryactions" role="group" aria-label="Classify this review">' +
+      button('rv-classify', 'Classify') +
+      button('rv-override', v.classification.override ? 'Clear override' : 'Set override') + '</div>';
+  const others = v.others.length ? `<div class="b-panel"><h2>Other ${esc(r.kindWord.toLowerCase())}s on this card</h2>` +
+    '<ul class="b-links">' + v.others.map(o => `<li><a href="${esc(o.address)}" data-route>${esc(o.at)}</a> ` +
+      `<span class="b-note">${esc(o.verdict || '')}</span></li>`).join('') + '</ul></div>' : '';
+  const linked = `<div class="b-panel"><h2>Cited by</h2>${v.linkedFrom.length ? '<ul class="b-links">' +
+    v.linkedFrom.map(x => `<li>${entryLink(x)} <span class="b-note">— cites ${x.via === 'review' ? 'this review' : 'its card'}</span></li>`).join('') + '</ul>'
+    : '<p class="b-none">No Brain entry names this review or its card as a source.</p>'}</div>`;
+  const stale = slot.error ? `<p class="b-warn" role="status">${esc(slot.error)} — showing the last reading.</p>` : '';
+  return backLink + stale +
+    `<article class="b-entry b-review" aria-labelledby="btitle"><header class="b-head">` +
+    `<p class="b-kicker">${chip('b-kind', 'Review')} ${chip('b-kind', r.kindWord)} ${classChip(v.classification.classification)}` +
+    `${v.classification.override ? chip('b-override', 'Manual override') : ''}${v.source.archived ? chip('b-c-removed', 'Card archived') : ''}</p>` +
+    `<h1 class="b-title" id="btitle" tabindex="-1">${esc(r.title)}</h1>` +
+    `<p class="b-lede">${esc(r.kindWord)} filed on its card by ${esc(r.reviewer || 'a reviewer not recorded')} on ${esc(r.at)}. ` +
+    'The report is the card\'s: shown here as filed, never copied or edited.</p>' +
+    `<p class="b-permalink"><span class="mono">${esc(v.address)}</span> ` +
+    `<button type="button" data-copy-link="${esc(v.address)}">Copy link</button> ` +
+    `<a class="b-oncard" href="${esc(v.source.reviewsAddress)}" data-route>Open on the card</a></p></header>` +
+    shared +
+    `<p class="b-assess b-assess-${esc(a.state)}" role="note"><strong>${esc(ASSESS[a.state] || a.state)}</strong> — ${esc(a.why)}</p>` +
+    (r.clipped ? `<p class="b-warn" role="note">This report was clipped when it was filed: “${esc(r.clipped)}”</p>` : '') +
+    actions +
+    `<div class="b-read"><div class="b-prose">${md(r.body, { base: 2 }) || '<p class="b-none">The report is empty.</p>'}</div>` +
+    `<aside class="b-side" aria-label="About this review"><div class="b-panel"><h2>Provenance</h2>${reviewFacts(v)}</div>` +
+    reviewClassHtml(v) + linked + others + '</aside></div></article>';
+}
+
+async function saveReview() {
+  const slot = cache.entries[key()];
+  const v = slot && slot.data;
+  if (!red || red.busy || !v || v.state !== 'found') return;
+  const d = red.draft;
+  const body = { request: red.request, card: v.cardId, review: v.review,
+                 expected: v.classification.revision || null, reason: d.reason || '' };
+  let path;
+  if (red.mode === 'classify') {
+    path = '/api/brain/review/classify';
+    body.classification = d.classification;
+    if (d.classification === 'Superseded') {
+      if (d.supersededBy) body.supersededBy = d.supersededBy;
+      else body.invalidation = d.invalidation || '';
+    }
+  } else {
+    path = '/api/brain/review/override';
+    body.action = v.classification.override ? 'clear' : 'set';
+  }
+  red.busy = true;
+  red.error = null;
+  renderBrain(true);
+  const res = await post(path, body);
+  if (!red) return;
+  red.busy = false;
+  if (res.ok) {
+    toast(red.mode === 'classify' ? `Classified ${d.classification}.` : 'Override saved.');
+    red = null;
+    forget();
+    renderBrain(true);
+    $('#bshell .b-title')?.focus();
+    return;
+  }
+  red.error = res.status ? res.error || 'the board refused it'
+    : 'no answer came back, and nothing is known to have been saved; Save again sends the same request';
+  // any answer is final for this request: a new attempt is a new one. No
+  // answer keeps it, so a resend is answered from the board's record
+  if (res.status) red.request = newRequest();
+  if (res.data && res.data.stale) { forget(); }
+  renderBrain(true);
 }
 
 /* ── the Brain Agent (task 175) ───────────────────────────────────────
@@ -1299,6 +1597,24 @@ function act(name, arg) {
     if (name === 'ag-close') $('#bshell .b-title')?.focus();
     return;
   }
+  if (name.startsWith('rv-')) {
+    // a filed review's classification (task 168): a mode of its page
+    const slot = cache.entries[key()];
+    const v = slot && slot.data;
+    if (name === 'rv-save') { saveReview(); return; }
+    if (name === 'rv-cancel') red = null;
+    else if (v && v.state === 'found') {
+      red = { key: key(), mode: name === 'rv-classify' ? 'classify' : 'override', busy: false,
+              error: null, request: newRequest(),
+              draft: { classification: v.classification.classification, reason: '',
+                       supersededBy: '', invalidation: '' } };
+      if (!cache.index) load('index');
+    }
+    renderBrain(true);
+    if (red) $('#bshell [data-rvf]')?.focus();
+    else $('#bshell [data-bact="rv-classify"]')?.focus();
+    return;
+  }
   const e = currentEntry();
   if (name === 'clear-find') {
     resetFind();
@@ -1409,6 +1725,13 @@ function wire(el) {
       } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
       return;
     }
+    if (red && f.dataset && f.dataset.rvf) {
+      // kept here, sent nothing until Save; a choice that changes which
+      // fields exist is drawn at once
+      red.draft[f.dataset.rvf] = f.value;
+      if (ev.type === 'change' && ['classification', 'supersededBy'].includes(f.dataset.rvf)) renderBrain(true);
+      return;
+    }
     if (!ed || !f.dataset || !f.dataset.bf) return;
     const name = f.dataset.bf;
     ed.draft[name] = f.type === 'checkbox' ? f.checked : f.value;
@@ -1452,13 +1775,14 @@ function pressing() {
 }
 const isField = (n) => !!n && /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName || '');
 
-/* A link written in an entry is resolved against the entry's own
-   address, so `[the other one](e-other)` reaches `/brain/e/e-other`. One
+/* A link written in an entry (or a review's report) is resolved against
+   that page's own address, so `[the other one](e-other)` reaches
+   `/brain/e/e-other`. One
    to the board's own pages is followed in this tab like any other link
    here; anything else opens in a new one. md() already refused every
    scheme but the web, mail and anchors. */
-function settleLinks(el, id) {
-  const base = new URL(entryHref(id), location.origin);
+function settleLinks(el, at) {
+  const base = new URL(at, location.origin);
   el.querySelectorAll('.b-prose a[href]').forEach(a => {
     const raw = a.getAttribute('href');
     if (raw.startsWith('#') || /^mailto:/i.test(raw)) return;
@@ -1484,6 +1808,7 @@ function renderBrain(force) {
   // a write belongs to the page it was started on: leaving it puts the
   // draft away (navigation never writes, and never carries a draft along)
   if (ed && ((ed.mode === 'create') !== (k === 'index') || (ed.id && k !== 'e:' + ed.id))) ed = null;
+  if (red && red.key !== k) red = null;
   // held while a person types, and while a pointer is down on the view
   // `live` (the Brain Agent's preflight arriving) paints under a person's
   // typing — the caret is kept below — but never under a pressed pointer
@@ -1496,11 +1821,23 @@ function renderBrain(force) {
   let loading = false;
   if (S.brainBad) {
     html = back + '<div class="b-panel" role="alert"><h1 class="b-title" tabindex="-1">Not a Brain address</h1>' +
-      `<p><code>${esc(S.brainBad)}</code> does not name an entry. An entry's address is ` +
-      '<code>/brain/e/&lt;id&gt;</code>, its id in lower-case letters, digits and hyphens.</p></div>';
+      `<p><code>${esc(S.brainBad)}</code> does not name an entry or a review. An entry's address is ` +
+      '<code>/brain/e/&lt;id&gt;</code>, its id in lower-case letters, digits and hyphens; a review filed ' +
+      'on a card is <code>/brain/r/&lt;card&gt;/&lt;review&gt;</code>, its identity <code>rv-</code> or ' +
+      '<code>rl-</code> and ten hex digits.</p></div>';
+  } else if (k.startsWith('r:')) {
+    const slot = cache.entries[k];
+    // a form open on the page holds the live re-read: its record is what
+    // the Save is held to, and a newer one is the server's to refuse
+    if (!slot || (!red && Date.now() - slot.at > FRESH_MS)) load(k);
+    loading = !slot;
+    html = !slot ? '<p class="b-loading" role="status" aria-busy="true">Reading the review…</p>'
+      : reviewHtml(slot, k);
+    if (ag && !ed) html = agentHtml() + html;
   } else {
     const slot = k === 'index' ? cache.index : cache.entries[k];
     if (!slot || Date.now() - slot.at > FRESH_MS) load(k);
+    if (k === 'index' && (!cache.reviews || Date.now() - cache.reviews.at > FRESH_MS)) load('reviews');
     if (k !== 'index') {
       const id = k.slice(2);
       const o = ops[id];
@@ -1535,7 +1872,7 @@ function renderBrain(force) {
     // the caret is kept in the search box and in a draft's text fields (a
     // forced repaint — the current version read in — lands while typing)
     const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
-      ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age) &&
+      ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf) &&
         (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
@@ -1543,6 +1880,7 @@ function renderBrain(force) {
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
         : active.dataset.bkind ? `[data-bkind="${CSS.escape(active.dataset.bkind)}"]`
         : active.dataset.bshow ? `[data-bshow="${CSS.escape(active.dataset.bshow)}"]`
+        : active.dataset.rvf ? `[data-rvf="${CSS.escape(active.dataset.rvf)}"]`
         : active.dataset.ag ? `[data-ag="${CSS.escape(active.dataset.ag)}"]`
         : active.dataset.agq ? `[data-agq="${CSS.escape(active.dataset.agq)}"]`
         : active.dataset.age && active.type !== 'radio' ? `[data-age="${CSS.escape(active.dataset.age)}"]`
@@ -1552,7 +1890,8 @@ function renderBrain(force) {
             (active.type === 'radio' ? `[value="${CSS.escape(active.value)}"]` : '') : null) : null;
     el.innerHTML = `<div class="b-main">${html}</div>`;
     painted = html;
-    if (S.brainEntry) settleLinks(el, S.brainEntry);
+    if (S.brainReview) settleLinks(el, reviewHref(S.brainReview.card, S.brainReview.id));
+    else if (S.brainEntry) settleLinks(el, entryHref(S.brainEntry));
     if (keep) {
       const back = el.querySelector(keep);
       back?.focus();

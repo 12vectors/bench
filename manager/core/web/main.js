@@ -153,6 +153,9 @@ function applyRoute(route, background) {
     if (route.card) {
       const bg = CARD_VIEWS.includes(background) ? background : 'board';
       if (S.view !== bg) setView(bg);
+      // one review on the card (task 168): unfolded where it lives, and
+      // scrolled to once its section has drawn it (the detail view does)
+      S.reviewTarget = route.review ? { card: route.card, id: route.review } : null;
       openCardLink(route.card, route.tab, route.invalid === 'tab' ? route.raw : null);
       return;
     }
@@ -164,6 +167,7 @@ function applyRoute(route, background) {
       // an address that is not an entry's is said in place, never swapped
       // for the list or another entry
       S.brainEntry = route.entry || null;
+      S.brainReview = route.review || null;
       S.brainBad = route.invalid === 'entry' ? route.raw : null;
     }
     if (route.view === 'flight') S.flightSid = named('session');
@@ -216,7 +220,7 @@ document.querySelectorAll('#views [data-view]').forEach(b =>
     if (!plainClick(e)) return;
     e.preventDefault();
     // the switcher's Brain is the Brain's list, as its href says
-    if (b.dataset.view === 'brain') { S.brainEntry = null; S.brainBad = null; }
+    if (b.dataset.view === 'brain') { S.brainEntry = null; S.brainReview = null; S.brainBad = null; }
     setView(b.dataset.view);
   }));
 /* The Board's activity (task 159): the whole board's Sessions and Focus,

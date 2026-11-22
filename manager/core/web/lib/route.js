@@ -8,6 +8,11 @@
      /board                      the Board        (`/`, `/index.html` too)
      /brain[/e/<entry>]          the Brain (task 157), its list or one entry
                                  by its stable id
+     /brain/r/<card>/<review>    one review filed on a card (task 168), by
+                                 the card's number and the review's rv-/rl-
+                                 identity
+     /cards/<card>?tab=reviews&review=<review>
+                                 that review where it lives, on the card
      /cards/<card>[?tab=<tab>]   a card's detail view over the Board
      /phases[/<card>]            the Phases view, optionally one phase
      /sessions[/<session>][?card=<card>]
@@ -54,6 +59,8 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,199}$/;
 const SECTION_RE = /^[a-z][a-z0-9-]{0,39}$/;
 // a Brain entry's id: what the server's `brain.ID_RE` reads
 const ENTRY_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+// a filed review's identity (task 168): `brainreviews.REVIEW_ID_RE`
+const REVIEW_RE = /^r[vl]-[0-9a-f]{10}$/;
 
 function decodeSegment(raw) {
   try { return decodeURIComponent(raw); } catch (e) { return null; }
@@ -93,8 +100,20 @@ function parseRoute(where) {
   if (root) return { view: 'board', alias: true };
   const [head, rest, ...extra] = parts;
   if (head === 'brain') {
-    // `/brain` or `/brain/e/<entry>`, nothing else
+    // `/brain`, `/brain/e/<entry>` or `/brain/r/<card>/<review>`, nothing else
     if (rest === undefined) return { view: 'brain' };
+    if (rest === 'r' && extra.length === 2) {
+      // a review filed on a card (task 168): the card as its address names
+      // it, the review by its heading-derived identity
+      const card = cardIdOf(extra[0]);
+      const rid = decodeSegment(extra[1]);
+      if (card !== null && rid !== null && REVIEW_RE.test(rid)) {
+        const route = { view: 'brain', review: { card, id: rid } };
+        if (card !== decodeSegment(extra[0])) route.alias = true;
+        return route;
+      }
+      return { view: 'brain', invalid: 'entry', raw: decodeSegment(pathname) ?? pathname };
+    }
     const id = extra.length === 1 && rest === 'e' ? decodeSegment(extra[0]) : null;
     if (id !== null && ENTRY_RE.test(id)) return { view: 'brain', entry: id };
     return { view: 'brain', invalid: 'entry', raw: decodeSegment(pathname) ?? pathname };
@@ -119,6 +138,14 @@ function parseRoute(where) {
           route.invalid = 'tab';
           route.raw = tab;
         }
+      }
+      // one review on the card's Reviews (task 168): the way back from the
+      // Brain's page of it. Opens that review where it lives; not part of
+      // the card's own address once followed
+      const review = params.get('review');
+      if (review !== null && REVIEW_RE.test(review) && route.tab === 'reviews') {
+        route.review = review;
+        route.alias = true;
       }
       return route;
     }
@@ -210,6 +237,7 @@ function formatRoute(route) {
   }
   const view = VIEWS.includes(r.view) ? r.view : 'board';
   const base = '/' + VIEW_PATHS[view];
+  if (view === 'brain' && r.review) return `${base}/r/${enc(r.review.card)}/${enc(r.review.id)}`;
   if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}`;
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
   if (view === 'flight' || view === 'focus') {
@@ -296,7 +324,9 @@ function routeOf(S) {
              tab: S.cardLink.state === 'archived' ? 'overview' : (S.cardLink.tab || 'overview') };
   }
   switch (view) {
-    case 'brain': return S.brainEntry ? { view, entry: S.brainEntry } : { view };
+    case 'brain':
+      if (S.brainReview) return { view, review: { card: S.brainReview.card, id: S.brainReview.id } };
+      return S.brainEntry ? { view, entry: S.brainEntry } : { view };
     case 'phases': return S.phaseSel ? { view, phase: S.phaseSel } : { view };
     case 'flight':
     case 'focus': {

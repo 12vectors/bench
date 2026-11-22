@@ -7,7 +7,7 @@ import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
 import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
-import { cardId, formatRoute } from '../../lib/route.js';
+import { cardId, formatRoute, stemOf } from '../../lib/route.js';
 import { resource, staleWords } from '../../lib/resource.js';
 import { ago, duration } from '../../lib/time.js';
 import { toast } from '../../lib/toast.js';
@@ -1431,6 +1431,16 @@ function findingHtml(t, f, acc) {
    prose, and the round's reviewer, revision, date and verdict stay in the
    summary that holds it. The original Markdown is one fold away, to read
    or copy exactly as filed. */
+/* The same review in the Brain (task 168): its readable page with what
+   bench recorded about it and its classification. The report is not
+   copied there — the Brain reads this card. A card with no number has
+   only its file stem to be named by, which a rename changes. */
+function brainLink(t, id) {
+  const href = `/brain/r/${encodeURIComponent(cardId(t, S.state) || stemOf(t.file))}/${encodeURIComponent(id)}`;
+  return `<p class="rvbrain"><a href="${esc(href)}" data-route data-brain-review="${esc(id)}">` +
+    `Read in the Brain</a> <span class="dnote">— its provenance and classification; the report stays here</span></p>`;
+}
+
 function reportHtml(t, text, key) {
   const src = `src:${key}`;
   return `<div class="rtext rmd dbody">${md(text, { base: 4 })}</div>` +
@@ -1493,7 +1503,7 @@ function relevanceHtml(t, r, open) {
     `<dt>Filed</dt><dd>${esc(r.at)}${r.legacy ? ' — filed in an older format; nothing more was recorded' : ''}</dd>` +
     `<dt>Brief revision</dt><dd>${r.briefRevision ? `<span class="mono">${esc(r.briefRevision)}</span>` : 'not recorded'}</dd>` +
     `<dt>Identity</dt><dd><span class="mono">${esc(r.id)}</span></dd></dl>` +
-    reportHtml(t, r.report, r.id) +
+    brainLink(t, r.id) + reportHtml(t, r.report, r.id) +
     `<div class="discussion rvdisc" role="group" aria-label="Comments on this review"><h4>Comments on this review</h4>` +
     `<div class="rvthread" data-review="${esc(r.id)}">${reviewThreadHtml(t, r.id)}</div>` +
     `<div class="composer rvcompose" data-review="${esc(r.id)}">` +
@@ -1528,7 +1538,7 @@ function reviewsHtml(t, acc) {
   const rel = [...(acc.relevance || [])].reverse();
   const roundHtml = (r, open) => `<details class="rpt" id="rvw-${esc(r.id)}" data-keep="${esc(r.id)}"${(S.accOpen[`${t.file}:${r.id}`] ?? open) ? ' open' : ''}>` +
     `<summary id="rvs-${esc(r.id)}"><b>${esc(roundLine(r))}</b>${sinceRound(r, acc) ? `<span class="dnote">${esc(sinceRound(r, acc))}</span>` : ''}` +
-    `<span class="ameta">${esc(r.id)}</span></summary>${reportHtml(t, r.report, r.id)}</details>`;
+    `<span class="ameta">${esc(r.id)}</span></summary>${brainLink(t, r.id)}${reportHtml(t, r.report, r.id)}</details>`;
   const fc = acc.findingCounts;
   // what a group is for, one fold away rather than ahead of its records
   // (task 149): the records lead, the explanation is reference

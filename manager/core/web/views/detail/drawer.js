@@ -10,6 +10,7 @@ import { askCardLink, syncRoute } from '../../lib/nav.js';
 import { pressHold } from '../../lib/press.js';
 import { cardId, formatRoute, routeOf, stemOf } from '../../lib/route.js';
 import { ago } from '../../lib/time.js';
+import { toast } from '../../lib/toast.js';
 import { cardFor, cardTitle, focusCard, phaseMembers, planBlock, showDetail, verifySheet } from '../card.js';
 import { deliveryActions, deliveryOf, deliveryPill, wireDeliveryButtons } from '../delivery.js';
 import { discussionPanel, signalsBlock, wireDiscussion } from './discussion.js';
@@ -303,6 +304,25 @@ function renderDrawer() {
     const same = [...body.querySelectorAll('.dsec:not([hidden]) [data-keep]')]
       .find(el => el.dataset.keep === anchor.keep);
     if (same) body.scrollTop += same.getBoundingClientRect().top - anchor.top;
+  }
+  // a review an address named (task 168, the way back from the Brain):
+  // once its section has drawn it, it is scrolled to and focused, once
+  const want = S.reviewTarget;
+  if (want && cardId(t, S.state) === want.card) {
+    S.accOpen[`${t.file}:${want.id}`] = true;
+    const el = body.querySelector(`#rvw-${CSS.escape(want.id)}`);
+    if (el) {
+      S.reviewTarget = null;
+      // an earlier round sits in a fold of its own: both are opened
+      el.open = true;
+      const outer = el.parentElement && el.parentElement.closest('details[data-keep="oldrounds"]');
+      if (outer) { outer.open = true; S.accOpen[`${t.file}:oldrounds`] = true; }
+      el.scrollIntoView({ block: 'start' });
+      el.querySelector('summary')?.focus({ preventScroll: true });
+    } else if (((S.acc || {})[t.file] || {}).data) {
+      S.reviewTarget = null;
+      toast('that review is not on this card', true);
+    }
   }
   body.querySelectorAll('[data-member]').forEach(row =>
     row.addEventListener('click', () => {
