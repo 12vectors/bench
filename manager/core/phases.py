@@ -796,7 +796,8 @@ def assert_not_working(filename: str, doing: str = "move the card") -> None:
     # with would be the third one in a sentence that already has two
     name = taskfiles.LEADING_NUMBER_RE.sub("", phase["title"]).strip()
     raise ValueError(
-        f"{name or phase['title']} is still working — {_joined(parts)}. ‖ hold stops "
-        f"the phase and the agent it has in flight, and leaves the phase "
-        f"branch, everything merged into it and every worktree exactly as "
-        f"they are. Hold it first, then {doing}.")
+        f"{name or phase['title']} is still working — {_joined(parts)}. ‖ hold "
+        f"that run on its own card (pause the phase in Orchestrator → Phases "
+        f"so nothing new starts); the phase branch, everything merged into it "
+        f"and every worktree stay exactly as they are. Hold it first, then "
+        f"{doing}.")

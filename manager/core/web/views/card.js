@@ -1851,10 +1851,10 @@ export {
   actLabel, acts, addToPhase, ARM_MS, armAction, askCopilot, BOARD_ACT, canArchive,
   cardFor, cardSpec, cardTitle, chipOnFace, closeSheet, completeSheet, completionWords,
   fetchVerifyLog, fireAction, fireAgent, focusCard,
-  forgetActsOfVanishedCards, holdPhase, joinablePhases, keyedCard, lockAction,
+  forgetActsOfVanishedCards, joinablePhases, keyedCard, lockAction,
   MEMBER_STATE, move, openPR, parkDrive, phaseMembers, phaseSheet, planBlock,
   rawMove, replan, REQ_ITEM, requiredItemRow, requiredSheet, requiredTimer,
   rerunCheck, reuseDetail, REVIEW_LABELS, REVIEW_TARGETS, reviewChip,
-  reviewPanel, reviewSheet, runCommand, runPhase, showDetail, startDrive,
+  reviewPanel, reviewSheet, runCommand, showDetail, startDrive,
   unfinishedPanel, verifyDetail, verifySheet, wireAction
 };

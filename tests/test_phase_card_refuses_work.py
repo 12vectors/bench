@@ -177,7 +177,8 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
             phases.start_phase(ALONE, "in-progress")
 
         self.assertIn("phase card", str(work.exception))
-        self.assertIn("not a phase", str(run.exception))
+        # task 188: the phase door itself is retired, and says so
+        self.assertIsInstance(run.exception, phases.Retired)
         self.assertEqual(state.AGENTS, {})
         self.assertFalse(self.branch_exists(f"phase/{ALONE[:-3]}"))
 
