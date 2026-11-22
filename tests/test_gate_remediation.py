@@ -734,11 +734,22 @@ class TheMergeIsOfTheCommitTheGateRead(GateCase):
         self.assertIn("stays in review/", said)
 
     def test_a_merge_commit_still_names_the_branch(self):
+        """Where main moved on, a gated merge needs the candidate updated
+        against it first (task 189): a check that passed on work never
+        combined with the new main is not evidence about the combination.
+        An ungated board still merges with a commit naming the branch."""
         from tests.test_integration_gates import git
         (self.repo / "other.txt").write_text("main moved on\n", encoding="utf-8")
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "main moved on")
+        moved = self.tip("main")
         self.verified()
+        with self.assertRaises(ValueError) as said:
+            self.completion.complete_task(CARD, "review")
+        self.assertIn("update against target", str(said.exception).lower())
+        self.assertEqual(self.tip("main"), moved, "nothing was merged")
+        (self.local / "profiles.json").unlink()
+        __import__("gates").forget_cached()
         self.completion.complete_task(CARD, "review")
         subject = git(self.repo, "log", "-1", "--format=%s", "main").stdout
         self.assertIn(f"task/{CARD[:-3]}", subject)

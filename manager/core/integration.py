@@ -517,7 +517,7 @@ def require_current(filename: str, decision: dict | None, head: str,
                         f"{UPDATE_ACTION.lower()} first",
                         target=target, targetTip=tip)
     tip = remote_tip or local
+    # (which guarantee applies is the caller's to say: the merge mode is
+    # read by the merge itself, once, after the last gate read)
     return {"applies": True, "head": head, "target": target,
-            "targetTip": tip, "tree": tree_of(head),
-            "guarantee": GUARANTEES["origin" if config.app_merge_on_origin()
-                                    else "local"]}
+            "targetTip": tip, "tree": tree_of(head)}
