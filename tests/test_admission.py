@@ -729,6 +729,216 @@ class PhaseTargetsOnRealGit(AdmissionCase):
                                         ask_remote=False)
 
 
+class APhaseCardsOwnUpdate(AdmissionCase):
+    """Review round 3: a phase card's own update runs on its phase branch,
+    in its own worktree, against the application base."""
+
+    def test_a_phase_card_is_updated_on_its_phase_branch(self):
+        self.gated(scope="integration", body=COMBINED)
+        git(self.repo, "branch", PHASE_BRANCH, "main")
+        wt = config.WORKTREES / PHASE[:-3]
+        git(self.repo, "worktree", "add", "-q", str(wt), PHASE_BRANCH)
+        phase_head = self.write(wt, "b.txt", "calls new_name\n")
+        PhaseTargetsOnRealGit.phase(self, "review", members=(), pr=PR_URL)
+        on_main = self.write(self.repo, "a.txt", "renamed: new_name\n")
+        with mock.patch.object(agents, "start_pr_fix") as launched:
+            result = coordinate.update_against_target(PHASE,
+                                                      {"head": phase_head})
+        launched.assert_not_called()
+        self.assertEqual(result["outcome"], "merged")
+        self.assertEqual(result["target"], "main")
+        new = result["head"]
+        self.assertTrue(gates.contained(on_main, new))
+        self.assertEqual(git(self.repo, "rev-parse",
+                             PHASE_BRANCH).stdout.strip(), new,
+                         "the phase branch itself moved, not a task branch")
+        self.assertEqual(git(self.repo, "rev-parse", "main").stdout.strip(),
+                         on_main, "nothing was merged into the target")
+        self.assertEqual(self.stage_of(PHASE), "review")
+        decision = gates.evaluate(PHASE, "integration",
+                                  task=coordinate._card(PHASE))
+        self.assertTrue(integration.require_current(
+            PHASE, decision, new, "main", ask_remote=False)["applies"])
+
+
+class ProviderGuaranteesApart(AdmissionCase):
+    """Review round 3, finding 1: what the provider guarantees and what
+    bench only detects, held apart by tests. The local merge is published
+    by a plain push — a compare-and-set on the remote target, so a target
+    that moves after bench's last read refuses publication. A host merge
+    (`BOARD_APP_MERGE=origin`) is pinned to the head, and bench reads the
+    target immediately before asking for it; a target that moves after
+    that read is not prevented by the host, only read afterwards."""
+
+    def setUp(self):
+        super().setUp()
+        self.bare = self.origin()
+
+    def replica_push(self, name: str) -> str:
+        """Another installation (or the host) lands accepted work."""
+        other = self.tmp / "replica"
+        if not other.exists():
+            git(self.tmp, "clone", "-q", str(self.bare), str(other))
+            git(other, "config", "user.email", "r@r")
+            git(other, "config", "user.name", "replica")
+        git(other, "fetch", "-q", "origin")
+        git(other, "checkout", "-q", "-B", "main", "origin/main")
+        tip = self.write(other, name, "landed elsewhere\n")
+        pushed = git(other, "push", "-q", "origin", "main")
+        self.assertEqual(pushed.returncode, 0, pushed.stderr)
+        return tip
+
+    def host_merge(self, head: str):
+        """What the host does on `gh pr merge`: a merge commit of the PR's
+        head into the remote's main, made on the remote."""
+        git(self.repo, "push", "-q", "origin", f"{head}:refs/pull/81/head")
+        host = self.tmp / "host"
+        if not host.exists():
+            git(self.tmp, "clone", "-q", str(self.bare), str(host))
+        git(host, "fetch", "-q", "origin", "refs/pull/81/head")
+        git(host, "checkout", "-q", "-B", "main", "origin/main")
+        merged = git(host, "-c", "user.name=host", "-c", "user.email=h@h",
+                     "merge", "-q", "--no-ff", "-m", "Merge PR #81",
+                     "FETCH_HEAD")
+        self.assertEqual(merged.returncode, 0, merged.stderr)
+        git(host, "push", "-q", "origin", "main")
+        import subprocess
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    def on_host(self, merge):
+        import contextlib
+        import changes
+        import githost
+        stack = contextlib.ExitStack()
+        for target, name, value in (
+                (config, "app_merge_on_origin", lambda: True),
+                (changes, "gh_available", lambda: True),
+                (changes, "merge_is_conditional", lambda: True),
+                (changes, "pr_info", lambda branch: {"base": "main"}),
+                (changes, "merge_pr", merge),
+                (githost, "changes_targeting", lambda branch: [])):
+            stack.enter_context(mock.patch.object(target, name, value))
+        return stack
+
+    def remote_main(self) -> str:
+        return git(self.bare, "rev-parse", "main").stdout.strip()
+
+    def test_host_mode_reads_the_target_before_asking_the_host(self):
+        a_head, _ = self.both_reviewed("calls new_name\n")
+        asked = []
+        with self.on_host(lambda *a, **k: asked.append(a)):
+            shown = delivery.for_card(A)["integration"]
+            self.assertIn("detected afterwards", shown["guarantees"],
+                          "a host merge says it only detects target moves")
+            moved = self.replica_push("replica.txt")
+            with self.assertRaises(integration.Stale) as said:
+                completion.complete_task(A, "review")
+        # (`target-moved` when this checkout has not fetched the new tip,
+        # `target-changed` when it has: either way, refused before the host)
+        self.assertIn(said.exception.code, ("target-moved", "target-changed"))
+        self.assertEqual(asked, [], "the host was never asked to merge")
+        self.assertEqual(self.remote_main(), moved)
+        self.assertEqual(self.stage_of(A), "review")
+
+    def test_host_mode_does_not_prevent_a_move_after_the_read(self):
+        """The best-effort half: the host makes the merge conditional on the
+        head, not on the target. A target that moves between bench's read
+        and the host's merge is merged over, and only read afterwards."""
+        a_head, _ = self.both_reviewed("calls new_name\n")
+        raced = {}
+
+        def merge(number, *condition, timeout=None):
+            self.assertEqual(list(condition), ["--match-head-commit", a_head])
+            raced["tip"] = self.replica_push("raced.txt")
+            return self.host_merge(a_head)
+
+        with self.on_host(merge):
+            done = completion.complete_task(A, "review")
+        self.assertTrue(done["moved"], "the host merged over the moved target")
+        self.assertTrue(gates.contained(raced["tip"], self.remote_main()))
+        self.assertTrue(gates.contained(a_head, self.remote_main()))
+        # detected afterwards: the next reading is against the target that
+        # holds the raced work
+        git(self.repo, "fetch", "-q", "origin")
+        delivery.forget_cached()
+        found = delivery.for_card(B)["integration"]
+        self.assertEqual(found["state"], "target-changed")
+        self.assertTrue(gates.contained(raced["tip"], found["targetTip"]))
+
+    def test_local_mode_the_push_refuses_a_move_after_the_read(self):
+        """The atomic half: the same race on a local merge is refused by
+        git's own compare-and-set when the merge is published. The merge
+        stays on this checkout's main (partial publication), the card stays
+        in Review with a recovery record, and the remote holds nothing of
+        it."""
+        a_head, _ = self.both_reviewed("calls new_name\n")
+        real = integration.require_current
+        raced = {}
+
+        def guard(*args, **kwargs):
+            found = real(*args, **kwargs)
+            if kwargs.get("ask_remote", True):     # the read before the merge
+                raced["tip"] = self.replica_push("raced.txt")
+            return found
+
+        with mock.patch.object(config, "app_merge_on_origin", lambda: False), \
+                mock.patch.object(integration, "require_current", guard):
+            done = completion.complete_task(A, "review")
+        self.assertFalse(done["moved"])
+        self.assertFalse(done["published"])
+        self.assertEqual(done["publication"]["state"], "failed",
+                         "git refused the push: the remote target moved")
+        self.assertEqual(self.stage_of(A), "review")
+        self.assertEqual(self.remote_main(), raced["tip"])
+        self.assertFalse(gates.contained(a_head, self.remote_main()),
+                         "nothing of the card reached the remote target")
+        self.assertTrue(done["recovery"], "the partial publication is recorded")
+
+
+class CancellingTheConflictRepair(AdmissionCase):
+    """Review round 3: ‖ hold of the repair an update handed a conflict to
+    gives the card back as it was — the branch untouched, the conflict
+    still said, and the update offered again rather than refused as busy."""
+
+    def test_a_held_repair_leaves_the_conflict_to_update_again(self):
+        self.card_with(A, "shared.txt", "A's version\n")
+        b_head = self.card_with(B, "shared.txt", "B's version\n")
+        self.review_stage(A, "81 — Card A")
+        self.review_stage(B, "82 — Card B")
+        for name, agent in ((A, "run-a"), (B, "run-b")):
+            self.checked(name, agent)
+            self.reviewed(name)
+        completion.complete_task(A, "review")
+        launched = []
+
+        def repair(filename, stage, *, operation=None, integration=None):
+            agent = f"fix-{len(launched)}"
+            launched.append(agent)
+            state.AGENTS[agent] = {"task": filename, "status": "running",
+                                   "mode": "act-pr", "started": 0,
+                                   "integration": integration}
+            self.addCleanup(state.AGENTS.pop, agent, None)
+            return {"id": agent}
+
+        with mock.patch.object(agents, "start_pr_fix", repair):
+            first = coordinate.update_against_target(B, {"head": b_head})
+            self.assertEqual(first["outcome"], "conflict")
+            delivery.forget_cached()
+            self.assertEqual(delivery.for_card(B)["integration"]["state"],
+                             "updating")
+            # ‖ hold: the run ends without a commit
+            state.AGENTS.pop(launched[0])
+            delivery.forget_cached()
+            found = delivery.for_card(B)
+            self.assertEqual(found["status"]["word"], "target-conflicts")
+            self.assertEqual(found["primary"]["action"], "update-target")
+            self.assertEqual(git(self.repo, "rev-parse",
+                                 f"task/{B[:-3]}").stdout.strip(), b_head)
+            again = coordinate.update_against_target(B, {"head": b_head})
+        self.assertEqual(again["outcome"], "conflict")
+        self.assertEqual(len(launched), 2, "one repair per request, none doubled")
+
+
 class ReconcilingAnUpdate(AdmissionCase):
 
     def test_an_intent_without_a_receipt_or_a_move_ran_nothing(self):
