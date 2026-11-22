@@ -74,6 +74,11 @@ ACTIONS = {
     # independent review it precedes: both are assessing the exact head.
     "verify": "review",
     "repair": "repair",
+    # Updating a review candidate against its target (task 189): an
+    # additive merge of the accepted target into the card's own branch.
+    # It launches no agent — a conflict it finds is repaired by a later,
+    # queued `repair` — so it takes no slot and spends no start.
+    "refresh": "repair",
     "recover": "recovery",
     "integrate": "integrate",
     "merge": "merge",

@@ -48,6 +48,7 @@ import coordinate  # noqa: E402
 import decisions  # noqa: E402
 import execowner  # noqa: E402
 import gates  # noqa: E402
+import integration  # noqa: E402
 import movements  # noqa: E402
 import operations  # noqa: E402
 import orchestrator  # noqa: E402
@@ -177,6 +178,11 @@ class Sandbox(unittest.TestCase):
             mock.patch.object(completion, "complete_delivered", self._delivered_now),
             mock.patch.object(completion, "delivered_record", lambda f: self.delivered),
             mock.patch.object(completion, "recovery", lambda f: self.pending),
+            # task 189: the candidate holds its target unless a test says
+            # otherwise (tests/test_admission.py covers the rest)
+            mock.patch.object(integration, "reading", lambda task, **kw: {
+                "state": "up-to-date", "target": "trunk", "fresh": True,
+                "required": False, "head": kw.get("head")}),
         )
         for patch in patches:
             patch.start()
@@ -224,7 +230,7 @@ class Sandbox(unittest.TestCase):
         self.calls["review"].append((filename, stage))
         return self._run(filename, "review")
 
-    def _repair(self, filename, stage, *, operation=None):
+    def _repair(self, filename, stage, *, operation=None, integration=None):
         # task 174: the delegated repair names its own ledger entry
         self.calls["repair"].append((filename, stage))
         self.operations_named = getattr(self, "operations_named", []) + [operation]

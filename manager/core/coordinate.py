@@ -82,6 +82,8 @@ import completion
 import config
 import decisions
 import gates
+import gitrepo
+import integration
 import operations
 import orchestrator
 import phasescope
@@ -91,7 +93,7 @@ import required
 import state
 import taskfiles
 
-ACTIONS = ("verify", "review", "repair", "merge", "integrate")
+ACTIONS = ("verify", "review", "repair", "merge", "integrate", "refresh")
 STAGE = "review"
 # Which agent intents implement a card's code: the work run and ↻ act on
 # PR, which is what a repair rides.
@@ -163,6 +165,11 @@ CODES = {
     "step-refused": "blocked",
     "not-published": "blocked",
     "partial": "blocked",
+    # task 189: the candidate against the target it lands in
+    "refresh": "ready",
+    "refresh-not-delegated": "awaiting",
+    "admission-queued": "waiting",
+    "integration-unknown": "blocked",
 }
 
 # Independence codes (D3): only `independent` lets a review launch, and
@@ -406,6 +413,8 @@ def _set(item: dict, code: str, reason: str, **extra) -> dict:
     item.update(state=CODES[code], code=code, reason=reason, **extra)
     if CODES[code] == "ready":
         item["action"] = code
+    else:
+        item.pop("action", None)
     return item
 
 
@@ -480,6 +489,19 @@ def assess(task: dict, reading: dict, ops: list[dict],
             r.get("reason") == "policy-refused" for r in gate.get("unmet") or []):
         return _set(item, "rules-invalid", gate.get("summary") or
                     "the merge rules do not resolve")
+    # task 189: the candidate against the target it would land in, read
+    # now — kept apart from the review, which is about the brief
+    fit = integration.reading(task, head=head, decision=gate,
+                              pr_state=changes.pr_state(filename))
+    item["integration"] = public_integration(fit)
+    if fit.get("fresh") and any(
+            a.get("outcome") == "merged" and a.get("newHead") == head
+            and a.get("target") == fit["target"]
+            for a in integration.attempts(filename)):
+        # its head is its own update against the current target: it is
+        # integrating, and holds the target's admission while its checks
+        # and review come in
+        item["integrating"] = True
 
     # 1. the required checks, at this head
     rows = [r for r in gate.get("requirements") or [] if r.get("kind") == "check"]
@@ -565,6 +587,24 @@ def assess(task: dict, reading: dict, ops: list[dict],
              "overridden": "you overrode unmet requirements; not a pass",
              }.get(decision, decision)
     item["label"] = label
+    # 3a. (task 189) the target it lands in, now. Where the merge rule
+    # requires a check, a head that does not hold the accepted target is
+    # brought up to date on its own branch first; its new head is then
+    # checked and reviewed afresh, and only that combined head is admitted.
+    if integration.stale(fit):
+        if fit["state"] == "unknown":
+            return _set(item, "integration-unknown", fit["sentence"])
+        if fit["state"] == "conflicts":
+            item["repairIntegration"] = True
+            return _repair(item, task, here, head, mine, ops,
+                           "target-conflicts", fit["sentence"])
+        if not here["authority"]["repair"]["allowed"]:
+            return _set(item, "refresh-not-delegated", f"{fit['sentence']} — "
+                        f"the agreement does not delegate repair, so "
+                        f"{integration.UPDATE_ACTION} is yours")
+        return _set(item, "refresh", f"{fit['sentence']} — update "
+                    f"{head[:12]} against {fit['target']} at "
+                    f"{(fit.get('targetTip') or '')[:12]}, then verify")
     if member:
         if not here["authority"]["integrate"]["allowed"]:
             return _set(item, "integrate-not-delegated", f"ready to integrate "
@@ -591,6 +631,20 @@ def assess(task: dict, reading: dict, ops: list[dict],
         return _set(item, "merge-not-delegated", f"ready to merge ({label}); "
                     f"merging is yours — the agreement does not delegate it")
     return _set(item, "merge", f"merge {head[:12]} — {label}")
+
+
+def public_integration(found: dict) -> dict:
+    """The integration reading as the plan and the page carry it."""
+    keys = ("state", "label", "tone", "sentence", "next", "target",
+            "targetTip", "targetRef", "authority", "head", "required",
+            "fresh", "behind", "incoming", "provider", "guarantees")
+    out = {k: found.get(k) for k in keys if k in found}
+    attempt = found.get("attempt")
+    if attempt:
+        out["attempt"] = {k: attempt.get(k) for k in (
+            "at", "outcome", "targetTip", "newHead", "conflicts", "actor",
+            "pushed")}
+    return out
 
 
 def _public_independence(found: dict) -> dict:
@@ -799,6 +853,8 @@ def plan(board: dict | None = None) -> dict:
                               "stage": task["stage"], "state": "blocked",
                               "code": "unreadable",
                               "reason": f"{type(exc).__name__}: {str(exc)[:200]}"})
+    tasks = {t["file"]: t for s in board["stages"] for t in s["tasks"]}
+    _owners(items, ops, tasks)
     return {"status": "on", "items": items}
 
 
@@ -960,7 +1016,10 @@ def execute(item: dict, task: dict, board: dict | None = None) -> dict:
         if action == "review":
             return _review(op, filename, head)
         if action == "repair":
-            return _repair_now(op, filename, head, task)
+            return _repair_now(op, filename, head, task,
+                               bool(item.get("repairIntegration")))
+        if action == "refresh":
+            return _refresh_now(op, filename, head)
         if action == "integrate":
             return _integrate(op, task, head, again)
         return _merge(op, filename, head, task, again)
@@ -1018,7 +1077,24 @@ def _review(op: dict, filename: str, head: str) -> dict:
                           f"started")
 
 
-def _repair_now(op: dict, filename: str, head: str, task: dict) -> dict:
+def _refresh_now(op: dict, filename: str, head: str) -> dict:
+    """The orchestrator's update against target (task 189): the same
+    action as a person's, without its repair launch — a conflict is
+    recorded, and the next pass reads it and repairs through ↻ act on PR,
+    queued, counted and bounded like every repair."""
+    try:
+        result = update_against_target(filename, {"head": head},
+                                       actor="orchestrator",
+                                       operation=op["key"],
+                                       launch_repair=False)
+    except UpdateRefused as exc:
+        return _refused(op, exc.code, str(exc))
+    return _merged(op, result, result["outcome"], result["sentence"],
+                   newHead=result.get("head"))
+
+
+def _repair_now(op: dict, filename: str, head: str, task: dict,
+                for_integration: bool = False) -> dict:
     reading = agreements.effective()
     here = agreements.scope(reading, op["scope"]) or {}
     ceiling = ((here.get("ceilings") or {}).get("repairRounds") or {}).get("value", 0)
@@ -1028,8 +1104,18 @@ def _repair_now(op: dict, filename: str, head: str, task: dict) -> dict:
         return _refused(op, "repair-exhausted", f"{spent} of {ceiling} repair "
                         f"rounds are spent")
     # the same target contract a person's click rides; this operation's
-    # own intent is not a competing one (task 174)
-    record = agents.start_pr_fix(filename, STAGE, operation=op["key"])
+    # own intent is not a competing one (task 174). A repair of a conflict
+    # with the target (task 189) is told what came in and what conflicted.
+    brief = None
+    if for_integration:
+        fit = integration.reading(task, head=head, decision=None)
+        last = fit.get("attempt") or {}
+        brief = {"target": fit["target"], "targetTip": fit.get("targetTip"),
+                 "head": head, "incoming": integration.incoming(
+                     head, fit.get("targetTip") or "") if fit.get("targetTip")
+                 else [], "conflicts": last.get("conflicts") or []}
+    record = agents.start_pr_fix(filename, STAGE, operation=op["key"],
+                                 integration=brief)
     _note(filename, "attempt", {
         "incident": f"repair-{head[:12]}", "attempt": spent + 1, "of": ceiling,
         "outcome": "started", "operation": op["key"],
@@ -1181,11 +1267,40 @@ def reconcile(ops: list[dict] | None = None) -> list[dict]:
             continue      # settled by containment, in `phasescope.reconcile`
         since = (op.get("intentEpoch") or 0) - 1
         handler = {"verify": _reconcile_verify, "review": _reconcile_run,
-                   "repair": _reconcile_run, "merge": _reconcile_merge}
+                   "repair": _reconcile_run, "merge": _reconcile_merge,
+                   "refresh": _reconcile_refresh}
         done = handler[op["action"]](op, since)
         if done is not None:
             changed.append(done)
     return changed
+
+
+def _reconcile_refresh(op: dict, since: float) -> dict:
+    """An update against target left without a receipt (task 189): the
+    attempt record it writes before returning is the authority; without
+    one, a branch still at the head it was about provably took nothing,
+    and anything else is held for a person — never updated again blind."""
+    filename, head = op["file"], op.get("basis") or ""
+    for attempt in reversed(integration.attempts(filename)):
+        if attempt.get("operation") == op["key"]:
+            return _merged(op, {}, attempt.get("outcome") or "ended",
+                           f"reconciled: the update recorded "
+                           f"{attempt.get('outcome')}",
+                           newHead=attempt.get("newHead"))
+    tip = gates.branch_tips().get(changes.branch_of(filename))
+    if tip == head:
+        return operations.update(op["key"], "abandoned", code="no-update",
+                                 reason=f"the branch is still at {head[:12]} "
+                                        f"and no attempt was recorded: "
+                                        f"nothing was merged",
+                                 observed="reconciled: nothing ran")
+    done = operations.update(op["key"], "unknown", code="update-unconfirmed",
+                             reason="the branch moved and no attempt was "
+                                    "recorded; held",
+                             observed="reconciled: outcome unknown")
+    _receipt(done, "unknown", "the update's outcome is unknown; held until "
+             "a person says what happened")
+    return done
 
 
 def _reconcile_verify(op: dict, since: float) -> dict:
@@ -1276,6 +1391,292 @@ def _reconcile_merge(op: dict, since: float) -> dict:
     _receipt(done, "unknown", "the merge's outcome is unknown; held until a "
              "person says what happened")
     return done
+
+
+# ── update against target, on the card's own branch (task 189) ────────
+
+
+_UPDATING: set[str] = set()
+
+
+class UpdateRefused(ValueError):
+    def __init__(self, code: str, sentence: str):
+        super().__init__(sentence)
+        self.code = code
+
+
+def updating(filename: str) -> bool:
+    with state.LOCK:
+        return filename in _UPDATING
+
+
+def _card(filename: str) -> dict:
+    if Path(filename).name != filename or not filename.endswith(".md"):
+        raise UpdateRefused("bad-card", "bad filename")
+    for stage in taskfiles.collect()["stages"]:
+        for task in stage["tasks"]:
+            if task["file"] == filename:
+                return task
+    raise UpdateRefused("not-on-board", f"{filename} is not on the board — "
+                        f"refresh it")
+
+
+def update_preview(filename: str) -> dict:
+    """What **Update against target and verify** would do for this card
+    now: its head, its target and that target's tip as this checkout
+    knows it, the accepted commits it would bring in, and why it may not.
+    A read: nothing is fetched, merged or launched."""
+    task = _card(filename)
+    scope = "member" if (task.get("phase") and not task.get("isPhase")) \
+        else gates.scope_for(task)
+    found = gates.candidate(filename, scope, task=task)
+    head = found.get("commit") if found.get("state") == "present" else None
+    decision = gates.evaluate(filename, scope, task=task) if head else None
+    reading = integration.reading(task, head=head, decision=decision,
+                                  pr_state=changes.pr_state(filename),
+                                  updating=updating(filename) or _running(filename))
+    problem = None
+    if task["stage"] != STAGE:
+        problem = "Update against target runs on a card in review/"
+    elif _running(filename) or updating(filename):
+        problem = ("a run or an update is already working on this card — "
+                   "‖ hold it first, or wait for it to end")
+    elif not head:
+        problem = "there is no implementation commit on this board to update"
+    elif reading.get("fresh"):
+        problem = (f"{head[:12]} already holds {reading['target']} at "
+                   f"{(reading.get('targetTip') or '')[:12]}: there is "
+                   f"nothing to bring in")
+    return {"card": filename, "stage": task["stage"], "head": head,
+            "target": reading.get("target"),
+            "targetTip": reading.get("targetTip"),
+            "integration": reading, "problem": problem,
+            "effects": [
+                "fetches the target branch from the application remote",
+                "merges the target's accepted tip into this card's own "
+                "branch, additively, in its own worktree — no rebase, no "
+                "force-push, and no other pull request",
+                "a clean merge is pushed to the same branch so the same "
+                "pull request updates; nothing else runs",
+                "a conflict is aborted, recorded, and handed to one ↻ act "
+                "on PR run told what came in and what conflicted (this "
+                "spends tokens)",
+                "the new head needs its required checks and a fresh review "
+                "before it can be admitted; nothing is merged into the target",
+            ]}
+
+
+def update_against_target(filename: str, expected: dict | None = None, *,
+                          actor: str = "person", operation: str | None = None,
+                          launch_repair: bool = True) -> dict:
+    """**Update against target and verify** on the card's existing branch
+    and PR, in Review. Brings the target's accepted tip in with an
+    additive merge: clean, the branch is pushed and nothing else runs; a
+    conflict is aborted and recorded, and — where `launch_repair` — one
+    ↻ act on PR run is started with the incoming changes and the
+    conflict in its brief. The card stays in Review; nothing is merged
+    into the target and no check or review is recorded as passed.
+
+    `expected` binds the request to what the person was shown (`head`); a
+    candidate that moved is refused. A second request while one is in
+    flight is refused, so concurrent clicks cannot start two updates or
+    two repair workers."""
+    with state.LOCK:
+        if filename in _UPDATING:
+            raise UpdateRefused("busy", f"an update of {filename} against its "
+                                f"target is already in progress — nothing "
+                                f"was doubled")
+        _UPDATING.add(filename)
+    try:
+        return _update(filename, expected or {}, actor, operation,
+                       launch_repair)
+    finally:
+        with state.LOCK:
+            _UPDATING.discard(filename)
+
+
+def _update(filename: str, expected: dict, actor: str, operation: str | None,
+            launch_repair: bool) -> dict:
+    task = _card(filename)
+    if task["stage"] != STAGE:
+        raise UpdateRefused("stage", "Update against target runs on a card in "
+                            "review/; nothing was changed")
+    if _running(filename):
+        raise UpdateRefused("busy", f"a run is working on {filename} — ‖ hold "
+                            f"it first; nothing was changed")
+    with state.LOCK:
+        if filename in state.COMPLETING:
+            raise UpdateRefused("busy", f"{filename} is being merged and "
+                                f"cleaned up; nothing was changed")
+    scope = "member" if (task.get("phase") and not task.get("isPhase")) \
+        else gates.scope_for(task)
+    found = gates.candidate(filename, scope, task=task)
+    head = found.get("commit") if found.get("state") == "present" else None
+    if not head:
+        raise UpdateRefused("no-candidate", "there is no implementation commit "
+                            "on this board to update")
+    if expected.get("head") and expected["head"] != head:
+        raise UpdateRefused("moved", f"the card's branch is at {head[:12]}, not "
+                            f"{expected['head'][:12]} as shown — nothing was "
+                            f"changed; look again")
+    target = integration.target_for(task)
+    remote = config.app_remote()
+    if remote:
+        gitrepo.fetch_branch(remote, target, timeout=config.FETCH_TIMEOUT)
+    tip = integration.target_tip(target)
+    if not tip["commit"]:
+        raise UpdateRefused("target-unreadable", f"{target} cannot be read here "
+                            f"— Check the remote, then try again; nothing was "
+                            f"changed")
+    branch = changes.branch_of(filename)
+    base = {"head": head, "target": target, "targetTip": tip["commit"],
+            "actor": actor, "operation": operation}
+    if gates.contained(tip["commit"], head):
+        integration.record_attempt(filename, {**base, "outcome": "current"})
+        return {"ok": True, "outcome": "current", "head": head,
+                "target": target, "targetTip": tip["commit"],
+                "sentence": f"{head[:12]} already holds {target} at "
+                            f"{tip['commit'][:12]} — nothing to bring in"}
+    incoming = integration.incoming(head, tip["commit"])
+    made = gitrepo.ensure_worktree(filename[:-3], branch)
+    if made["problem"]:
+        raise UpdateRefused("worktree", f"the worktree for {filename} could not "
+                            f"be prepared ({made['problem']}: "
+                            f"{(made.get('detail') or 'no detail')[:200]}) — "
+                            f"nothing was changed")
+    path = made["path"]
+    now = gitrepo.git(path, "branch", "--show-current").stdout.strip()
+    if now != branch:
+        raise UpdateRefused("wrong-branch", f"the worktree is on "
+                            f"'{now or 'a detached head'}', not {branch} — "
+                            f"settle it by hand; nothing was changed")
+    if gitrepo.dirty(path):
+        raise UpdateRefused("dirty", "the card's worktree has uncommitted "
+                            "changes — commit or put them aside first; nothing "
+                            "was changed")
+    if gitrepo.git(path, "rev-parse", "HEAD").stdout.strip() != head:
+        raise UpdateRefused("moved", f"{branch} moved while it was read — "
+                            f"nothing was changed; look again")
+    merged = gitrepo.git(path, "merge", "--no-ff", "--no-edit", "-m",
+                         f"integration: update {branch} against {target} at "
+                         f"{tip['commit'][:12]}", tip["commit"], timeout=180)
+    if merged.returncode != 0:
+        conflicted = gitrepo.git(path, "diff", "--name-only",
+                                 "--diff-filter=U").stdout.split()
+        if gitrepo.git(path, "rev-parse", "-q", "--verify",
+                       "MERGE_HEAD").returncode == 0:
+            gitrepo.git(path, "merge", "--abort")
+        if not conflicted:
+            said = ((merged.stderr or merged.stdout or "").strip()
+                    .splitlines() or ["no detail"])[-1][:200]
+            integration.record_attempt(filename, {**base, "outcome": "failed",
+                                                  "detail": said})
+            raise UpdateRefused("merge-failed", f"git refused the update ({said})"
+                                f"; the merge was aborted and {branch} is as it "
+                                f"was")
+        attempt = integration.record_attempt(filename, {
+            **base, "outcome": "conflict", "conflicts": conflicted})
+        _say(filename, f"{filename}: updating {branch} against {target} at "
+             f"{tip['commit'][:12]} conflicts on {', '.join(conflicted[:6])} — "
+             f"aborted; the branch is exactly as it was")
+        result = {"ok": False, "outcome": "conflict", "head": head,
+                  "target": target, "targetTip": tip["commit"],
+                  "conflicts": conflicted, "attempt": attempt,
+                  "sentence": f"{target} conflicts with {head[:12]} on "
+                              f"{', '.join(conflicted[:6])}; a repair on this "
+                              f"card's own branch is needed"}
+        if launch_repair:
+            if not task.get("pr"):
+                result["sentence"] += (" — the card has no pull request for a "
+                                       "repair run to update: ↑ open PR, then "
+                                       "update again")
+                return result
+            record = agents.start_pr_fix(
+                filename, STAGE, operation=operation,
+                integration={"target": target, "targetTip": tip["commit"],
+                             "head": head, "incoming": incoming,
+                             "conflicts": conflicted})
+            result.update(repair=(record or {}).get("id"),
+                          sentence=result["sentence"] + " — a repair run "
+                          "was started on it")
+        return result
+    new_head = gitrepo.git(path, "rev-parse", "HEAD").stdout.strip()
+    pushed = "not pushed — this application has no remote"
+    if remote:
+        done = gitrepo.git(config.app_repo(), "push", remote,
+                           f"refs/heads/{branch}:refs/heads/{branch}",
+                           timeout=180)
+        said = (done.stderr.strip().splitlines() or [""])[-1][:160]
+        pushed = (f"pushed to {remote}" if done.returncode == 0 else
+                  f"not pushed — {remote} refused it ({said}); nothing was "
+                  f"forced")
+    integration.record_attempt(filename, {**base, "outcome": "merged",
+                                          "newHead": new_head,
+                                          "pushed": pushed.startswith("pushed")})
+    sentence = (f"{filename}: merged {target} at {tip['commit'][:12]} into "
+                f"{branch} — new head {new_head[:12]}, {pushed}. Its required "
+                f"checks and a fresh review are about the new head now")
+    _say(filename, sentence)
+    return {"ok": True, "outcome": "merged", "head": new_head,
+            "previous": head, "target": target, "targetTip": tip["commit"],
+            "incoming": len(incoming), "pushed": pushed.startswith("pushed"),
+            "sentence": sentence}
+
+
+def _say(filename: str, summary: str) -> None:
+    state.record_board_event({"kind": "agent", "actor": "board",
+                              "file": filename, "summary": summary})
+
+
+# ── one admission per target (task 189) ───────────────────────────────
+
+
+# The steps of the final sequence into a target: the update against it,
+# then — once the combined head's checks and review are in — the merge or
+# the integration into a phase branch.
+FINAL = ("refresh", "merge", "integrate")
+
+
+def _owners(items: list[dict], ops: list[dict], tasks: dict) -> None:
+    """Serialize the final sequence per target: at most one card per
+    repository and target branch updates against it or is admitted into
+    it at a time; the rest wait, naming who holds it. Deterministic: an
+    operation already in flight holds it, then a card already integrating
+    (its head is the result of its own update against the current target),
+    then the lowest card number. Review, checks and repairs of other cards
+    go on in parallel; only this sequence waits."""
+    holding: dict[str, dict] = {}
+    for op in ops:
+        if op.get("action") in FINAL and op["status"] in operations.OPEN:
+            task = tasks.get(op.get("file"))
+            if task is not None:
+                holding.setdefault(integration.target_for(task),
+                                   {"card": op["file"], "why": f"operation "
+                                    f"{op['key']} ({op['action']}) is "
+                                    f"{op['status']}"})
+    by_target: dict[str, list[dict]] = {}
+    for item in items:
+        target = (item.get("integration") or {}).get("target")
+        if not target:
+            continue
+        if item.get("code") in FINAL or item.get("integrating"):
+            by_target.setdefault(target, []).append(item)
+    for target, group in by_target.items():
+        owner = holding.get(target)
+        if owner is None:
+            first = sorted(group, key=lambda i: (
+                0 if i.get("integrating") else 1,
+                int(i["number"]) if str(i.get("number") or "").isdigit()
+                else 10 ** 9, i["card"]))[0]
+            owner = {"card": first["card"], "why": "it is next in line"}
+        for item in group:
+            item["admission"] = {"target": target, "owner": owner["card"]}
+            if item["card"] == owner["card"] or item.get("code") not in FINAL:
+                continue
+            _set(item, "admission-queued", f"{owner['card']} holds the "
+                 f"admission into {target} ({owner['why']}); this card is "
+                 f"updated and admitted against the target that leaves",
+                 waitingFor=owner["card"])
 
 
 # ── the pass ──────────────────────────────────────────────────────────

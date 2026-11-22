@@ -1441,8 +1441,36 @@ def repair_brief(target: dict) -> str:
         f"review on this PR and the review sections in the card below.")
 
 
+def integration_brief(found: dict | None) -> str:
+    """What a run updating a card against its target is told (task 189):
+    the accepted target commits it must bring in, the conflict or check
+    findings, and that a clean textual merge is not proof the combination
+    works. Nothing for an ordinary review repair."""
+    if not found:
+        return ""
+    incoming = "\n".join(f"  - {c['commit'][:12]} {c.get('subject') or ''}"
+                         for c in found.get("incoming") or []) or "  - (not listed)"
+    conflicts = ", ".join(found.get("conflicts") or []) or "none recorded"
+    findings = found.get("findings") or "none recorded"
+    return (
+        f"\n\nThis run updates the card's own branch against its target "
+        f"`{found['target']}` at `{(found.get('targetTip') or '')[:12]}` — "
+        f"accepted work only. Bring that commit in with an additive merge "
+        f"(never rebase, never force-push, and merge no other branch or "
+        f"pull request). The accepted target commits this branch does not "
+        f"hold yet, newest first:\n{incoming}\nFiles git reported "
+        f"conflicting: {conflicts}. Check findings to address: {findings}. "
+        f"Even where git merges cleanly, read the incoming changes against "
+        f"this card's own behaviour and keep both working: shared code, "
+        f"tests and regressions either side relies on. Run the checks you "
+        f"are offered on the result, commit, and push so the same pull "
+        f"request updates. The combined head needs its own checks and a "
+        f"fresh review before it can be admitted; this run is neither.")
+
+
 def start_pr_fix(filename: str, stage: str, *,
-                 operation: str | None = None) -> dict:
+                 operation: str | None = None,
+                 integration: dict | None = None) -> dict:
     """Fire a work agent that addresses the review feedback on the card's
     PR, working in its existing worktree (recreated from the branch if it
     was cleaned up), committing and pushing to update the PR.
@@ -1457,13 +1485,14 @@ def start_pr_fix(filename: str, stage: str, *,
                                 f"already being started — nothing was doubled")
         _REPAIRING.add(filename)
     try:
-        return _start_pr_fix(filename, stage, operation)
+        return _start_pr_fix(filename, stage, operation, integration)
     finally:
         with state.LOCK:
             _REPAIRING.discard(filename)
 
 
-def _start_pr_fix(filename: str, stage: str, operation: str | None) -> dict:
+def _start_pr_fix(filename: str, stage: str, operation: str | None,
+                  integration: dict | None = None) -> dict:
     target = repair_target(filename, stage, operation=operation)
     if target["problem"]:
         raise RepairRefused(target["code"], target["problem"])
@@ -1514,7 +1543,8 @@ def _start_pr_fix(filename: str, stage: str, operation: str | None) -> dict:
     prompt = templates.render("act-pr.md", template["text"], dict(
         filename=filename, branch=branch, pr=task["pr"], body=task["body"],
         base=plan["prBase"], remote=plan.get("appRemote") or "origin",
-        plan=plans.brief(plan) + repair_brief(target),
+        plan=(plans.brief(plan) + repair_brief(target)
+              + integration_brief(integration)),
         context=_context_block(manifest),
         verification=profiles.verification_block(
             manifest, gatepolicy.required_lines(manifest)),
@@ -1537,6 +1567,9 @@ def _start_pr_fix(filename: str, stage: str, operation: str | None) -> dict:
                    or (target.get("head") or {}).get("commit"),
                    "operation": operation},
     }
+    if integration:
+        record["integration"] = {k: integration.get(k) for k in
+                                 ("target", "targetTip", "head")}
     if target["kind"] == "phase":
         # the commit the repair starts from, so the run's diff is its own
         record["base"] = (target.get("head") or {}).get("local")
