@@ -952,6 +952,13 @@ def set_scope(scope_id: str, action: str, expected: str | None,
                 isinstance(doc.get("phases"), dict) and \
                 scope_id[6:] in doc["phases"]:
             entry = doc["phases"][scope_id[6:]]
+        elif scope_id.startswith("phase:") and CARD_RE.match(scope_id[6:]) \
+                and isinstance(doc.get("phases", {}), dict):
+            # task 188: every phase is its scope's, named or not, so a
+            # person may pause or exclude in any of them. The entry written
+            # is the narrowest there is: enabled, and only this change
+            entry = doc.setdefault("phases", {}).setdefault(
+                str(int(scope_id[6:])), {"enabled": True})
         else:
             raise Refused(f"no scope {scope_id!r} in the agreement", 404)
         if not isinstance(entry, dict):

@@ -88,7 +88,10 @@ class FakeBoard:
         stages = {}
         for card in self.cards.values():
             stages.setdefault(card["stage"], []).append(dict(card))
-        return {"stages": [{"slug": s, "tasks": t} for s, t in stages.items()]}
+        out = [{"slug": s, "tasks": t} for s, t in stages.items()]
+        # the one queue resolver the real board weaves (task 188)
+        taskfiles.weave_queue(out)
+        return {"stages": out}
 
     def stage_of(self, name: str):
         card = self.cards.get(name)
@@ -177,6 +180,9 @@ class Sandbox(unittest.TestCase):
         self.addCleanup(lambda: (state.AGENTS.clear(), state.AGENTS.update(saved)))
         scheduler.LAST["pass"] = None
         self.launch = Launcher()
+        # a fresh installation: on the unified phase model from the start
+        # (task 188); the upgrade itself is tests/test_phase_queue.py's
+        phasescope.mark_fresh()
 
     def _note(self, filename, stage, kind, fields, *, key, **_):
         self.notes.append({"file": filename, "kind": kind, "key": key, **fields})

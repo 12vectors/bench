@@ -472,7 +472,8 @@ def part_offsets(text: str) -> dict:
 
 
 def _phase_name(phase: dict) -> str:
-    return f"{phase['number'] or phase['file']} — {phase['title']}"
+    return (f"{phase.get('number') or phase['file']} — "
+            f"{phase.get('title') or phase['file']}")
 
 
 PHASE_LOG_HEADING = "Phase log"
@@ -606,10 +607,12 @@ STAGE_WORDS = {"backlog": "Backlog", "to-do": "To Do",
 def weave_queue(stages: list[dict]) -> None:
     """Every card's `queue` (task 188), after `weave_phases`."""
     tasks = [task for stage in stages for task in stage["tasks"]]
-    phases = {t["file"]: t for t in tasks if t["isPhase"]}
+    phases = {canonical_number(t["number"]): t for t in tasks
+              if t.get("isPhase") and t.get("number")}
     for task in tasks:
-        phase = phases.get((task.get("phase") or {}).get("file") or "")
-        task["queue"] = queue_state(task, None if task["isPhase"] else phase)
+        number = (task.get("phase") or {}).get("number")
+        phase = phases.get(canonical_number(number)) if number else None
+        task["queue"] = queue_state(task, None if task.get("isPhase") else phase)
 
 
 def weave_phases(stages: list[dict]) -> None:

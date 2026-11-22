@@ -215,6 +215,11 @@ def may_start(task: dict, tasks: list[dict],
     running = _running() if running is None else running
     done = integrated(phase)
     mine = _number(task)
+    if mine in done:
+        # the phase branch already holds it (the log says so, the retired
+        # runner's merges included): never launched again, whatever its
+        # stage says (task 188)
+        return ("integrated", "it is already integrated into the phase branch")
     order = members(phase, tasks)
     # in-phase dependencies guard whatever the strategy: integrated into
     # the phase branch, not merely reviewed
@@ -447,12 +452,19 @@ def _classify(phase: dict, tasks: list[dict]) -> tuple[str, str | None, str]:
     """(outcome, hold kind or None, words) for one phase card."""
     if _owned(phase):
         return "adopted", None, "already run by its phase scope"
+    entries = phases.log_entries(phase.get("body") or "")
+    where = phases.run_state(entries)
+    if where["state"] == "idle" and not any(phases.RUN_RE.match(e)
+                                            for e in entries):
+        # the runner never touched it: nothing of the old model is in
+        # flight, and whatever runs on a member is a run like any other
+        return "transferred", None, "moved to its phase scope (the retired " \
+                                    "runner never ran it)"
     busy = quiescence(phase, tasks)
     if busy:
-        return "held", "busy", ("work from before the upgrade is still running "
-                                "on it (" + "; ".join(busy[:3]) + "); it moves "
-                                "over by itself once that ends")
-    where = phases.run_state(phases.log_entries(phase.get("body") or ""))
+        return "held", "busy", ("work the retired phase runner started is "
+                                "still running on it (" + "; ".join(busy[:3])
+                                + "); it moves over by itself once that ends")
     if where["state"] == "halted":
         return "held", "held", (f"the retired phase runner had halted it — "
                                 f"{(where.get('reason') or '')[:200]}; resume it "
@@ -511,7 +523,19 @@ def migrate_model(board: dict | None = None) -> dict:
                 summary.append(f"#{number} held: {words}")
                 continue
             if outcome == "transferred":
-                _ensure_owned(phase)       # durable on the card before
+                try:
+                    _ensure_owned(phase)   # durable on the card before
+                except (Refused, OSError, ValueError) as exc:
+                    # the record never says moved before the card does:
+                    # held, and tried again on the next pass
+                    holds[number] = {"kind": "busy", "card": phase["file"],
+                                     "reason": f"its phase log could not be "
+                                               f"written ({exc}); retried on "
+                                               f"the next pass",
+                                     "since": (previous or {}).get("since")
+                                     or _now()}
+                    summary.append(f"#{number} held: log not written")
+                    continue
             holds.pop(number, None)        # the record says it moved
             if number not in transferred:
                 transferred.append(number)
@@ -543,6 +567,21 @@ def migrate_model(board: dict | None = None) -> dict:
                    else "partial", checked=_now())
         if doc["status"] == "complete" and not doc.get("completed"):
             doc["completed"] = _now()
+        _write_model(doc)
+        return doc
+
+
+def mark_fresh() -> dict:
+    """A fresh installation starts on the unified model: the record says
+    complete with nothing to move, and an existing record is left alone."""
+    with _MODEL_LOCK:
+        doc = agreements.phase_model()
+        if doc is not None:
+            return doc
+        doc = _new_model()
+        doc.update(status="complete", completed=_now(), fresh=True,
+                   summary=["a fresh installation: every phase is its phase "
+                            "scope's from the start"])
         _write_model(doc)
         return doc
 
@@ -643,8 +682,12 @@ def prepare(phase: dict) -> dict | None:
         return None
     try:
         # the ownership line first, on the card, so an older bench sharing
-        # this work state stands its runner down before anything is cut
-        _ensure_owned(phase)
+        # this work state stands its runner down before anything is cut.
+        # Best effort: this board needs no line to own the phase
+        try:
+            _ensure_owned(phase)
+        except Refused:
+            pass
         if phase["stage"] == "to-do":
             again = orchestrator.authorize("prepare", phase["file"])
             if not again["allowed"]:
