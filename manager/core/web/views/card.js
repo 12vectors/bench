@@ -880,7 +880,7 @@ function cardSpec(task) {
     const queue = task.queue || {};
     if (queue.inherited || queue.state === 'blocked') {
       chips.push({ label: queue.inherited ? 'queued with phase' : 'not queued',
-        pre: queue.inherited ? '◷' : '✕', cls: queue.inherited ? '' : 'bad',
+        pre: queue.inherited ? '⟶' : '✕', cls: queue.inherited ? '' : 'bad',
         phase: task.phase.file, title: queue.reason || '' });
     }
   }
