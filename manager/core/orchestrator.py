@@ -21,10 +21,12 @@ a run keeps the execution profile frozen in its manifest at launch, and
 pausing a scope neither changes nor cancels it; its ending is observed.
 
 **One scope per card.** A standalone card belongs to the Bench scope. A
-phase card and its members belong to that phase's scope when the
-agreement names the phase; otherwise the phase is run by the existing
-phase runner and *no* orchestrator scope schedules it — two schedulers
-over the same members are refused by construction (`legacy-phase`).
+phase card and its members belong to that phase's scope, whether or not
+the agreement names the phase (task 188): an unnamed phase inherits the
+Bench scope, a named one only narrows it, and nobody adopts it. The
+historical phase runner is retired, so there is one scheduler; a phase
+the upgrade held back is scheduled by nobody (`phase-migrating`) until
+its hold clears.
 
 **Merge delegation is the user's (D4).** A scope granted `merge` (or
 `integrate`, for a member into its phase branch) completes under the
@@ -129,16 +131,25 @@ def scope_of(task: dict, reading: dict) -> tuple[str | None, str | None]:
     if phase is None:
         return agreements.BENCH, None
     sid = f"phase:{phase}"
+    # Task 188: every phase is its phase scope's — named in the agreement
+    # or not, and with nobody adopting it — so there is one scheduler and
+    # one model. The one exception is a phase the one-time upgrade held
+    # back (work still running from before it, or a halt a person must
+    # lift): scheduled by nobody until that clears.
+    # An unreadable migration record holds every phase (fails closed).
+    if agreements.phase_hold(phase) is not None:
+        return None, "phase-migrating"
     if agreements.scope(reading, sid) is None:
-        return None, "legacy-phase"
-    # Named by the agreement is not enough (task 143): a phase is its
-    # scope's only once a person adopted it, with the phase runner
-    # quiescent — so the runner and the scope never share its members.
-    mode = task.get("phaseMode") if task.get("isPhase") else \
-        (task.get("phase") or {}).get("mode")
-    if mode != "scoped":
-        return None, "phase-not-adopted"
+        return None, "off"
     return sid, None
+
+
+def queued(task: dict) -> bool:
+    """Whether a card is queued for work: in To Do, or a phase member
+    whose stored stage is Backlog and whose phase is queued (task 188,
+    `taskfiles.queue_state`, the one resolver)."""
+    return bool((task.get("queue") or {}).get("inherited")) or \
+        task.get("stage") == "to-do"
 
 
 def pool_for(word: str, scope_reading: dict) -> str:
@@ -317,14 +328,16 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                        action=action, card=filename)
     sid, why = scope_of(task, reading)
     if sid is None:
+        hold = agreements.phase_hold(
+            taskfiles.canonical_number((task.get("phase") or {}).get("number")
+                                       or task.get("number") or "0")) or {}
         return _refuse(why, {
-            "phase-not-adopted": "this card's phase is named by the agreement "
-                                 "but not adopted into its phase scope, so the "
-                                 "existing phase runner schedules it and no "
-                                 "orchestrator scope may",
-        }.get(why, "this card's phase has no phase agreement, so the "
-                   "existing phase runner schedules it and no orchestrator "
-                   "scope may"), action=action, card=filename)
+            "phase-migrating": "this card's phase was held back by the "
+                               "upgrade to the unified phase model: "
+                               + (hold.get("reason") or "it is held")
+                               + "; nothing schedules it until that clears",
+        }.get(why, "no scope manages this card"), action=action,
+            card=filename)
     here = agreements.scope(reading, sid)
     base = {"action": action, "card": filename, "scope": sid}
     if here["off"]:
@@ -349,7 +362,8 @@ def authorize(action: str, filename: str, *, board: dict | None = None,
                            f"manual work in the {owner_scope['id']} scope; its "
                            f"branch and worktree are the user's",
                            by=owner_scope["id"], **base)
-    if task["stage"] not in MANAGED_STAGES:
+    if task["stage"] not in MANAGED_STAGES and \
+            not (task.get("queue") or {}).get("inherited"):
         return _refuse("stage-not-managed", f"{task['stage']}/ is not an "
                        f"orchestrated stage; Backlog is the owner's and Done is "
                        f"delivered", **base)
@@ -640,7 +654,7 @@ def reading(board: dict | None = None) -> dict:
     snap = movements.snapshot()   # one identity, one history, every card
     for task in tasks:
         sid, why = scope_of(task, effective) if effective["configured"] else (None, "off")
-        if task["stage"] in MANAGED_STAGES:
+        if task["stage"] in MANAGED_STAGES or queued(task):
             managed.append({"card": task["file"], "number": _number(task),
                             "stage": task["stage"], "scope": sid,
                             "why": why,
@@ -717,7 +731,7 @@ def board_summary(board: dict | None = None) -> dict:
     cards = {}
     if effective["valid"]:
         for task in _tasks(board):
-            if task["stage"] in MANAGED_STAGES:
+            if task["stage"] in MANAGED_STAGES or queued(task):
                 sid, why = scope_of(task, effective)
                 number = _number(task)
                 manual = None

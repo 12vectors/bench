@@ -292,7 +292,7 @@ function phaseSummary(task) {
    register only where something is wrong (an unknown outcome, a member
    moved ahead of its turn), and otherwise settled. The page decides
    nothing here: it maps a word to a register. */
-const SCOPED_ALARM = new Set(['unknown', 'moved-early', 'stopped']);
+const SCOPED_ALARM = new Set(['unknown', 'moved-early', 'stopped', 'migrating', 'blocked']);
 const SCOPED_QUIET = new Set(['integration-review', 'delivered']);
 
 function scopedFlight(life) {
@@ -313,52 +313,10 @@ function scopedFlight(life) {
 }
 
 function phaseFlight(task) {
+  // every phase is its phase scope's (task 188): the face is the server's
+  // lifecycle reading, word for word — there is no phase runner to read
   const life = ((S.state && S.state.phaseLifecycle) || {})[task.file];
-  if (life && life.owner === 'phase scope') return scopedFlight(life);
-  const snap = (S.state.phases || {})[task.file];
-  if (!snap) {
-    // named in the agreement and not adopted: still the runner's, and
-    // saying so is the step a person needs (task 160)
-    if (life && life.word === 'not-adopted' && task.stage !== 'done') {
-      return { idle: true, owner: 'phase runner', pill: 'not adopted',
-               line: `${life.line} · next (you): ${(life.next || {}).text || ''}`, life };
-    }
-    return null;
-  }
-  if (snap.halted) {
-    return { bad: true, line: 'halted' + (snap.haltedAt ? ` at #${snap.haltedAt}` : '') +
-      ' — ' + (snap.haltedWhy || snap.halted) };
-  }
-  if (!snap.running) {
-    if (task.stage !== 'in-progress') return null;
-    if (snap.scoped) {
-      // adopted, but no lifecycle reading arrived with this state: say
-      // whose it is rather than recommending the runner it stood down,
-      // and name the member a run is on when the snapshot saw one
-      const on = (snap.members || []).find(m => m.state === 'running');
-      if (on) {
-        return { bad: false, owner: 'phase scope',
-                 line: `phase scope — on #${on.number || on.file} — ${on.title || ''}` };
-      }
-      return { idle: true, owner: 'phase scope', pill: 'phase scope',
-               line: 'run by its phase scope — Orchestrator → Phases has its members' };
-    }
-    if (life && life.word === 'not-adopted') {
-      return { idle: true, owner: 'phase runner', pill: 'not adopted',
-               line: `${life.line} · next (you): ${(life.next || {}).text || ''}`, life };
-    }
-    return snap.stopped
-      ? { idle: true, pill: 'held',
-          line: 'held — ▸ run phase carries on from where it stopped' }
-      : { idle: true, pill: 'not started',
-          line: 'not started — ▸ run phase cuts its branch and starts the first card' };
-  }
-  const at = phaseProgress(snap);
-  if (at.on) return { bad: false, line: `on #${at.on.number || at.on.file} — ${at.on.title}` };
-  if ((snap.waitingOn || []).length) {
-    return { bad: false, line: `waiting on #${snap.waitingOn[0]}` };
-  }
-  return { bad: false, line: 'running' };
+  return life ? scopedFlight(life) : null;
 }
 
 /* Which phases this card could join, which is also whether the action is

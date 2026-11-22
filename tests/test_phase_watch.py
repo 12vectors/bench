@@ -46,224 +46,25 @@ time.sleep(60)
 """
 
 
-class HoldingAPhase(PhaseCase):
-    """`‖ hold` means here what it means everywhere else: the work stops
-    and nothing is lost."""
+class TheRunnersHoldIsRetired(PhaseCase):
+    """Task 188: the phase runner and its ‖ hold are retired. Pausing a
+    phase is the Orchestrator's; cancelling a member's run is its own
+    card's ‖ hold — and the old route says so rather than acting."""
 
-    def running_agents(self) -> list[dict]:
-        return [r for r in state.AGENTS.values() if r["status"] == "running"]
-
-    def test_the_hold_is_recorded_where_the_beat_reads_it(self):
-        self.start()
-
-        snapshot = phases.stop_phase(PHASE, "in-progress")
-
-        self.assertTrue(any(e.startswith("stopped — held by") for e in self.log()))
-        self.assertFalse(snapshot["running"])
-        self.assertTrue(snapshot["stopped"])
-        self.assertTrue(any("held by" in s for s in self.summaries()))
-
-    def test_the_beat_stands_down_afterwards(self):
-        self.start()
-        phases.stop_phase(PHASE, "in-progress")
-        state.BOARD_EVENTS.clear()
-
-        snapshot = self.advance()
-
-        self.assertEqual(self.summaries(), [], "a held phase is quiet")
-        self.assertEqual(self.merges_on(PHASE_BRANCH), [],
-                         "and merges nothing more")
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"),
-                         "and launches nothing more")
-        self.assertTrue(snapshot["stopped"])
-
-    def test_the_phase_branch_and_what_landed_on_it_are_untouched(self):
-        self.start()
-        self.advance()                      # 31 merges, 32 runs
-        merges, tip = self.merges_on(PHASE_BRANCH), self.tip(PHASE_BRANCH)
-
-        phases.stop_phase(PHASE, "in-progress")
-
-        self.assertEqual(self.merges_on(PHASE_BRANCH), merges)
-        self.assertEqual(self.tip(PHASE_BRANCH), tip, "a hold is not an undo")
-        self.assertTrue(self.branch_exists(f"task/{ONE[:-3]}"))
-        self.assertTrue((config.WORKTREES / PHASE[:-3]).is_dir())
-
-    def test_the_member_in_flight_is_held_with_it(self):
-        """A phase that said it had stopped while the agent it launched
-        kept working would be lying about the one thing it was asked."""
-        self.adapter_is(SLEEPS)
-        phases.start_phase(PHASE, "in-progress")
-        self.assertTrue(wait_for(lambda: any(r["task"] == ONE for r in
-                                             self.running_agents())),
-                        "the phase never launched its first member")
-
-        phases.stop_phase(PHASE, "in-progress")
-
-        self.assertTrue(wait_for(lambda: not self.running_agents()),
-                        "the member's agent was left running")
-        self.assertTrue(any(ONE in s and "stopped with it" in s
-                            for s in self.summaries()),
-                        "and the ticker says which cards stopped with it")
-
-    def test_running_it_again_after_a_hold_carries_on(self):
-        self.start()
-        phases.stop_phase(PHASE, "in-progress")
-
-        phases.start_phase(PHASE, "in-progress")
-        self.settle()
-
-        self.assertIn(f"31 merged into {PHASE_BRANCH}", self.log())
-        self.assertTrue(self.branch_exists(f"task/{TWO[:-3]}"),
-                        "the next member started")
-
-    def test_a_halted_phase_can_be_held_rather_than_run_again(self):
-        """The halt holds until the phase is resumed *or* stopped: someone
-        who has read it and does not want to carry on says so here."""
-        self.adapter_is(DIES)
-        self.start()
-        self.advance()
-        self.assertIsNotNone(self.advance()["halted"])
-
-        snapshot = phases.stop_phase(PHASE, "in-progress")
-
-        self.assertIsNone(snapshot["halted"], "the alarm is settled")
-        self.assertTrue(snapshot["stopped"])
-
-    def test_holding_a_phase_that_never_ran_refuses(self):
-        with self.assertRaises(ValueError) as caught:
+    def test_holding_a_phase_refuses_with_the_way_forward(self):
+        with self.assertRaises(phases.Retired) as caught:
             phases.stop_phase(PHASE, "in-progress")
+        self.assertIn("Pause it in Orchestrator", str(caught.exception))
+        self.assertEqual([], self.log(), "nothing is written to the log")
 
-        self.assertIn("not running", str(caught.exception))
-
-    def test_holding_it_twice_refuses(self):
-        self.start()
-        phases.stop_phase(PHASE, "in-progress")
-
-        with self.assertRaises(ValueError) as caught:
-            phases.stop_phase(PHASE, "in-progress")
-
-        self.assertIn("not running", str(caught.exception))
-
-    def test_an_ordinary_card_is_not_held_as_a_phase(self):
-        self.write(ONE, card("31 — Stand up site/", status="In Progress"),
-                   "in-progress")
-        (self.tasks / "backlog" / ONE).unlink()
-
-        with self.assertRaises(ValueError) as caught:
-            phases.stop_phase(ONE, "in-progress")
-
-        self.assertIn("not a phase", str(caught.exception))
-
-
-class WhatTheChipIsToldFrom(PhaseCase):
-    """The snapshot the API carries has to answer the chip's questions —
-    which phase, how far, on which card, and what stopped it — without the
-    page inferring any of them."""
-
-    def test_a_running_phase_names_itself_and_where_it_is(self):
-        self.adapter_is(SLEEPS)          # so the member is still in flight
-        phases.start_phase(PHASE, "in-progress")
-        self.addCleanup(phases.stop_phase, PHASE, "in-progress")
-
-        snapshot = phases.public_state()[PHASE]
-
-        self.assertTrue(snapshot["running"])
-        self.assertIsNone(snapshot["halted"])
-        self.assertEqual(snapshot["title"], "40 — Ship the site")
-        self.assertEqual(snapshot["number"], "40")
-        self.assertEqual(snapshot["branch"], PHASE_BRANCH)
-        self.assertEqual([m["number"] for m in snapshot["members"]], ["31", "32"])
-        self.assertEqual([m["state"] for m in snapshot["members"]],
-                         ["running", "pending"])
-
-    def test_a_halt_arrives_in_its_parts(self):
-        self.adapter_is(DIES)
-        self.start()
-
-        snapshot = self.advance()
-
-        self.assertEqual(snapshot["haltedAt"], "31")
-        self.assertIn("without reaching review/", snapshot["haltedWhy"])
-        self.assertFalse(snapshot["running"])
-        # the one line the log's reader gets, still said the old way
-        self.assertTrue(snapshot["halted"].startswith("31: "))
-
-    def test_a_halt_is_a_toast_as_well_as_a_state_and_a_line(self):
-        """Rare and actionable: the person who is not watching the ticker
-        is told once, the way a dead run tells them."""
-        self.adapter_is(DIES)
-        self.start()
-        self.sent.clear()
-
-        phases.advance_all()             # the pass halts; it launches nothing
-
-        toasts = [m for m in self.sent if m.get("type") == "toast"]
-        self.assertEqual(len(toasts), 1, "said once, not once a beat")
-        self.assertTrue(toasts[0]["error"])
-        self.assertIn(PHASE, toasts[0]["message"])
-        self.assertIn("halted at 31", toasts[0]["message"])
-
-    def test_a_second_beat_repeats_neither_the_toast_nor_the_line(self):
-        self.adapter_is(DIES)
-        self.start()
-        self.advance()
-        self.sent.clear()
-
-        phases.advance_all()
-
-        self.assertEqual([m for m in self.sent if m.get("type") == "toast"], [])
-
-    def test_two_phases_are_two_snapshots(self):
-        """Two phases could in principle run on one board — the API says so
-        rather than leaving the header to show one of them."""
-        self.write("41-second-phase.md",
-                   card("41 — A second phase", status="In Progress", kind="Phase",
-                        cards="- 77 — On its own\n"), "in-progress")
-        self.write("77-alone.md", card("77 — On its own"))
-        self.start()
-        phases.start_phase("41-second-phase.md", "in-progress")
-        self.settle()
-
-        live = phases.public_state()
-
-        self.assertEqual(sorted(live), [PHASE, "41-second-phase.md"])
-        self.assertTrue(all(p["running"] for p in live.values()))
-
-    def test_a_phase_out_of_in_progress_leaves_the_header(self):
-        self.start()
-        self.advance()
-        self.advance()          # every member merged: the card moves to review/
-        self.advance()          # the next beat, with nothing in in-progress/
-
-        self.assertEqual(self.stage_of(PHASE), "review")
-        self.assertEqual(phases.public_state(), {},
-                         "nothing is in flight, so there is nothing to show")
-
-
-class EveryAdvanceIsNarrated(PhaseCase):
-    """A phase that advances silently is a phase nobody can debug
-    afterwards: what finished, what merged, what started."""
-
-    def test_the_ticker_names_all_three(self):
+    def test_a_merge_into_the_phase_branch_is_narrated_as_a_phase_event(self):
         self.start()
         state.BOARD_EVENTS.clear()
-
         self.advance()
-
         said = " | ".join(self.summaries())
-        self.assertIn("31 — 31 — Stand up site/ is green", said)
         self.assertIn(f"merged 31 into {PHASE_BRANCH}", said)
-        self.assertIn("started 32", said)
-
-    def test_the_events_are_phase_events(self):
-        self.start()
-
         mine = [e for e in state.BOARD_EVENTS if e["file"] == PHASE]
-
-        self.assertTrue(mine, "the phase narrated nothing at all")
-        self.assertEqual({e["kind"] for e in mine}, {"phase"},
-                         "the runner's narration is its own kind of event")
+        self.assertEqual({e["kind"] for e in mine}, {"phase"})
 
 
 class TheLogSaysWhereAPhaseIs(unittest.TestCase):
@@ -474,59 +275,34 @@ class WhatTheChipSays(unittest.TestCase):
 
 
 class TheCardsActions(unittest.TestCase):
-    """▸ run phase sits in the slot ▸ start work has on every other card,
-    and ‖ hold replaces it while the phase runs — both on the one action
-    machine, so both arm before they fire."""
+    """Task 188: an in-progress phase card offers the way to the
+    Orchestrator, never ▸ run phase or a phase ‖ hold — and the page has
+    no code left that would post to the retired routes."""
 
     @classmethod
     def setUpClass(cls):
         cls.html = pagesource.page()
         block = re.search(r"if \(task\.stage === 'in-progress' && task\.isPhase\)"
-                          r" \{.*?\n    \} else if \(task\.stage === 'in-progress'\)",
+                          r" \{.*?\n    \} else if",
                           cls.html, re.S)
-        assert block, "board.html lost the phase card's actions"
+        assert block, "the page lost the phase card's actions"
         cls.block = block.group(0)
 
-    def test_the_action_only_exists_on_an_in_progress_phase_card(self):
-        self.assertIn("task.stage === 'in-progress' && task.isPhase", self.html)
+    def test_the_way_in_is_the_orchestrator(self):
+        self.assertIn("label: 'orchestrator'", self.block)
+        self.assertIn("setView('orchestrator')", self.block)
 
-    def test_running_a_phase_arms_like_every_other_launch(self):
-        self.assertIn("label: 'run phase'", self.block)
-        self.assertIn("confirm: 'run it?'", self.block)
-        self.assertIn("busy: 'starting…'", self.block)
-
-    def test_a_phase_someone_else_holds_is_taken_over_deliberately(self):
-        self.assertIn("label: 'take over'", self.block)
-        self.assertIn("takeover: true", self.block)
-
-    def test_hold_is_the_word_while_it_runs(self):
-        self.assertIn("ph.running) actions.push(hold)", self.block)
-        self.assertIn("label: 'hold'", self.block)
-        self.assertIn("confirm: 'hold it?'", self.block)
-
-    def test_a_halt_offers_the_way_out_and_the_way_to_the_reason(self):
-        """A halt still holds until the phase is run again or held, and
-        holding is here. Running it again moved to the Phases view with
-        card 57: it sits under the reason the phase stopped, because
-        clearing a halt should mean having read what caused it. So this
-        card carries ⟶ phases instead — the way to that reading."""
-        self.assertIn("ph.halted) actions.push(room, hold)", self.block)
-        self.assertIn("setView('phases')", self.block)
-        self.assertNotIn("ph.halted) actions.push(start", self.block)
+    def test_no_run_phase_or_phase_hold_is_offered(self):
+        self.assertNotIn("label: 'run phase'", self.block)
+        self.assertNotIn("label: 'hold'", self.block)
+        self.assertNotIn("holdPhase", self.html)
+        self.assertNotIn("runPhase", self.html)
+        self.assertNotIn("'/api/phase/run'", self.html)
+        self.assertNotIn("'/api/phase/stop'", self.html)
 
     def test_the_slot_never_holds_three(self):
         self.assertIn("else if (actions.length < 2) {", self.html,
                       "the relevance check gives way rather than stacking")
-
-    def test_both_go_through_the_api(self):
-        run = re.search(r"async function runPhase.*?\n\}", self.html, re.S).group(0)
-        hold = re.search(r"async function holdPhase.*?\n\}", self.html, re.S).group(0)
-        self.assertIn("'/api/phase/run'", run)
-        self.assertIn("'/api/phase/stop'", hold)
-        for body in (run, hold):
-            self.assertIn("return res.ok", body,
-                          "fireAction can only unlock on error if it is told")
-            self.assertIn("toast(", body)
 
 
 class ThePhaseCardsSheet(unittest.TestCase):
@@ -586,11 +362,17 @@ class TheTickerReadsPhaseEvents(unittest.TestCase):
                       "a phase's narration is board-level, like a move or a sync")
 
 
-class TheApiHasAStop(unittest.TestCase):
-    def test_the_route_exists(self):
+class TheOldRoutesAnswerRetired(unittest.TestCase):
+    """A page or a script from before the upgrade is told the way forward
+    (410), never a bare 404, and nothing is read or written."""
+
+    def test_the_routes_answer_gone(self):
         source = (REPO / "manager" / "core" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('"/api/phase/stop"', source)
-        self.assertIn("phases.stop_phase", source)
+        self.assertIn('"/api/phase/run"', source)
+        self.assertIn("_phase_runner_retired", source)
+        self.assertNotIn("phases.stop_phase(", source)
+        self.assertNotIn("phases.start_phase(", source)
 
 
 class TheDocumentedPromise(unittest.TestCase):
@@ -601,12 +383,12 @@ class TheDocumentedPromise(unittest.TestCase):
     def setUpClass(cls):
         cls.doc = (REPO / "AGENTS.md").read_text(encoding="utf-8")
 
-    def test_the_actions_are_named(self):
+    def test_the_retirement_is_named(self):
         self.assertIn("▸ run phase", self.doc)
+        self.assertIn("retired", self.doc)
 
-    def test_the_chip_is_described(self):
-        self.assertIn("halted", self.doc)
-        self.assertIn("header", self.doc)
+    def test_the_queue_action_is_described(self):
+        self.assertIn("queues the phase", self.doc)
 
 
 if __name__ == "__main__":

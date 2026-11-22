@@ -10,7 +10,7 @@ import { syncRoute } from '../lib/nav.js';
 import { toast } from '../lib/toast.js';
 import { cardId, findCard, formatRoute } from '../lib/route.js';
 import { phaseFlight } from './board.js';
-import { actLabel, holdPhase, keyedCard, runPhase, showDetail, wireAction } from './card.js';
+import { actLabel, keyedCard, showDetail, wireAction } from './card.js';
 import { renderDrawer } from './detail/drawer.js';
 import { findTask } from './focus.js';
 import { gateState } from './gates.js';
@@ -368,26 +368,9 @@ function laneFor(task, el) {
         renderLanes();
       }));
 
-    // ▸ run again lives here and nowhere else: clearing a halt should mean
-    // having read what caused it, and the reason is the line above it
-    if (halted) {
-      laneAction(el.querySelector('.lhalt .lacts'), task,
-        { glyph: '▸', label: 'run again', confirm: 'run it again?', busy: 'starting…',
-          title: 'Clear the halt and carry on from where it stopped — every card already '
-               + 'merged into the phase branch stays merged',
-          run: () => runPhase(task) });
-    }
-    // ‖ hold means here what it means everywhere: the run stops, the member
-    // agent in flight stops with it, and nothing is unwound
-    // the runner's hold only: an adopted phase's runs are each cancelled
-    // on their own card (task 160)
-    if ((snap && snap.running) || halted) {
-      laneAction(el.querySelector('.lhead .lacts'), task,
-        { glyph: '‖', label: 'hold', confirm: 'hold it?', busy: 'holding…',
-          title: 'Stop the phase and the agent it has in flight — the phase branch, every '
-               + 'card already merged into it and every worktree stay exactly as they are',
-          run: () => holdPhase(task) });
-    }
+    // task 188: no ▸ run again or phase ‖ hold — the phase runner is
+    // retired. A phase is paused, or resumed after the upgrade held it, in
+    // Orchestrator → Phases; one member's run is held on its own card
   }
 
   const stages = el.querySelector('.lstages');

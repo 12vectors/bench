@@ -14,8 +14,8 @@ as the engine writes them. Everything else is done through the page:
 - an agreement is drafted, edited, saved, previewed and applied, and a
   delegated merge under ungated rules is said to be unverified;
 - the Bench pause reaches the phase scope; the phase's own pause does not
-  reach the Bench scope; a phase adoption this board may not make is
-  refused in words and changes nothing;
+  reach the Bench scope; a phase is its scope's with nothing to adopt
+  (task 188), and the retired adoption route answers 410;
 - an answer is bound to what the page read: the server refuses a stale
   basis, the page refuses what it may not answer, and the answer lands on
   the card and in the resolved history;
@@ -320,15 +320,21 @@ class Orchestrator(unittest.TestCase):
         if not b.wait("document.querySelector('[data-o=\"pause:phase:41\"]')", 10):
             raise bv.CheckFailed("resuming the phase was not shown")
 
-    def test_4_an_adoption_this_board_may_not_make_is_refused_in_words(self):
-        b = visit("/orchestrator/phases?card=41", "document.querySelector('[data-o=\"adopt-phase:41\"]')")
-        double(b, "[data-o='adopt-phase:41']")
-        if not b.wait("document.querySelector('.o-notice.alarm')", 10):
-            raise bv.CheckFailed("a refused adoption said nothing")
-        self.assertTrue(b.eval("document.querySelector('.o-notice.alarm').innerText.trim().length > 10"))
+    def test_4_a_phase_is_its_scopes_with_nothing_to_adopt(self):
+        # task 188: adoption and the phase runner are retired — the panel
+        # offers no adopt or release, and the owner is the phase scope
+        b = visit("/orchestrator/phases?card=41", "document.querySelector('#ophase-41')")
+        self.assertIsNone(b.eval("document.querySelector('[data-o^=\"adopt-phase\"]')"))
+        self.assertIsNone(b.eval("document.querySelector('[data-o^=\"release-phase\"]')"))
+        self.assertNotIn("phase runner", b.eval("document.querySelector('#ophase-41').innerText"))
         entry = next(p for p in api()["schedule"]["phases"]["phases"] if p["card"] == PHASE)
-        self.assertEqual("phase runner", entry["owner"])
-        metric("refusedAdoption", b.eval("document.querySelector('.o-notice.alarm').innerText")[:160])
+        self.assertEqual("phase scope", entry["owner"])
+        code, body = S["backend"].post("/api/orchestration/phase",
+                                       {"card": PHASE, "action": "adopt"},
+                                       headers={"X-Bench-Settings": "1"})
+        self.assertEqual(410, code, body[:300])
+        self.assertEqual("adoption-retired", json.loads(body)["code"])
+        metric("retiredAdoption", json.loads(body)["error"][:160])
 
     # ── 5. answers, bound to what the page read ──────────────────────────
 

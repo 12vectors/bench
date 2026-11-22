@@ -1,10 +1,13 @@
-"""A phase runs itself, on a branch of its own (task 49).
+"""A phase's integration branch and its mechanics (task 49; task 188).
 
-The runner is a beat, not an agent: `phases.advance_all()` is one pass, and
-these cases drive it by hand rather than waiting on a thread. Everything
-under it is real — a real git repo, real worktrees, real headless launches
-through a real (stub) adapter — because what this card is about is the
-arithmetic of branches, and mocking git would be mocking the subject.
+The phase runner that once chose and launched members is retired (task
+188): the Orchestrator's phase scope schedules them, held end to end in
+tests/test_phase_scopes.py. What these cases hold is the mechanics that
+scope rides — the branch cut from main, members branched from its tip,
+merged additively and recorded, main merged in, the one PR — driven by a
+fixture (`PhaseCase.start`/`advance`) that decides nothing a scheduler
+decides. Everything under it is real: a real git repo, real worktrees,
+real headless launches through a real (stub) adapter.
 
     python3 -m unittest discover -s tests -v
 """
@@ -131,6 +134,57 @@ def card(title: str, *, status: str = "Backlog", kind: str | None = None,
     return text
 
 
+def _launch_next(phase_file: str) -> None:
+    phase = phases.cards()[0][phase_file]
+    done = set(phases.merged_members(phase))
+    for listed in phase["members"]:
+        number = taskfiles.canonical_number(listed["number"])
+        stage = taskfiles.find_stage_of(listed["file"])
+        if number in done or stage in ("review", "done"):
+            continue
+        if phases.branch_exists(f"task/{listed['file'][:-3]}"):
+            return                            # started: wait for it
+        if stage != "in-progress":
+            taskfiles.move_task(listed["file"], stage, "in-progress",
+                                actor="phase")
+        agents.start_agent(listed["file"], "in-progress")
+        return
+
+
+def drive_start(phase_file: str) -> None:
+    """Fixture: the phase branch cut and the first member launched, by the
+    mechanics the phase scope rides (task 188) — no scheduling decision."""
+    phases.ensure_branch(phases.cards()[0][phase_file])
+    _launch_next(phase_file)
+
+
+def drive_pass(phase_file: str) -> None:
+    """Fixture: main merged in, every member in review/ merged into the
+    phase branch in list order, then the next member launched or, with all
+    of them in, the phase finished. Raises `phases.Halt` as the mechanics
+    do (a conflict, an unmet member gate)."""
+    phase = phases.cards()[0][phase_file]
+    phases.freshen(phase)
+    done = set(phases.merged_members(phase))
+    for listed in phase["members"]:
+        number = taskfiles.canonical_number(listed["number"])
+        if number in done:
+            continue
+        member = phases.cards()[0][listed["file"]]
+        if member["stage"] != "review":
+            break
+        phases.merge_member(phases.cards()[0][phase_file],
+                            {**member, "number": number})
+        done.add(number)
+    phase = phases.cards()[0][phase_file]
+    if phase["members"] and all(taskfiles.canonical_number(m["number"]) in done
+                                for m in phase["members"]):
+        if phase["stage"] != "review":
+            phases.finish(phase)
+    else:
+        _launch_next(phase_file)
+
+
 class PhaseCase(unittest.TestCase):
     """One repo, one phase card, two members — and an adapter whose
     behaviour each test writes."""
@@ -219,17 +273,27 @@ class PhaseCase(unittest.TestCase):
         self.adapter.write_text(script, encoding="utf-8")
         self.adapter.chmod(self.adapter.stat().st_mode | stat.S_IEXEC)
 
-    # — driving the beat —
+    # — putting a phase where a test needs it —
+    #
+    # The phase runner is retired (task 188); the Orchestrator's phase
+    # scope schedules phases now, and tests/test_phase_scopes.py drives it
+    # end to end. Tests that are about something *after* members are
+    # integrated (merge & clean up's sweep, a member's PR base, its branch
+    # point) need a phase in that state, so these two fixture steps put it
+    # there through the very mechanics the phase scope rides: the branch
+    # cut by `phases.ensure_branch`, each member launched through ▸ start
+    # work's own path, merged by `phases.merge_member` and finished by
+    # `phases.finish`. They decide nothing a scheduler decides.
 
     def start(self) -> dict:
-        snapshot = phases.start_phase(PHASE, "in-progress")
+        drive_start(PHASE)
         self.settle()
-        return snapshot
+        return {}
 
     def advance(self) -> dict:
-        snapshots = phases.advance_all()
+        drive_pass(PHASE)
         self.settle()
-        return snapshots.get(PHASE, {})
+        return {}
 
     def settle(self) -> None:
         """Wait for any agent the pass launched to be fully reaped — the
@@ -316,56 +380,19 @@ class StartingAPhase(PhaseCase):
         self.assertEqual(git(worktree, "branch", "--show-current").stdout.strip(),
                          PHASE_BRANCH)
 
-    def test_the_run_is_recorded_on_the_card(self):
-        self.start()
-        self.assertIn(f"run started on {PHASE_BRANCH}", self.log())
-        self.assertIn("31 started", self.log())
-        self.assertIn("## Phase log", self.text(PHASE))
-
     def test_only_the_first_member_is_launched(self):
         self.start()
         self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"),
                          "sequential: member two waits for member one")
         self.assertEqual(self.stage_of(TWO), "backlog")
 
-    def test_an_empty_phase_refuses_rather_than_leaving_a_branch(self):
-        self.write(PHASE, card("40 — Ship the site", status="In Progress",
-                               kind="Phase", cards=""), "in-progress")
-
-        with self.assertRaises(ValueError) as caught:
+    def test_run_phase_is_retired_and_cuts_nothing(self):
+        # task 188: ▸ run phase refuses, naming the queue action instead
+        with self.assertRaises(phases.Retired) as caught:
             phases.start_phase(PHASE, "in-progress")
-
-        self.assertIn("lists no cards", str(caught.exception))
+        self.assertIn("To Do", str(caught.exception))
         self.assertFalse(self.branch_exists(PHASE_BRANCH))
         self.assertFalse((config.WORKTREES / PHASE[:-3]).exists())
-
-    def test_a_list_that_does_not_resolve_refuses(self):
-        """Drift is an authoring mistake; a runner must not act it out."""
-        self.write_cards(listed="- 31 — Stand up site/\n- 99 — nothing here\n")
-
-        with self.assertRaises(ValueError) as caught:
-            phases.start_phase(PHASE, "in-progress")
-
-        self.assertIn("99", str(caught.exception))
-        self.assertFalse(self.branch_exists(PHASE_BRANCH))
-
-    def test_an_ordinary_card_is_not_a_phase(self):
-        self.write(PHASE, card("40 — Just a card", status="In Progress"),
-                   "in-progress")
-
-        with self.assertRaises(ValueError) as caught:
-            phases.start_phase(PHASE, "in-progress")
-
-        self.assertIn("not a phase", str(caught.exception))
-
-    def test_a_phase_runs_from_in_progress_only(self):
-        self.write(PHASE, card("40 — Ship the site", kind="Phase",
-                               cards="- 31 — Stand up site/\n"), "to-do")
-
-        with self.assertRaises(ValueError) as caught:
-            phases.start_phase(PHASE, "to-do")
-
-        self.assertIn("in-progress", str(caught.exception))
 
 
 class AdvancingOnGreen(PhaseCase):
@@ -412,30 +439,11 @@ class AdvancingOnGreen(PhaseCase):
         self.assertEqual(len(self.merges_on(PHASE_BRANCH)), 2)
         self.assertIn("every card merged — opening the phase PR", self.log())
 
-    def test_the_run_is_over_and_the_beat_leaves_it_alone(self):
-        self.start()
-        self.advance()
-        self.advance()
-        state.BOARD_EVENTS.clear()
-
-        phases.advance_all()
-
-        self.assertEqual(self.summaries(), [],
-                         "a phase card out of in-progress/ is not run any more")
-
 
 class DependenciesGuard(PhaseCase):
-    def test_a_member_waiting_on_an_unfinished_card_is_not_launched(self):
-        self.write_cards(depends="99")
-        self.write("99-something-else.md", card("99 — Something else"))
-        self.start()
-
-        snapshot = self.advance()
-
-        self.assertEqual(snapshot["waitingOn"], ["99"])
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"))
-        self.assertEqual(self.stage_of(TWO), "backlog")
-        self.assertIsNone(snapshot["halted"], "a guard is a wait, not a halt")
+    # Which member may start is the phase scope's `may_start` now (task
+    # 188; tests/test_phase_scopes.py, tests/test_phase_lifecycle.py).
+    # What stays here is that the mechanics resolve numbers one way.
 
     def test_the_same_member_launches_once_the_dependency_is_done(self):
         self.write_cards(depends="99")
@@ -460,10 +468,9 @@ class DependenciesGuard(PhaseCase):
         self.start()
         self.advance()
 
-        self.assertIn("7 started", self.log())
+        self.assertIn(f"7 merged into {PHASE_BRANCH}", self.log())
         self.assertTrue(self.branch_exists("task/07-early"))
-        self.assertTrue(self.branch_exists(f"task/{TWO[:-3]}"),
-                        "the dependency on 07 resolved against member 7")
+        self.assertTrue(self.branch_exists(f"task/{TWO[:-3]}"))
 
     def test_a_dependency_inside_the_phase_counts_as_finished_when_merged(self):
         self.write_cards(depends="31")
@@ -475,104 +482,21 @@ class DependenciesGuard(PhaseCase):
                         "31 is merged into the phase branch — that is finished")
 
 
-class HaltNeverSkip(PhaseCase):
-    def halted(self) -> str:
-        return phases._halt_reason(self.log()) or ""
-
-    def test_a_member_that_declines_halts_the_phase(self):
-        self.adapter_is(DECLINES)
-        self.start()
-
-        self.assertEqual(self.stage_of(ONE), "to-do", "the card walks back")
-        snapshot = self.advance()
-
-        self.assertIn("31:", self.halted())
-        self.assertIn("declined", self.halted())
-        self.assertIsNotNone(snapshot["halted"])
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"),
-                         "no further member starts")
-
-    def test_a_run_that_dies_halts_the_phase(self):
-        self.adapter_is(DIES)
-        self.start()
-
-        self.advance()
-
-        self.assertEqual(self.stage_of(ONE), "in-progress")
-        self.assertIn("without reaching review/", self.halted())
-        self.assertIn("API Error: 500", self.halted())
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"))
-
-    def test_a_clean_run_that_committed_nothing_halts_the_phase(self):
-        self.adapter_is(COMMITS_NOTHING)
-        self.start()
-
-        self.advance()
-
-        self.assertEqual(self.stage_of(ONE), "in-progress")
-        self.assertIn("without reaching review/", self.halted())
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"))
-
-    def test_red_ci_halts_the_phase(self):
-        self.start()
-        changes.PR_STATE[ONE] = {"verdict": "red", "ci": "fail", "url": PR_URL}
-
-        self.advance()
-
-        self.assertIn("CI is red", self.halted())
-        self.assertEqual(self.merges_on(PHASE_BRANCH), [],
-                         "nothing is merged on a red member")
-
-    def test_checks_still_running_is_a_wait_not_a_halt(self):
-        self.start()
-        changes.PR_STATE[ONE] = {"verdict": "pending", "ci": "running", "url": PR_URL}
-
-        snapshot = self.advance()
-
-        self.assertIsNone(snapshot["halted"])
-        self.assertEqual(self.merges_on(PHASE_BRANCH), [])
-
-    def test_a_halt_is_said_once_and_then_held(self):
-        self.adapter_is(DIES)
-        self.start()
-        self.advance()
-        state.BOARD_EVENTS.clear()
-        lines = len(self.log())
-
-        self.advance()
-
-        self.assertEqual(self.summaries(), [], "a halted phase is quiet")
-        self.assertEqual(len(self.log()), lines, "and writes nothing more")
-
-    def test_running_it_again_clears_the_halt_and_carries_on(self):
-        self.adapter_is(DIES)
-        self.start()
-        self.advance()
-        self.assertTrue(self.halted())
-        self.adapter_is(WORKS)
-
-        phases.start_phase(PHASE, "in-progress")
-        self.settle()
-
-        self.assertEqual(self.halted(), "",
-                         "the person's decision to run it again clears the halt")
-        self.assertEqual(self.stage_of(ONE), "review")
-
-
 class ConflictsAreRefused(PhaseCase):
     """The third place in this codebase that merges branches: it aborts
     cleanly, leaves no half-merged branch, and names the collision."""
 
-    def test_a_member_that_collides_with_main_halts_and_leaves_no_mess(self):
+    def test_a_member_that_collides_with_main_is_refused_and_leaves_no_mess(self):
         self.adapter_is(COLLIDES)
         self.start()
         (self.repo / "code.txt").write_text("main moved on\n", encoding="utf-8")
         git(self.repo, "commit", "-q", "-am", "main moved on")
 
-        self.advance()
+        with self.assertRaises(phases.Halt) as caught:
+            self.advance()
 
-        self.assertIn("conflicts", phases._halt_reason(self.log()) or "")
-        self.assertIn("code.txt", phases._halt_reason(self.log()) or "")
+        self.assertIn("conflicts", str(caught.exception))
+        self.assertIn("code.txt", str(caught.exception))
         worktree = config.WORKTREES / PHASE[:-3]
         merge_head = git(worktree, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
         self.assertFalse((worktree / merge_head).is_file() or
@@ -630,141 +554,12 @@ class ARestartResumesByLooking(PhaseCase):
                               if ONE[:-3] in m]), 1)
         self.assertEqual(len([e for e in self.log() if e.startswith("31 merged")]), 1)
 
-    def test_a_started_member_is_not_started_twice(self):
-        """The log is what tells "already run, and it ended badly" from
-        "not reached yet" — without it a restart would relaunch a dead run."""
-        self.adapter_is(DECLINES)
-        self.start()
-        self.restart()
-
-        self.advance()
-
-        self.assertEqual(len([e for e in self.log() if e == "31 started"]), 1)
-        self.assertIn("31:", phases._halt_reason(self.log()) or "")
-
-    def test_a_run_lost_to_a_restart_halts_rather_than_relaunching(self):
-        self.start()
-        # put the card back where a run that never finished would leave it
-        taskfiles.move_task(ONE, "review", "in-progress", actor="tester")
-        self.restart()
-
-        self.advance()
-
-        self.assertIn("without reaching review/", phases._halt_reason(self.log()) or "")
-
-
-class HandMovesDoNotDoubleLaunch(PhaseCase):
-    def test_a_card_moved_by_hand_under_a_running_agent_is_left_alone(self):
-        self.start()
-        state.AGENTS.clear()
-        state.AGENTS["live"] = {"id": "live", "task": TWO, "status": "running",
-                                "started": time.time(), "mode": "work"}
-        taskfiles.move_task(TWO, "backlog", "review", actor="you")
-        state.BOARD_EVENTS.clear()
-
-        snapshot = phases.advance_all()[PHASE]
-
-        self.assertEqual([m["state"] for m in snapshot["members"] if m["file"] == TWO],
-                         ["running"], "an agent is on it — the phase waits")
-        self.assertEqual(len(state.AGENTS), 1, "no second launch on the same task")
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"))
-
-    def test_a_member_finished_before_the_phase_reached_it_needs_no_run(self):
-        self.write(TWO, card("32 — Serve it", status="Done"), "done")
-        (self.tasks / "backlog" / TWO).unlink()
-        self.start()
-
-        self.advance()
-
-        self.assertFalse(self.branch_exists(f"task/{TWO[:-3]}"),
-                         "a card with no branch that is already done is finished")
-        self.assertEqual(self.stage_of(PHASE), "review")
-
-
-class AnUnwritableLogHalts(PhaseCase):
-    """The log is the durable memory a restart reads; a launch or a merge
-    with no line behind it is exactly what a restarted board would repeat.
-    So a log that will not take the line halts before the action it was
-    meant to precede."""
-
-    def test_a_launch_never_outruns_its_record(self):
-        real = phases._write_log
-        self.addCleanup(setattr, phases, "_write_log", real)
-        # the one line that will not write is the member-started record
-        phases._write_log = lambda phase, entry: (
-            False if entry == "31 started" else real(phase, entry))
-
-        self.start()
-
-        self.assertEqual(
-            [r for r in state.AGENTS.values() if r["task"] == ONE], [],
-            "the member was never launched")
-        self.assertNotIn("31 started", self.log())
-        self.assertTrue(any("halted" in s for s in self.summaries()),
-                        "the phase halts instead of launching blind")
-
-
-class OneBoardRunsIt(PhaseCase):
-    """State syncs; reactions don't — the assignee is where "who runs it"
-    is written down, and a replica advances nothing."""
-
-    def setUp(self):
-        super().setUp()
-        self.patch(COMMIT_MOVES=True)
-
-    def test_the_board_that_holds_the_card_runs_it(self):
-        self.start()
-
-        self.assertIn("**Assignee:** tester", self.text(PHASE))
-        self.assertEqual(self.stage_of(ONE), "review")
-
-    def test_someone_elses_phase_advances_nowhere(self):
-        self.write(PHASE, card("40 — Ship the site", status="In Progress",
-                               kind="Phase",
-                               cards="- 31 — Stand up site/\n- 32 — Serve it\n"
-                               ).replace("**Priority:** High",
-                                         "**Priority:** High\n**Assignee:** elena"),
-                   "in-progress")
-        git(self.repo, "checkout", "-q", "-b", "phase/40-ship-the-site")
-        git(self.repo, "checkout", "-q", "main")
-        state.BOARD_EVENTS.clear()
-
-        snapshot = phases.advance_all()[PHASE]
-
-        self.assertEqual(len(state.AGENTS), 0, "a replica launches nothing")
-        self.assertEqual(self.summaries(), [])
-        self.assertEqual([m["state"] for m in snapshot["members"]],
-                         ["pending", "pending"], "but it still renders the phase")
-
-    def test_a_board_with_no_git_identity_is_not_gated_out(self):
-        """Team mode with no local git name is the one case that does not
-        gate: `claim_for_launch` cannot write an assignee there and so
-        cannot refuse a launch, and the beat must match it — else a phase
-        starts (branch cut, run recorded) and then advances nowhere."""
-        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
-        taskfiles.actor_name = lambda: ""
-
-        self.assertTrue(phases._mine({"file": PHASE, "assignee": "elena"}))
-
-    def test_a_named_board_that_is_not_the_assignee_is_gated_out(self):
-        self.addCleanup(setattr, taskfiles, "actor_name", taskfiles.actor_name)
-        taskfiles.actor_name = lambda: "ronald"
-
-        self.assertFalse(phases._mine({"file": PHASE, "assignee": "elena"}))
-
-    def test_starting_someone_elses_phase_refuses_and_names_them(self):
-        self.write(PHASE, card("40 — Ship the site", status="In Progress",
-                               kind="Phase",
-                               cards="- 31 — Stand up site/\n"
-                               ).replace("**Priority:** High",
-                                         "**Priority:** High\n**Assignee:** elena"),
-                   "in-progress")
-
-        with self.assertRaises(ValueError) as caught:
-            phases.start_phase(PHASE, "in-progress")
-
-        self.assertIn("elena holds", str(caught.exception))
-        self.assertFalse(self.branch_exists(PHASE_BRANCH))
+# Halts, the runner's own start/hold refusals, its assignee-gated beat and
+# its launch log were the retired phase runner's (task 188). Their
+# successors are the phase scope's: `may_start`, `movements.eligibility`,
+# the operation ledger and blockers on the card, held in
+# tests/test_phase_scopes.py, tests/test_phase_lifecycle.py and
+# tests/test_phase_queue.py.
 
 
 class ThePhasePR(PhaseCase):

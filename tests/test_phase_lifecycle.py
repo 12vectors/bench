@@ -177,31 +177,52 @@ class OneOwnerOneLifecycle(PhaseSandbox):
         self.assertEqual(life["word"], self.projected()["lifecycle"]["word"],
                          "API state and the Orchestrator agree")
 
-    def test_legacy_and_named_but_not_adopted(self):
+    def test_unnamed_and_unadopted_phases_are_their_scopes(self):
+        # task 188: no phase runner, no adoption, no per-phase setting
         self.put_in_force(agreement())
+        self.own_execution()
         self.phase(mode="legacy")
         life = self.life()
-        self.assertEqual(("phase runner", "not-configured"),
-                         (life["owner"], life["word"]))
-        self.put_in_force(self.doc())
-        life = self.life()
-        self.assertEqual(("phase runner", "not-adopted"), (life["owner"], life["word"]))
-        self.assertTrue(life["adoptable"])
-        self.assertIn("adopt it in Orchestrator", life["next"]["text"])
+        self.assertEqual("phase scope", life["owner"])
+        self.assertTrue(life["adopted"])
+        self.assertFalse(life["named"], "the agreement names no entry for it")
+        self.assertEqual("ready", life["word"])
 
-    def test_prepared_with_every_member_in_backlog(self):
+    def test_orchestration_off_says_why_queued_work_waits(self):
+        self.phase()
+        life = self.life()
+        self.assertEqual("orchestration-off", life["word"])
+        self.assertIn("no operating agreement", life["line"])
+
+    def test_a_phase_in_backlog_queues_nothing(self):
+        self.put_in_force(self.doc())
+        self.own_execution()
+        self.phase(stages=("backlog", "backlog"), phase_stage="backlog")
+        life = self.life()
+        self.assertEqual("not-queued", life["word"])
+        self.assertIn("move the phase card into To Do", life["next"]["text"])
+        self.tick()
+        self.assertEqual([], self.launch.calls)
+
+    def test_queued_phase_starts_its_backlog_members_in_turn(self):
+        # moving the phase card is the one queue action: members stored in
+        # Backlog inherit it and start in their turn, with no member moves
         self.put_in_force(self.doc())
         self.own_execution()
         self.phase(stages=("backlog", "backlog"))
-        life = self.life()
-        self.assertEqual("queue-needed", life["word"])
-        self.assertIn("#11 is next and is in Backlog", life["line"])
-        self.assertEqual("move #11 into To Do to queue it", life["next"]["text"])
-        self.assertEqual(["in-backlog", "in-backlog"],
-                         [r["state"] for r in self.projected()["members"]],
-                         "a Backlog member is never called ready")
+        rows = {r["card"]: r for r in self.life()["members"]}
+        self.assertTrue(rows["11-card.md"]["inherited"])
+        self.assertEqual("to-do", rows["11-card.md"]["effective"])
+        self.assertEqual("backlog", rows["11-card.md"]["stage"])
+        self.assertIn("queued with its phase", rows["11-card.md"]["why"])
+        self.assertEqual("waiting-integration", self.item("12-card.md")["code"])
         self.tick()
-        self.assertEqual([], self.launch.calls, "nothing pulled out of Backlog")
+        self.assertEqual([("11-card.md", "in-progress")], self.launch.calls)
+        self.assertIn(("11-card.md", "backlog", "in-progress", "orchestrator"),
+                      self.board.moves, "its launch is the move, made by the "
+                      "board, from the stage it was stored in")
+        self.assertEqual("backlog", self.board.cards["12-card.md"]["stage"],
+                         "a member whose turn has not come is not moved")
 
     def test_before_the_branch_is_cut_it_is_preparing(self):
         self.put_in_force(self.doc())

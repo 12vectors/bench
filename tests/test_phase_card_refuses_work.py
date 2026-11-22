@@ -108,7 +108,7 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
         with self.assertRaises(ValueError) as caught:
             agents.start_agent(PHASE, "in-progress")
 
-        self.assertIn("▸ run phase", str(caught.exception))
+        self.assertIn("queued by moving it into To Do", str(caught.exception))
         self.assertIn("phase card", str(caught.exception))
 
     def test_the_refusal_leaves_nothing_behind(self):
@@ -141,7 +141,7 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
         with self.assertRaises(ValueError) as caught:
             agents.start_agent(PHASE, "in-progress", takeover=True)
 
-        self.assertIn("▸ run phase", str(caught.exception))
+        self.assertIn("queued by moving it into To Do", str(caught.exception))
         self.assertNotIn("**Assignee:**", self.text(PHASE))
 
     def test_a_phase_card_with_no_list_yet_is_still_a_phase_card(self):
@@ -153,7 +153,7 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
         with self.assertRaises(ValueError) as caught:
             agents.start_agent(ALONE, "in-progress")
 
-        self.assertIn("▸ run phase", str(caught.exception))
+        self.assertIn("queued by moving it into To Do", str(caught.exception))
 
     def test_an_ordinary_card_starts_work_exactly_as_it_did(self):
         self.ordinary()
@@ -177,7 +177,8 @@ class TheWorkAgentRefusesAPhaseCard(LaunchCase):
             phases.start_phase(ALONE, "in-progress")
 
         self.assertIn("phase card", str(work.exception))
-        self.assertIn("not a phase", str(run.exception))
+        # task 188: the phase door itself is retired, and says so
+        self.assertIsInstance(run.exception, phases.Retired)
         self.assertEqual(state.AGENTS, {})
         self.assertFalse(self.branch_exists(f"phase/{ALONE[:-3]}"))
 
@@ -295,7 +296,9 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
     exactly like one mid-run. These run the page's own function over the
     snapshots the server sends."""
 
-    PARTS = (r"function phaseProgress\(p\) \{.*?\n\}",
+    PARTS = (r"const SCOPED_ALARM = .*?;",
+             r"const SCOPED_QUIET = .*?;",
+             r"function scopedFlight\(life\) \{.*?\n\}",
              r"function phaseFlight\(task\) \{.*?\n\}")
 
     @classmethod
@@ -311,60 +314,60 @@ class TheCardSaysWhichStateItIsIn(unittest.TestCase):
         cls.card_fn = re.search(r"function cardSpec\(task\) \{.*?\nfunction mountCard\(spec\) \{.*?\n\}",
                                 cls.html, re.S).group(0)
 
-    def flight(self, snapshot: dict | None, stage: str = "in-progress") -> object:
+    def flight(self, life: dict | None, stage: str = "in-progress") -> object:
+        # task 188: the face is the server's lifecycle reading, word for
+        # word — there is no runner snapshot to read any more
         task = {"file": PHASE, "stage": stage, "isPhase": True}
-        script = (self.src + "\nvar S = { state: { phases: "
-                  + json.dumps({PHASE: snapshot} if snapshot else {})
+        script = (self.src + "\nvar S = { state: { phaseLifecycle: "
+                  + json.dumps({PHASE: life} if life else {})
                   + " } };\nconsole.log(JSON.stringify(phaseFlight("
                   + json.dumps(task) + ")));\n")
         out = subprocess.run([NODE, "-e", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)
 
-    def snapshot(self, **extra) -> dict:
-        return {"file": PHASE, "members": [], "halted": None, "haltedAt": None,
-                "haltedWhy": None, "running": False, "stopped": False,
-                "started": False, **extra}
+    @staticmethod
+    def life(word: str, label: str, line: str, who: str = "you",
+             step: str | None = None) -> dict:
+        return {"word": word, "label": label, "line": line, "owner": "phase scope",
+                "next": {"who": who, "text": step} if step else None}
 
-    def test_a_phase_nobody_has_started_says_so(self):
-        flight = self.flight(self.snapshot())
+    def test_a_phase_nobody_has_queued_says_so(self):
+        flight = self.flight(self.life(
+            "not-queued", "Not queued", "in Backlog: neither the phase nor its "
+            "members are queued", step="move the phase card into To Do"))
 
         self.assertTrue(flight["idle"], "nothing is happening, so nothing breathes")
-        self.assertEqual(flight["pill"], "not started")
-        self.assertIn("▸ run phase", flight["line"])
+        self.assertEqual(flight["pill"], "not queued")
+        self.assertIn("move the phase card into To Do", flight["line"])
+        self.assertNotIn("run phase", flight["line"])
 
-    def test_a_held_phase_is_its_own_state(self):
-        flight = self.flight(self.snapshot(started=True, stopped=True))
-
-        self.assertTrue(flight["idle"])
-        self.assertEqual(flight["pill"], "held")
-
-    def test_a_running_phase_is_unchanged(self):
-        flight = self.flight(self.snapshot(
-            started=True, running=True,
-            members=[{"number": "31", "file": ONE, "title": "Stand up site/",
-                      "state": "running"}]))
+    def test_a_working_phase_keeps_the_accent(self):
+        flight = self.flight(self.life("working", "Working", "on #31 — Stand up site/",
+                                       who="agent", step="integrates it"))
 
         self.assertFalse(flight.get("idle"), "a run is work: it keeps the accent")
+        self.assertFalse(flight.get("bad"))
         self.assertIn("on #31", flight["line"])
 
-    def test_a_halted_phase_is_unchanged(self):
-        flight = self.flight(self.snapshot(started=True, halted="31: its CI is red",
-                                           haltedAt="31", haltedWhy="its CI is red"))
+    def test_an_upgrade_hold_is_an_alarm(self):
+        flight = self.flight(self.life("migrating", "Held by the upgrade",
+                                       "held by the upgrade", step="resume it"))
 
         self.assertTrue(flight["bad"])
         self.assertFalse(flight.get("idle"))
 
-    def test_a_phase_the_runner_has_not_read_says_nothing(self):
-        """Before the first beat there is no snapshot, and a card that
-        guessed would be worse than one that waits."""
+    def test_a_phase_with_no_reading_says_nothing(self):
+        """No lifecycle reading arrived: a card that guessed would be worse
+        than one that waits."""
         self.assertIsNone(self.flight(None))
 
-    def test_a_settled_phase_card_is_not_told_it_never_started(self):
-        """review/ and done/ are past the question — the card there is
-        waiting on a person, which its stage already says."""
-        self.assertIsNone(self.flight(self.snapshot(started=True), stage="review"))
-        self.assertIsNone(self.flight(self.snapshot(started=True), stage="done"))
+    def test_a_settled_phase_card_is_not_told_anything_more(self):
+        """review/ and done/ are past the question — their delivery status
+        speaks."""
+        self.assertIsNone(self.flight(self.life(
+            "integration-review", "Integration review", "x", who="board")))
+        self.assertIsNone(self.flight(self.life("delivered", "Delivered", "x")))
 
     def test_idle_wears_the_settled_register_and_never_the_accent(self):
         block = re.search(r"if \(!promoted && flight && flight\.idle\) \{.*?\n  \}",
@@ -402,7 +405,8 @@ class TheDocumentedGuard(unittest.TestCase):
 
     def test_the_refusal_is_written_down_with_the_action_it_names(self):
         self.assertIn("It also refuses a phase card", self.flat)
-        self.assertIn("the refusal names ▸ run phase", self.flat)
+        self.assertIn("the refusal says it is queued by moving it into To Do",
+                      self.flat)
 
     def test_the_kinds_a_phase_card_may_host_are_named(self):
         self.assertIn("▸ start work refuses it", self.flat)
@@ -411,8 +415,8 @@ class TheDocumentedGuard(unittest.TestCase):
                       self.flat)
         self.assertIn("◔ still true? and ◔ review PR", self.flat)
 
-    def test_the_unstarted_card_is_described(self):
-        self.assertIn("`not started`", self.doc)
+    def test_the_unqueued_card_is_described(self):
+        self.assertIn("`not-queued`", self.doc)
 
 
 if __name__ == "__main__":

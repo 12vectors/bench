@@ -19,7 +19,7 @@ task files, but the tasks work as a plain folder kanban without it. See
     verify.py     named checks bench runs itself, and the evidence they leave
     doctor.py     what this board would grant, run and refuse — no model
     agents.py     headless work/review agents: launch, reap, stop, diff
-    phases.py     a phase run: its own branch, its members merged into it
+    phases.py     a phase's branch and log: the mechanics its scope rides
     refine.py     card comments, refinement jobs, Apply and Discard
     reasoning.py  orchestrator reasoning jobs: pinned context, one public response
     coordinate.py a review card's checks, independent review, repair and merge
@@ -90,8 +90,8 @@ import httpd
 import inputs  # noqa: F401
 import operations  # noqa: F401
 import orchestrator  # noqa: F401
-import phases
-import phasescope  # noqa: F401
+import phases  # noqa: F401
+import phasescope
 import plans  # noqa: F401
 import previews
 import profiles  # noqa: F401
@@ -290,7 +290,14 @@ def main() -> None:
     threading.Thread(target=watch.watcher, daemon=True).start()
     threading.Thread(target=changes.poller, daemon=True).start()
     threading.Thread(target=changes.reconcile, daemon=True).start()
-    threading.Thread(target=phases.beat, daemon=True).start()
+    # Task 188: no phase runner beat — the Orchestrator owns every phase.
+    # The one-time move to the unified phase model runs here, before any
+    # pass, and again at the start of every pass until nothing is held.
+    try:
+        phasescope.migrate_model()
+    except Exception as exc:     # noqa: BLE001 — a start never dies of it
+        print(f"bench: the unified phase model migration did not finish "
+              f"({type(exc).__name__}); it is retried on the next pass")
     # What the host and the other checks were doing while each verification
     # ran (task 179): a diagnostic sidecar beside the evidence, never part
     # of a verdict. Silent while nothing is being verified.

@@ -68,7 +68,9 @@ class StateSummary(ts.Sandbox):
         # backlog is never managed, so it is not listed
         self.assertNotIn("10-card.md", cards)
         self.assertEqual(cards["21-card.md"]["scope"], "phase:20")
-        self.assertEqual(cards["31-card.md"], {"scope": None, "why": "legacy-phase",
+        # task 188: a phase the agreement does not name is its implicit
+        # scope's, never the retired runner's
+        self.assertEqual(cards["31-card.md"], {"scope": "phase:30", "why": None,
                                                "manual": None})
         phase = next(s for s in found["scopes"] if s["id"] == "phase:20")
         self.assertTrue(phase["paused"])

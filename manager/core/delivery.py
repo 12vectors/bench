@@ -168,8 +168,6 @@ ACTIONS = {
     "start": {"handler": "/api/agent/start", "kind": "api", "arm": True},
     "takeover": {"handler": "/api/agent/start", "kind": "api", "arm": True},
     "hold": {"handler": "/api/agent/stop", "kind": "api", "arm": True},
-    "run-phase": {"handler": "/api/phase/run", "kind": "api", "arm": True},
-    "hold-phase": {"handler": "/api/phase/stop", "kind": "api", "arm": True},
     "act-pr": {"handler": "/api/agent/act-pr", "kind": "api", "arm": True},
     "review-pr": {"handler": "/api/agent/review-pr", "kind": "api",
                   "arm": True},
@@ -767,8 +765,9 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
 
     def start_action() -> dict:
         if is_phase:
-            return action("run-phase",
-                          "▸ take over" if others_hold else "▸ run phase")
+            # task 188: a phase is not started by a person's launch; it is
+            # queued by its move into To Do and the Orchestrator owns it
+            return action("phases", "⟶ phases")
         if others_hold:
             return action("takeover", "▸ take over")
         return action("start", "▸ start work")
@@ -830,7 +829,10 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
             sentence += " Checks are running."
         return ("agent-working", sentence, None, [hold])
 
-    # 5. a phase card is running a member
+    # 5. a phase card is running a member. Since task 188 no core module
+    # fills `phases.SNAPSHOTS` (the retired runner's pass did), so this row
+    # and the `halted` one below read nothing on a running board; they stay
+    # only while the vocabulary keeps `phase-running`.
     snap = ctx["phases"].get(filename) or {}
     if is_phase and snap.get("running"):
         working = next((m for m in snap.get("members") or []
@@ -838,7 +840,7 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
         sentence = "The phase is running" + (
             f" — #{working['number']} is in flight." if working else ".")
         return ("phase-running", sentence, None,
-                [action("hold-phase", "‖ hold")])
+                [action("phases", "⟶ phases")])
 
     # 6. backlog / to-do
     if stage in ("backlog", "to-do"):
@@ -858,6 +860,17 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
                     "on this board.", check or move,
                     [move] if check else [])
         word = "not-started" if stage == "backlog" else "queued"
+        if is_phase:
+            # task 188: the phase card's move into To Do is the one queue
+            # action for the phase and all its unfinished members
+            if stage == "backlog":
+                return (word, "Move it to To Do to queue the phase and every "
+                              "unfinished member, Backlog ones included.",
+                        action("move", "Move to To Do", to="to-do"), [])
+            return (word, "Queued with its members: the Orchestrator moves it "
+                          "into In Progress, cuts its branch and starts each "
+                          "member in its turn.", action("phases", "⟶ phases"),
+                    [])
         if state_ == "delivered":
             return (word, f"Not started — an earlier implementation was "
                           f"delivered at {here}.", move, [])
@@ -877,8 +890,7 @@ def _decide(*, task, ctx, candidate, decision, requirements, alive,
         if is_phase and snap.get("halted"):
             return ("run-failed",
                     f"The phase halted: {snap.get('halted')}",
-                    action("phases", "⟶ phases"),
-                    [action("hold-phase", "‖ hold")])
+                    action("phases", "⟶ phases"), [])
         if problem and not is_phase:
             word, sentence = problem
             return (word, sentence, start_action(),
