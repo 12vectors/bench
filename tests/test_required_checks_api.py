@@ -36,7 +36,9 @@ FLAGGED = """import os, sys, time
 name = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 flag = open(os.path.join(here, name + ".flag")).read().strip()
-open(os.path.join(here, name + ".count"), "a").write("ran\\n")
+# bench names each run's TMPDIR after its evidence id: the line says which run
+run = os.path.basename(os.environ.get("TMPDIR", ""))
+open(os.path.join(here, name + ".count"), "a").write("ran " + run + "\\n")
 if flag == "hang":
     for _ in range(600):
         if os.path.exists(os.path.join(here, "release")):
@@ -46,7 +48,8 @@ sys.exit(1 if flag == "fail" else 0)
 """
 
 
-class RequiredChecksOverTheApi(unittest.TestCase):
+class RequiredChecksFixture(unittest.TestCase):
+    """One disposable board per concrete class; it holds no test itself."""
 
     @classmethod
     def setUpClass(cls):
@@ -85,6 +88,7 @@ class RequiredChecksOverTheApi(unittest.TestCase):
             "**Priority:** Low\n\nA disposable card for task 101.\n",
             encoding="utf-8")
         try:
+            cls.instrument()
             backend.start()
         except Exception:
             cls.tearDownClass()
@@ -92,9 +96,15 @@ class RequiredChecksOverTheApi(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        (cls.dir / "release").write_text("go", encoding="utf-8")
-        cls.backend.stop()
-        shutil.rmtree(cls.tmp, True)
+        try:
+            (cls.dir / "release").write_text("go", encoding="utf-8")
+            cls.backend.stop()
+        finally:
+            shutil.rmtree(cls.tmp, True)
+
+    @classmethod
+    def instrument(cls) -> None:
+        """A subclass may change its own copied runtime before it starts."""
 
     @classmethod
     def flag(cls, name: str, value: str) -> None:
@@ -158,6 +168,47 @@ class RequiredChecksOverTheApi(unittest.TestCase):
         found = self.get(f"/api/evidence?file={FILE}&stage=review")
         return [(e["check"], e["outcome"]) for e in found.get("evidence") or []]
 
+    def head(self) -> str:
+        return benchverify._git(self.tree, "rev-parse", "HEAD").stdout.decode().strip()
+
+    def record(self, run: str) -> dict | None:
+        """The evidence as persisted, which is what a restart recovers."""
+        path = self.backend.tool / "manager" / "local" / "state" / "evidence" / f"{run}.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+
+    def running_child(self, name: str, prior: int, head: str) -> dict | None:
+        """The record of a child started after the first `prior` invocations,
+        if that run is persisted as running and bound to exactly `head`."""
+        try:
+            lines = (self.dir / f"{name}.count").read_text().splitlines()
+        except OSError:
+            return None
+        if len(lines) <= prior:
+            return None
+        found = self.record(lines[prior].removeprefix("ran ")) or {}
+        source = found.get("source") or {}
+        if found.get("outcome") == "running" and source.get("bound") \
+                and source.get("commit") == head:
+            return found
+        return None
+
+    def wait_for_child(self, name: str, prior: int, head: str,
+                       timeout: float = 60) -> dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            found = self.running_child(name, prior, head)
+            if found is not None:
+                return found
+            time.sleep(0.02)
+        self.fail(f"no new '{name}' child running on {head} after "
+                  f"{prior} earlier invocations ({self.runs(name)} now)")
+
+
+class RequiredChecksOverTheApi(RequiredChecksFixture):
+
     def test_the_whole_journey(self):
         # 1. reading runs nothing
         plan = self.plan()
@@ -199,8 +250,12 @@ class RequiredChecksOverTheApi(unittest.TestCase):
         self.flag("deps", "pass")
         self.flag("unit", "hang")
         self.commit("a newer commit\n")
+        head, prior = self.head(), self.runs("unit")
         self.fire()
         self.until(lambda b: (b.get("items") or [{}])[0].get("live") == "running")
+        # `live` is published before the source is bound: this restart is
+        # about a check that is executing, so wait for that child.
+        self.wait_for_child("unit", prior, head)
         before = {n: self.runs(n) for n in ("unit", "build", "lint")}
         self.backend.stop()
         self.backend.start(timeout=120)
@@ -221,6 +276,104 @@ class RequiredChecksOverTheApi(unittest.TestCase):
         done = self.until(lambda b: b.get("state") == "finished")
         self.assertEqual({"passed"}, {i["state"] for i in done["items"]})
         self.assertEqual(0, self.runs("extra"), "the optional check never ran")
+
+
+class HeldBeforeTheSourceIsBound(RequiredChecksFixture):
+    """Holds a run between its published `running` shell and its source
+    binding, by a barrier in this fixture's copied verify.py only."""
+
+    NEEDLE = '    record["source"] = resultidentity.source_identity(root)'
+
+    @classmethod
+    def instrument(cls) -> None:
+        cls.arm, cls.reached = cls.tmp / "hold-arm", cls.tmp / "hold-reached"
+        target = cls.backend.tool / "manager" / "core" / "verify.py"
+        source = target.read_text(encoding="utf-8")
+        if source.count(cls.NEEDLE) != 1:
+            raise AssertionError("the source-binding line is not where the barrier goes")
+        barrier = (
+            f"    if Path({str(cls.arm)!r}).exists():\n"
+            f"        Path({str(cls.reached)!r}).write_text(evidence.slug(record['id']))\n"
+            "        _until = time.monotonic() + 60\n"
+            f"        while Path({str(cls.arm)!r}).exists():\n"
+            "            if time.monotonic() > _until:\n"
+            "                raise RuntimeError('test barrier timed out')\n"
+            "            time.sleep(0.02)\n")
+        target.write_text(source.replace(cls.NEEDLE, barrier + cls.NEEDLE),
+                          encoding="utf-8")
+
+    def fire_and_hold(self) -> dict:
+        self.reached.unlink(missing_ok=True)
+        self.arm.write_text("held", encoding="utf-8")
+        self.addCleanup(self.arm.unlink, missing_ok=True)
+        self.fire()
+        self.until(lambda b: (b.get("items") or [{}])[0].get("live") == "running"
+                   and self.reached.exists() and self.reached.read_text() != "")
+        held = self.record(self.reached.read_text())
+        self.assertEqual("running", held["outcome"])
+        self.assertIsNone(held.get("source"))
+        return held
+
+
+class TheRestartWaitWaitsForTheChild(HeldBeforeTheSourceIsBound):
+
+    def test_a_published_shell_is_not_an_executing_child(self):
+        self.fire()
+        self.assertEqual({"passed"}, {i["state"] for i in self.until(
+            lambda b: b.get("state") == "finished")["items"]})
+        prior = self.runs("unit")
+        self.flag("unit", "hang")
+        self.commit("a newer commit\n")
+        head = self.head()
+
+        held = self.fire_and_hold()
+        self.assertIsNone(self.running_child("unit", prior, head))
+        self.assertEqual(prior, self.runs("unit"))
+
+        self.arm.unlink()
+        child = self.wait_for_child("unit", prior, head)
+        self.assertEqual(held["id"], child["id"])
+        self.assertEqual(head, child["source"]["commit"])
+        self.assertEqual(prior + 1, self.runs("unit"))
+
+        (self.dir / "release").write_text("go", encoding="utf-8")
+        self.flag("unit", "pass")
+        done = self.until(lambda b: b.get("state") == "finished")
+        self.assertEqual({"passed"}, {i["state"] for i in done["items"]})
+
+
+class ARestartBeforeTheSourceIsBound(HeldBeforeTheSourceIsBound):
+
+    def test_fails_closed_and_recovers_only_when_asked(self):
+        names = ("unit", "build", "lint", "extra")
+        self.fire_and_hold()
+        run = self.reached.read_text()
+        # Stopped before the barrier opens, so the held run can never go on.
+        self.backend.stop()
+        self.arm.unlink()
+        self.backend.start(timeout=120)
+
+        plan = self.plan()
+        self.assertEqual("stopped", plan["batch"]["state"])
+        self.assertEqual("board-restart", plan["batch"]["stop"])
+        self.assertEqual("error", self.item(plan["batch"], "unit")["state"])
+        closed = self.record(run)
+        self.assertEqual(("error", "board-restart"),
+                         (closed["outcome"], closed["reason"]))
+        self.assertIsNone(closed.get("source"), "no commit is invented for it")
+        row = next(i for i in plan["items"] if i["check"] == "unit")
+        self.assertEqual("request", row["state"])
+        primary = self.get("/api/state")["delivery"][FILE]["primary"]
+        self.assertEqual("run-required-checks", primary["action"])
+        self.assertTrue(primary["enabled"])
+        self.assertEqual({n: 0 for n in names}, {n: self.runs(n) for n in names},
+                         "nothing ran, and nothing was retried by itself")
+
+        self.fire()
+        done = self.until(lambda b: b.get("state") == "finished")
+        self.assertEqual({"passed"}, {i["state"] for i in done["items"]})
+        self.assertEqual({"unit": 1, "build": 1, "lint": 1, "extra": 0},
+                         {n: self.runs(n) for n in names})
 
 
 if __name__ == "__main__":
