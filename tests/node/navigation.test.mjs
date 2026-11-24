@@ -62,6 +62,23 @@ test('Sessions and Focus addresses carry an optional card context, and format ba
     { view: 'flight', invalid: 'ctx', raw: '../x' });
 });
 
+test('Seed Brain has one address and remembers where it was opened from (task 192)', async () => {
+  const { parseRoute, formatRoute, routeOf } = await load('lib/route.js');
+  assert.deepEqual(parseRoute(at('/brain/seed')), { view: 'brain', seed: 'brain' });
+  assert.deepEqual(parseRoute(at('/brain/seed', '?from=setup')), { view: 'brain', seed: 'setup' });
+  assert.equal(formatRoute({ view: 'brain', seed: 'brain' }), '/brain/seed');
+  assert.equal(formatRoute({ view: 'brain', seed: 'setup' }), '/brain/seed?from=setup');
+  // an origin it does not know is the Brain's, corrected in place
+  assert.deepEqual(parseRoute(at('/brain/seed', '?from=elsewhere')),
+    { view: 'brain', seed: 'brain', alias: true });
+  // no second segment is a seed page
+  assert.equal(parseRoute(at('/brain/seed/x')).invalid, 'entry');
+  assert.deepEqual(routeOf({ view: 'brain', brainSeed: 'setup', state: STATE }),
+    { view: 'brain', seed: 'setup' });
+  // the entry and review addresses read exactly as before
+  assert.deepEqual(parseRoute(at('/brain/e/e-one')), { view: 'brain', entry: 'e-one' });
+});
+
 test('routeOf keeps the activity context only on Sessions and Focus', async () => {
   const { routeOf } = await load('lib/route.js');
   const base = { view: 'flight', flightSid: 's-1', activityCtx: '50', state: STATE };

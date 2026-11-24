@@ -9,6 +9,7 @@
   "views/board.js -> views/focus.js": 1,
   "views/board.js -> views/frame.js": 1,
   "views/board.js -> views/profile.js": 1,
+  "views/brain.js -> views/seed.js": 4,
   "views/card.js -> app/data.js": 8,
   "views/card.js -> views/activity.js": 2,
   "views/card.js -> views/board.js": 8,

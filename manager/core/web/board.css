@@ -2110,6 +2110,42 @@
   .b-main a:focus-visible,.b-main button:focus-visible,.b-main summary:focus-visible{
     outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
   .b-back{margin:0}
+  /* seeding the Brain (task 192): the inventory, the planned reads and the
+     inspection's manifest. Paths are machine words, so they are mono and
+     wrap anywhere rather than pushing the page sideways */
+  .sd-facts{display:grid;grid-template-columns:minmax(90px,max-content) minmax(0,1fr);gap:6px 14px;margin:0}
+  .sd-facts dt{color:var(--dim)}
+  .sd-facts dd{margin:0;overflow-wrap:anywhere}
+  .sd-path{font-family:var(--mono);font-size:12.5px;overflow-wrap:anywhere;word-break:break-word}
+  .sd-root{margin:12px 0 6px;font-size:13.5px;font-weight:600}
+  .sd-list{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .sd-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 0;min-height:32px}
+  .sd-row input[type=checkbox]{width:20px;height:20px;margin:0;flex:none}
+  .sd-row label{cursor:pointer;min-width:0}
+  .sd-off{opacity:.85;display:block}
+  .sd-planned .sd-row{border-top:1px solid var(--border-soft);padding:6px 0}
+  .sd-ctl{display:inline-flex;gap:6px;align-items:center;margin-left:auto}
+  .sd-ctl select,.sd-ctl input,.b-main #sd-filter,.b-main #sd-exclude{min-height:32px;font:inherit;
+    color:var(--text);background:var(--sunken);border:1px solid var(--border);border-radius:6px;padding:2px 8px}
+  .b-main #sd-exclude{width:100%;max-width:60ch;box-sizing:border-box;font-family:var(--mono);font-size:12.5px}
+  .b-main #sd-filter{width:min(40ch,100%);box-sizing:border-box}
+  .sd-cat{border-top:1px solid var(--border-soft);padding:4px 0}
+  .sd-cat>summary,.sd-excl>summary,.sd-treat>summary,.sd-json>summary{cursor:pointer;min-height:32px;
+    display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .sd-sections li{display:block;padding:3px 0}
+  .sd-problems{margin:6px 0;padding-left:18px;display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere}
+  .sd-acts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+  .sd-table{overflow-x:auto;max-width:100%}
+  .sd-table table{border-collapse:collapse;font-size:12.5px;width:100%}
+  .sd-table th,.sd-table td{text-align:left;padding:4px 8px;border-top:1px solid var(--border-soft);vertical-align:top}
+  .sd-pre{max-height:360px;overflow:auto;background:var(--sunken);padding:8px;border-radius:6px;
+    font:12px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+  @media (max-width:760px){
+    .sd-facts{grid-template-columns:minmax(0,1fr)}
+    .sd-ctl{margin-left:0;width:100%}
+    .sd-row input[type=checkbox]{width:24px;height:24px}
+    .sd-row{min-height:44px}
+  }
   .b-permalink{margin:4px 0 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:var(--muted)}
   .b-permalink .mono{overflow-wrap:anywhere}
   /* a review filed on a card (task 168): whether its assessment still
