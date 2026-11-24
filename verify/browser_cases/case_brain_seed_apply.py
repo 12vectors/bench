@@ -95,7 +95,9 @@ class SeedApply(unittest.TestCase):
         cond = " && ".join(f"(document.querySelector({json.dumps(sel)})?.innerText || '')"
                            f".includes({json.dumps(w)})" for w in words)
         if not b.wait(cond, timeout):
-            raise bv.CheckFailed(f"never showed {words}: {self.text(b, sel)[:1800]}")
+            # one line, so the summary bench keeps names the reason
+            raise bv.CheckFailed(f"never showed {words} in {sel}: "
+                                 f"{self.text(b, sel)[:600]!r}")
 
     def theme(self, b, dark):
         b.eval(f"S.dark = {str(dark).lower()}; applyTheme(); true")
@@ -162,19 +164,24 @@ class SeedApply(unittest.TestCase):
                       "[data-sfield=\"selected\"]').checked && "
                       "(document.querySelector('#bshell [data-sact=\"apply\"]')?.innerText || '')"
                       ".includes('Apply 3 sections')", 10):
-            raise bv.CheckFailed("deselecting did not reach the review: "
-                                 + self.text(b, "#bshell #sd-review")[:1500])
+            raise bv.CheckFailed("deselecting did not reach the review; the Apply button reads "
+                                 + repr(self.text(b, '#bshell [data-sact="apply"]')))
         b.eval("(() => { const f = document.querySelector('#bshell [data-schoice=\"overview\"]"
                "[data-sfield=\"title\"]'); f.focus(); f.value = 'Orchard, briefly';"
                " f.dispatchEvent(new Event('input', {bubbles: true}));"
                " f.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
-        self.wait_text(b, ["Orchard, briefly"], "#bshell #sd-review")
+        # the new title reaches what Apply would write — inside the folded
+        # "What would be written", so read its text content, not innerText
+        if not b.wait("(document.querySelector('#bshell #sd-review')?.textContent || '')"
+                      ".includes('# Orchard, briefly')", 15):
+            raise bv.CheckFailed("the edited title never reached the review")
         b.wait("!document.querySelector('#bshell [data-sact=\"apply\"]').disabled", 10)
         self.press(b, '#bshell [data-sact="apply"]')
         b.key("Enter")
         if not b.wait("document.querySelector('#bshell [data-sact=\"apply\"]')"
                       "?.classList.contains('armed')", 5):
-            raise bv.CheckFailed("Apply did not arm: " + self.text(b, "#bshell #sd-review")[:900])
+            raise bv.CheckFailed("Apply did not arm; it reads "
+                                 + repr(self.text(b, '#bshell [data-sact="apply"]')))
         self.assertFalse((self.backend.work / "brain").exists(), "arming wrote the Brain")
         shot("brain-seed-apply-armed-day")
         self.press(b, '#bshell [data-sact="apply"]')
