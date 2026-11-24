@@ -14,11 +14,22 @@
    applying it are later steps, said as not available here rather than
    drawn as controls that do nothing.
 
+   Step two (task 193) follows an inspection: **Review what generation
+   would use** asks the board (`POST /api/brain/seed/preflight`, a read)
+   for the harness, model, profile, exact reads, capabilities, budget and
+   the approval digest; **Generate draft** — armed, then fired — sends that
+   approval (`POST /api/brain/seed/generate`) and the private draft's
+   progress, questions and sections are read back from
+   `/api/brain/drafts`. Continue, Cancel and Discard are the drafting
+   routes. Nothing here applies a draft: that is the next step (#194).
+
    Every string from the server — paths above all, which name files in
-   somebody else's repository — goes through `esc`. */
+   somebody else's repository — goes through `esc`, and drafted Markdown
+   through the page's own safe renderer. */
 import { S } from '../app/state.js';
 import { fetch, post } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
+import { md } from '../lib/md.js';
 
 const ROOT_WORDS = { app: 'Application', work: 'Work repository' };
 const STATE_WORDS = { read: 'Read', absent: 'Absent', inaccessible: 'Inaccessible',
@@ -29,7 +40,10 @@ const GIT_WORDS = { committed: 'as committed', modified: 'modified, not committe
 // the page's one seed session: kept across repaints and a visit elsewhere
 // in the Brain, dropped by nothing but a reload or a fresh reading
 const sd = { slot: null, loading: false, picked: null, exclude: '', sections: null,
-  filter: '', busy: false, result: null, error: null, gen: 0 };
+  filter: '', busy: false, result: null, error: null, gen: 0,
+  // step two: the preflight shown, the armed Generate, the private draft
+  pre: null, preBusy: false, preError: null, note: '', armed: false, genBusy: false,
+  genError: null, draft: null, answers: {}, contNote: '', stepBusy: false, poll: null };
 let repaint = () => {};
 let wired = false;
 
@@ -68,7 +82,34 @@ async function load() {
     }
   }
   if (d && sd.sections === null) sd.sections = new Set(d.sections.map(s => s.id));
+  // a reload or a restart resumes the newest private seed draft, read back
+  // from the board — the page holds nothing the board does not
+  if (!sd.draft) {
+    try {
+      const res = await fetch('/api/brain/drafts');
+      const list = await res.json().catch(() => ({}));
+      const open = (list.seeds || []).find(x => !['discarded', 'cancelled', 'expired'].includes(x.status));
+      if (open && gen === sd.gen) { sd.draft = open; watch(); }
+    } catch (e) { /* the draft list is a convenience; the page works without it */ }
+  }
   repaint(true);
+}
+
+async function readDraft() {
+  if (!sd.draft) return;
+  try {
+    const res = await fetch(`/api/brain/drafts?id=${encodeURIComponent(sd.draft.id)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.draft) sd.draft = data.draft;
+  } catch (e) { /* asked again on the next beat */ }
+  repaint(true);
+  watch();
+}
+
+// while a round runs, read it again every couple of seconds; nothing else
+function watch() {
+  if (sd.poll) { clearTimeout(sd.poll); sd.poll = null; }
+  if (sd.draft && sd.draft.status === 'running') sd.poll = setTimeout(readDraft, 1500);
 }
 
 function originBack() {
@@ -279,10 +320,170 @@ function resultHtml() {
     `application @ <code>${esc(short(m.repositories.app.commit))}</code>, work @ ` +
     `<code>${esc(short(m.repositories.work.commit))}</code>.</p>` +
     `<p class="b-warn"><b>This authorizes ${esc(m.authorizes)}.</b></p>` +
-    '<p class="b-note">Generating a draft from this manifest, and applying it, are later steps ' +
-    'that are not available on this board yet.</p>' +
+    '<p class="b-note">Generating a private draft from this manifest is the next step, below. ' +
+    'Applying a draft is a later step that is not available on this board yet.</p>' +
     '<details class="sd-json"><summary>The manifest, as JSON</summary>' +
     `<pre class="sd-pre">${esc(JSON.stringify(m, null, 2))}</pre></details></section>`;
+}
+
+/* ── step two: a private, evidence-linked draft (task 193) ───────────── */
+
+const DRAFT_WORDS = { running: 'Drafting', questions: 'Waiting for your answers',
+  proposed: 'Private draft ready', failed: 'Failed', cancelled: 'Cancelled',
+  discarded: 'Discarded', expired: 'Expired' };
+const AUTH_WORDS = { 'documented-policy': 'documented policy',
+  'inferred-convention': 'inferred convention — not an approved agreement',
+  'proposed-agreement': 'proposed agreement — not agreed' };
+
+function list(items) {
+  return items && items.length ? `<ul class="sd-list">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+    : '<p class="b-none">Nothing.</p>';
+}
+
+function preflightHtml() {
+  const p = sd.pre;
+  if (sd.preError) {
+    return `<div class="b-panel b-bad" role="alert"><p>${esc(sd.preError)}</p></div>`;
+  }
+  if (!p) return '';
+  const model = p.selection && p.selection.model && p.selection.model.value;
+  const caps = p.capabilities.map(c => `<li><b>${esc(c.name)}</b>: ` +
+    `${esc(c.declared)}${c.required ? ` (requires ${esc(c.required)})` : ''} — ` +
+    `${c.ok === true ? 'met' : c.ok === false ? '<span class="b-missing">not met</span>' : esc(c.note || '')}</li>`).join('');
+  const reads = p.reads.map(r => `<li><span class="sd-path">${esc(r.ref)}</span> ` +
+    `<span class="b-note">${esc(r.treatment)} · ${bytes(r.bytes)} · sha256 <code>${esc(r.sha256)}</code></span></li>`).join('');
+  const b = p.budget;
+  return '<div class="sd-pre-flight">' +
+    (p.blockers.length ? `<div class="b-panel b-bad" role="alert"><p><b>Generate is not available.</b></p>` +
+      `${list(p.blockers)}</div>` : '') +
+    '<dl class="sd-facts">' +
+    `<dt>Harness and model</dt><dd>${esc(p.adapter || '—')} · ${model ? `<code>${esc(model)}</code>`
+      : 'the harness default model'}</dd>` +
+    `<dt>Policy</dt><dd><code>${esc(p.policyId || '—')}</code> · template ` +
+    `<code>${esc(p.template ? p.template.name : '—')}</code> (${esc(p.template ? p.template.source : '')})</dd>` +
+    `<dt>Where it runs</dt><dd>${esc(p.launch.cwd)}<br><span class="b-note">${esc(p.launch.how)}. ` +
+    `Denied: ${esc(p.launch.denied)}.</span></dd>` +
+    `<dt>Destinations</dt><dd>${esc(p.destinations.writes)}</dd>` +
+    `<dt>Budget</dt><dd>${b.files} files · ${bytes(b.bytes)} · at most ${b.rounds} rounds of ` +
+    `${b.secondsPerRound}s each<br><span class="b-note">${esc(b.attempts)}</span><br>` +
+    `<span class="b-warn">Tokens: ${esc(b.tokens.why)}</span></dd>` +
+    `<dt>Authority</dt><dd>${esc(p.authority)}<br><span class="b-note">Enforced by ${esc(p.enforcement)}. ` +
+    `${esc(p.retention)}.</span></dd></dl>` +
+    `<details class="sd-excl" open><summary>Exactly what the run reads (${p.reads.length})</summary>` +
+    `<ul class="sd-list">${reads}</ul></details>` +
+    `<details class="sd-excl"><summary>What the harness enforces</summary><ul class="sd-list">${caps}</ul></details>` +
+    `<p class="b-note">Approval <code>${esc(p.approval)}</code> binds manifest ` +
+    `<code>${esc(short(p.manifest.digest))}</code>, the model, policy, template and budget. ` +
+    'A change to any of them needs a new review.</p></div>';
+}
+
+function generateHtml() {
+  if (!sd.result || sd.draft) return '';
+  const p = sd.pre;
+  const ready = p && p.ready && !sd.genBusy;
+  return '<section class="b-panel" aria-labelledby="sd-h-gen" id="sd-gen" tabindex="-1">' +
+    '<h2 id="sd-h-gen">5 · Generate a private draft</h2>' +
+    '<p>A read-only coding agent drafts each chosen handbook section from exactly the sources ' +
+    'inspected above, citing them by id. The draft stays private to this board; nothing is ' +
+    'written to the Brain, the application, the cards or the configuration.</p>' +
+    '<div class="sd-acts"><button type="button" class="b-btn" data-sact="gen-preflight"' +
+    `${sd.preBusy ? ' disabled aria-busy="true"' : ''}>${sd.preBusy ? 'Reading…'
+      : p ? 'Review again' : 'Review what generation would use'}</button></div>` +
+    preflightHtml() +
+    (p ? '<p><label for="sd-gnote">A note for the agent (optional)</label><br>' +
+      `<textarea id="sd-gnote" rows="2" data-sgnote data-skey="g">${esc(sd.note)}</textarea></p>` +
+      '<div class="sd-acts">' +
+      `<button type="button" class="b-btn b-primary${sd.armed ? ' armed' : ''}" data-sact="generate"` +
+      `${ready ? '' : ' disabled'}${sd.genBusy ? ' aria-busy="true"' : ''}>` +
+      `${sd.genBusy ? 'Launching…' : sd.armed ? 'Confirm: generate draft (launches one paid run)'
+        : 'Generate draft'}</button>` +
+      (sd.armed ? '<button type="button" class="b-btn" data-sact="gen-disarm">Not now</button>' : '') +
+      '</div>' : '') +
+    (sd.genError ? `<p class="b-missing" role="alert">${esc(sd.genError)}</p>` : '') +
+    '</section>';
+}
+
+function claimHtml(c) {
+  return `<li><span class="b-chip">${esc(c.status)}</span>` +
+    `${c.authority ? ` <span class="b-chip">${esc(AUTH_WORDS[c.authority] || c.authority)}</span>` : ''} ` +
+    `${esc(c.statement)} <span class="b-note">${c.sources.length ? c.sources.map(s => `<code>${esc(s)}</code>`).join(' ')
+      : 'no source'}</span></li>`;
+}
+
+function sectionHtml(s) {
+  return `<article class="b-panel sd-section" aria-labelledby="sd-sec-${esc(s.section)}">` +
+    `<h3 id="sd-sec-${esc(s.section)}">${esc(s.title)}</h3>` +
+    (s.summary ? `<p class="b-note">${esc(s.summary)}</p>` : '') +
+    `<div class="b-prose">${md(s.body || '', { base: 3 }) || '<p class="b-none">No body.</p>'}</div>` +
+    (s.claims.length ? `<h4>Claims, and how far each goes</h4><ul class="sd-list">${s.claims.map(claimHtml).join('')}</ul>` : '') +
+    (s.contradictions.length ? '<h4>Sources that disagree</h4><ul class="sd-list">' +
+      s.contradictions.map(c => `<li>${esc(c.statement)} <span class="b-note">` +
+        `${c.sources.map(x => `<code>${esc(x)}</code>`).join(' ')}</span></li>`).join('') + '</ul>' : '') +
+    (s.gaps.length ? '<h4>Not known</h4><ul class="sd-list">' + s.gaps.map(g =>
+      `<li><b>${esc(g.what)}</b>${g.why ? ` — ${esc(g.why)}` : ''}</li>`).join('') + '</ul>' : '') +
+    (s.uncertainty ? `<p class="b-note">Uncertain: ${esc(s.uncertainty)}</p>` : '') +
+    `<details class="sd-excl"><summary>Sources bound (${s.bindings.length})</summary><ul class="sd-list">` +
+    s.bindings.map(b => `<li><code>${esc(b.ref)}</code> <span class="b-note">${esc(b.treatment)} · sha256 ` +
+      `<code>${esc(short(b.sha256))}</code></span></li>`).join('') + '</ul></details></article>';
+}
+
+function draftHtml() {
+  const d = sd.draft;
+  if (!d) return '';
+  const pr = d.progress || {};
+  const seed = d.seed || {};
+  const out = seed.draft;
+  const tone = d.status === 'failed' ? ' b-bad' : '';
+  const activity = pr.toolActivity || pr.process
+    ? '<h3 class="sd-root">Process and tool activity</h3><p class="b-note">What the run is doing ' +
+      'mechanically — activity, not progress.</p><dl class="sd-facts">' +
+      (pr.process ? `<dt>Process</dt><dd>${esc(pr.process.status || 'unknown')}</dd>` : '') +
+      (pr.toolActivity ? `<dt>Last tool</dt><dd>${esc((pr.toolActivity.last && pr.toolActivity.last.summary) ||
+        pr.toolActivity.inFlight || 'none yet')}</dd>` : '') + '</dl>' : '';
+  const questions = d.status === 'questions' && d.questions ? '<h3 class="sd-root">Questions</h3>' +
+    d.questions.map(q => `<p><label for="sd-q-${esc(q.id)}"><b>${esc(q.question)}</b></label>` +
+      `${q.why ? `<br><span class="b-note">${esc(q.why)}</span>` : ''}<br>` +
+      `<textarea id="sd-q-${esc(q.id)}" rows="2" data-sanswer="${esc(q.id)}" data-skey="a:${esc(q.id)}">` +
+      `${esc(sd.answers[q.id] || '')}</textarea></p>`).join('') : '';
+  const canCont = d.canContinue && !sd.stepBusy;
+  const acts = '<div class="sd-acts">' +
+    (d.status === 'questions' ? `<button type="button" class="b-btn b-primary" data-sact="draft-continue"${canCont ? '' : ' disabled'}>Continue with these answers</button>` : '') +
+    (['proposed', 'failed'].includes(d.status) && d.canContinue
+      ? `<p><label for="sd-cnote">${d.status === 'failed' ? 'What to do differently (optional)' : 'What to redraft'}</label><br>` +
+        `<textarea id="sd-cnote" rows="2" data-scnote data-skey="c">${esc(sd.contNote)}</textarea></p>` +
+        `<button type="button" class="b-btn" data-sact="draft-continue"${canCont ? '' : ' disabled'}>` +
+        `${d.status === 'failed' ? 'Try again (one more round)' : 'Redraft (one more round)'}</button>` : '') +
+    (d.status === 'running' ? '<button type="button" class="b-btn" data-sact="draft-cancel">Cancel this round</button>' : '') +
+    (!['running', 'discarded', 'cancelled', 'expired'].includes(d.status)
+      ? '<button type="button" class="b-btn" data-sact="draft-discard">Discard the draft</button>' : '') +
+    (['discarded', 'cancelled', 'expired', 'failed'].includes(d.status)
+      ? '<button type="button" class="b-btn" data-sact="draft-new">Start a new draft</button>' : '') +
+    '</div>';
+  const refused = out && out.refused && out.refused.length
+    ? '<div class="b-warn" role="status"><p><b>A partial draft:</b> these sections were ' +
+      'refused and are not shown.</p><ul class="sd-list">' + out.refused.map(r =>
+        `<li><b>${esc(r.section)}</b> — ${esc(r.problems.join('; '))}</li>`).join('') + '</ul></div>' : '';
+  const gaps = (seed.manifest && seed.manifest.gaps) || [];
+  return `<section class="b-panel${tone}" aria-labelledby="sd-h-draft" id="sd-draft" tabindex="-1">` +
+    '<h2 id="sd-h-draft">5 · Private draft</h2>' +
+    `<p role="status"><b>${esc(DRAFT_WORDS[d.status] || d.status)}</b> · round ${d.round} of ${d.maxRounds}` +
+    `${seed.unknownRounds ? ` · ${seed.unknownRounds} round(s) whose launch is unknown, counted` : ''}</p>` +
+    (d.error ? `<p class="b-missing" role="alert">${esc(d.error.why)}</p>` : '') +
+    '<div class="sd-progress"><h3 class="sd-root">Progress</h3><dl class="sd-facts">' +
+    `<dt>Done</dt><dd>${list(pr.done)}</dd>` +
+    `<dt>Now</dt><dd>${esc(pr.doing || '—')}</dd>` +
+    `<dt>Remaining</dt><dd>${list(pr.remaining)}</dd>` +
+    `<dt>Blocked on</dt><dd>${esc(pr.blocked || 'nothing')}</dd></dl></div>` +
+    activity + questions + acts + refused +
+    (out ? `<p>${out.sections.length} of ${out.expected.length} sections · ${out.contradictions} ` +
+      `contradiction${out.contradictions === 1 ? '' : 's'} kept visible · claims: ` +
+      Object.entries(out.claims).map(([k, n]) => `${esc(k)} ${n}`).join(', ') + '</p>' +
+      (gaps.length ? `<p class="b-warn">No approved source covers: ${gaps.map(g => esc(g.section)).join(', ')}. ` +
+        'Those sections say what is missing instead of being filled in.</p>' : '') +
+      out.sections.map(sectionHtml).join('') : '') +
+    `<p class="b-note">${esc(seed.applies || '')} The draft is kept on this board only` +
+    `${seed.expires ? ` until ${esc(new Date(seed.expires * 1000).toLocaleDateString())}` : ''}.</p>` +
+    '</section>';
 }
 
 function seedHtml() {
@@ -316,7 +517,72 @@ function seedHtml() {
     rootHtml(d, 'app') + rootHtml(d, 'work') +
     '<div class="sd-acts"><button type="button" class="b-btn" data-sact="reread">Read the ' +
     'repositories again</button></div></section>';
-  return { loading: false, html: head + identityHtml(d) + choose + plannedHtml(d) + resultHtml() };
+  return { loading: false, html: head + identityHtml(d) + choose + plannedHtml(d) + resultHtml() +
+    generateHtml() + draftHtml() };
+}
+
+async function genPreflight() {
+  if (!sd.result || sd.preBusy) return;
+  sd.preBusy = true;
+  sd.preError = null;
+  sd.armed = false;
+  repaint(true);
+  const res = await post('/api/brain/seed/preflight', { manifest: sd.result });
+  sd.preBusy = false;
+  if (res.ok) { sd.pre = res.data.preflight; } else { sd.pre = null; sd.preError = res.error; }
+  repaint(true);
+  document.getElementById('sd-gen')?.focus();
+}
+
+async function generate() {
+  if (!sd.pre || !sd.pre.ready || sd.genBusy) return;
+  if (!sd.armed) { sd.armed = true; repaint(true); return; }
+  sd.armed = false;
+  sd.genBusy = true;
+  sd.genError = null;
+  repaint(true);
+  // one identity per Generate: a resend after a lost reply answers, never launches twice
+  sd.genKey = sd.genKey || `seed-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const res = await post('/api/brain/seed/generate', { request: sd.genKey, manifest: sd.result,
+    approval: sd.pre.approval, text: sd.note });
+  sd.genBusy = false;
+  if (res.ok) {
+    sd.draft = res.data.draft;
+    sd.genKey = null;
+    watch();
+  } else {
+    sd.genError = res.error;
+    if (res.status && res.status !== 0) sd.genKey = null;
+    if (res.data && res.data.stale) sd.pre = null;
+  }
+  repaint(true);
+  document.getElementById(sd.draft ? 'sd-draft' : 'sd-gen')?.focus();
+}
+
+async function draftStep(step) {
+  const d = sd.draft;
+  if (!d || sd.stepBusy) return;
+  const body = { id: d.id };
+  if (step === 'continue') {
+    body.request = `seed-c-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    body.round = d.round;
+    if (d.status === 'questions') body.answers = { ...sd.answers };
+    if (sd.contNote.trim()) body.note = sd.contNote.trim();
+  }
+  sd.stepBusy = true;
+  repaint(true);
+  const res = await post(`/api/brain/draft/${step}`, body);
+  sd.stepBusy = false;
+  if (res.ok && res.data.draft) {
+    sd.draft = res.data.draft;
+    sd.answers = {};
+    sd.contNote = '';
+    sd.genError = null;
+  } else {
+    sd.draft = { ...d, error: { why: res.error } };
+  }
+  repaint(true);
+  watch();
 }
 
 async function inspect() {
@@ -361,6 +627,15 @@ function chooseDefaults() {
 
 function seedAct(name) {
   if (name === 'inspect') { inspect(); return; }
+  if (name === 'gen-preflight') { genPreflight(); return; }
+  if (name === 'generate') { generate(); return; }
+  if (name === 'gen-disarm') { sd.armed = false; repaint(true); return; }
+  if (name === 'draft-continue') { draftStep('continue'); return; }
+  if (name === 'draft-cancel') { draftStep('cancel'); return; }
+  if (name === 'draft-discard') { draftStep('discard'); return; }
+  if (name === 'draft-new') {
+    sd.draft = null; sd.pre = null; sd.armed = false; repaint(true); return;
+  }
   if (name === 'reread') {
     // a fresh reading; the choice made so far is kept
     sd.slot = null;
@@ -368,8 +643,11 @@ function seedAct(name) {
     sd.error = null;
   } else if (name === 'defaults') chooseDefaults();
   else if (name === 'clear') sd.picked = new Map();
-  // a changed choice is a different inspection: the old result is not its
+  // a changed choice is a different inspection: the old result is not its,
+  // and neither is the generation preview approved for it
   if (name !== 'reread') { sd.result = null; sd.error = null; }
+  sd.pre = null;
+  sd.armed = false;
   repaint(true);
 }
 
@@ -383,6 +661,10 @@ function candidateFor(k) {
 /* The page's own fields. Kept here; nothing is sent until Inspect. */
 function seedField(f, ev) {
   const ds = f.dataset || {};
+  // the draft's own text fields: kept as typed, sent only by their button
+  if (ds.sgnote !== undefined) { sd.note = f.value; return true; }
+  if (ds.scnote !== undefined) { sd.contNote = f.value; return true; }
+  if (ds.sanswer !== undefined) { sd.answers[ds.sanswer] = f.value; return true; }
   if (ds.spick !== undefined) {
     if (ev.type !== 'change') return true;
     const c = candidateFor(ds.spick);
@@ -410,6 +692,8 @@ function seedField(f, ev) {
   } else return false;
   sd.result = null;
   sd.error = null;
+  sd.pre = null;
+  sd.armed = false;
   repaint(true);
   return true;
 }
