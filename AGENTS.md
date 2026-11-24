@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -167,6 +167,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   Brain's writer asks under its lock before an `adopt` write. It imports
   `brain`, `config`, `gitrepo`, `redact` and `taskfiles` (see "Adopting
   reference material")
+- `seedsources.py` — seeding a Brain, step one (task 192): the
+  application and work identities a seed would use and every refusal of
+  the mapping, the static candidate listing (names and sizes, nothing
+  opened), and the inspection of an approved selection into the version
+  1 seed manifest generation and Apply are held to. Local git reads only;
+  it writes, fetches and launches nothing. It imports `brain`, `config`,
+  `gitrepo`, `handbook` and `redact` (see "Seeding the Brain: inspecting
+  approved sources")
 - `evidence.py` — the verification record: where it lives, how it is
   stored (through `records`, durably once its outcome is final) and read
   back, the reuse records, the outcome vocabulary every reader branches

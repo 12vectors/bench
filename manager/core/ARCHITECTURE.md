@@ -45,7 +45,7 @@ L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions brain
 L6  gatepolicy reviews inputs basechoice handbook adoption
-L7  evidence resultidentity artifacts
+L7  evidence resultidentity artifacts seedsources
 L8  staleness
 L9  verify
 L10 progress checkload
@@ -133,6 +133,15 @@ material, and the freeze `brainwrite` asks under its lock before an
 `adopt` write. It imports `brain`, `config`, `gitrepo`, `redact` and
 `taskfiles` and writes nothing; `brainwrite`, `routes` and `board` import
 it.
+
+`seedsources` (task 192) sits on L7, directly above `handbook` and
+`adoption`: the first step of seeding a Brain — the independent
+application and work identities a seed would use (and every refusal of
+the mapping), the static candidate listing, and the inspection of an
+approved selection into the version 1 seed manifest that draft generation
+(#193) and Apply (#194) are held to. It imports `brain`, `config`,
+`gitrepo`, `handbook` and `redact`, runs only local git reads and writes
+nothing; `routes` and `board` import it.
 
 `brainreviews` (task 168) sits beside `gates` (L12), directly above
 `acceptance`: the Brain's reading of the reviews filed on cards. It reads
@@ -419,7 +428,7 @@ L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions brain
 L6  gatepolicy reviews inputs basechoice handbook adoption
-L7  evidence resultidentity artifacts
+L7  evidence resultidentity artifacts seedsources
 L8  staleness
 L9  verify
 L10 progress checkload
@@ -762,5 +771,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 178
+routes 180
 ```
