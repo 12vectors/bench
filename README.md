@@ -312,9 +312,14 @@ For an existing project, **Settings → Setup guide** (and an empty
 **Brain**) also offer **Seed Brain**: it shows the application and work
 repositories bench resolved, lets you choose which of their files a
 project handbook may be drafted from, and inspects exactly those —
-sizes, hashes and gaps, nothing run and nothing written. Generating and
-applying a draft are later, separate steps. See "Seeding the Brain:
-inspecting approved sources" in `AGENTS.md`.
+sizes, hashes and gaps, nothing run and nothing written. From that
+inspection, **Generate draft** — after a preview of the harness, model,
+exact reads, budget and what stays uncertain — asks the Brain Agent for a
+private draft of each handbook section, every claim citing the approved
+sources and anything they do not cover said as a gap. The draft stays on
+your board; applying it is a later, separate step. See "Seeding the Brain:
+inspecting approved sources" and "Generating a private seed draft" in
+`AGENTS.md`.
 
 ## Update
 

@@ -1353,6 +1353,32 @@ def post_brain_review_write(req) -> None:
     req.reply(200, {"operation": result})
 
 
+def post_brain_seed_preflight(req) -> None:
+    # What Generate draft would launch, read and spend for an inspected
+    # seed manifest (task 193): harness, model, profile, exact reads,
+    # policy, template, destinations, enforced capabilities, budget and the
+    # approval Generate must name. A read with a body, like Inspect: it
+    # re-inspects and resolves; it pins, launches and writes nothing.
+    try:
+        req.reply(200, {"preflight": braindraft.seed_preflight(req.body)})
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_seed_generate(req) -> None:
+    # Generate draft (task 193): a seed request bound to the manifest and
+    # the approval its preflight showed, and its first read-only round
+    # launched through the Brain drafting machinery. Continue, Cancel and
+    # Discard are the drafting routes; nothing here writes the Brain.
+    try:
+        result = braindraft.start_seed(req.body)
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    state.broadcast({"type": "brain"})
+    req.reply(200, result)
+
+
 def get_brain_draft_preflight(req) -> None:
     # What a Brain drafting Generate would launch and read (task 175): the
     # roots, the harness, model and profile, the source selection and its
@@ -2727,6 +2753,8 @@ ROUTES = (
     Route("POST", "/api/brain/handbook", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/adoption/apply", "browser-mutation", post_brain_adoption_apply),
     Route("POST", "/api/brain/seed/inspect", "browser-mutation", post_brain_seed_inspect),
+    Route("POST", "/api/brain/seed/preflight", "browser-mutation", post_brain_seed_preflight),
+    Route("POST", "/api/brain/seed/generate", "browser-mutation", post_brain_seed_generate),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),

@@ -166,6 +166,29 @@ SPECS["brain.md"] = {
     "scopes": "the Brain view's Ask Brain Agent and New entry requests",
 }
 
+# What a Brain seed drafting run is told (task 193): the approved manifest's
+# sources, pinned and listed with their treatments, the handbook sections to
+# draft and the coverage gaps bench found. The response contract (every
+# section, claims bound to approved source ids, contradictions and gaps)
+# and every authority check stay in `braindraft`.
+SPECS["brain-seed.md"] = {
+    "group": "brain",
+    "label": "Brain seed drafting",
+    "purpose": "brain",
+    "intent": "brain",
+    "fields": ("draft", "round", "rounds", "request", "conversation", "sections",
+               "sources", "coverage", "contract", "guidance_read_only", "context"),
+    "required": ("draft", "round", "conversation", "sections", "sources",
+                 "contract"),
+    "markers": ("<<<BRAIN", "BRAIN>>>", "BRAIN DECLINED:"),
+    "stance": "brain: read-only, reads only the approved, pinned seed sources, "
+              "asks or proposes a private draft of each handbook section; "
+              "bench validates every citation and nothing is written",
+    "usedBy": "every Brain seed drafting round — Generate draft and each "
+              "answer, revision or retry",
+    "scopes": "Seed Brain's Generate draft, from an inspected seed manifest",
+}
+
 # One guidance template per reasoning need: the question it asks, in the
 # operator's words. Short prose, inserted into `reason.md` as data.
 _NEED_USE = {
@@ -272,6 +295,9 @@ DESCRIBE = {
     "app": "the application checkout the run starts in, its revision and "
            "what it may not read there",
     "exclusions": "what is excluded from the sources and why",
+    "sections": "the handbook sections a seed draft writes, with the ones bench "
+                "found no approved source for",
+    "coverage": "what the seed manifest's coverage does and does not establish",
 }
 
 
@@ -322,6 +348,10 @@ def sample_fields() -> dict[str, str]:
         "app": "(sample: the application checkout, its revision and what is "
                "denied there)",
         "exclusions": "(sample: what was left out of the sources and why)",
+        "sections": ("- `overview` — **Overview**: what the project is (sample)\n"
+                     "- `operations` — **Operations**: how it is run (sample: bench "
+                     "found no source for it)"),
+        "coverage": "(sample: discovery coverage of the approved selection)",
     }
 
 

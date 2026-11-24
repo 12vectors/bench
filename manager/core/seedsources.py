@@ -962,6 +962,46 @@ def inspect(payload) -> dict:
     return manifest
 
 
+def check(manifest) -> dict:
+    """A manifest a later step may be held to: version 1, its digest
+    matching its contents. Refused otherwise, with nothing read."""
+    if not isinstance(manifest, dict) or manifest.get("v") != CONTRACT \
+            or manifest.get("kind") != KIND:
+        raise Refused(f"not a version {CONTRACT} seed manifest", code="unsupported")
+    if manifest.get("digest") != digest_of(manifest):
+        raise Refused("the manifest's digest does not match its contents", code="tampered")
+    return manifest
+
+
+def item_bytes(item: dict) -> bytes:
+    """The exact bytes a manifest item recorded — the whole file, or its
+    slice — read again now from the root the board resolves, through no
+    link and inside that root, and held to the item's sha256 (task 193).
+    A draft round pins these and nothing else. Refused (`source-drift`)
+    when they no longer match; a read, never a write."""
+    if item.get("state") != "read" or not item.get("sha256"):
+        raise Refused(f"{item.get('id')} was not read when the manifest was made",
+                      code="not-read")
+    ident = identities()
+    if ident["refused"]:
+        raise Refused("the application and work roots cannot be used for seeding",
+                      status=409, code="mapping-refused", problems=ident["problems"])
+    root = (_real(Path(ident["app"]["repository"])) if item["root"] == "app"
+            else Path(ident["work"]["root"]))
+    try:
+        data = _read_contained(root, item["path"],
+                               MAX_SLICE_SOURCE if item.get("lines") else MAX_FILE_BYTES)
+    except (OSError, _Excluded) as exc:
+        raise Refused(f"{item['id']} can no longer be read ({exc})", status=409,
+                      code="source-drift")
+    if item.get("lines"):
+        data = _slice(data, item["lines"]) or b""
+    if hashlib.sha256(data).hexdigest() != item["sha256"]:
+        raise Refused(f"{item['id']} changed since it was inspected", status=409,
+                      code="source-drift")
+    return data
+
+
 def drift(manifest: dict) -> list[dict]:
     """What has moved since `manifest` was made: a repository's commit, the
     destination's revisions, or an item's bytes or state. Inspects the same
@@ -993,4 +1033,16 @@ def drift(manifest: dict) -> list[dict]:
         if (b["state"], b.get("sha256")) != (i["state"], i.get("sha256")):
             out.append({"what": i["id"], "was": b["state"], "now": i["state"],
                         "changed": b.get("sha256") != i.get("sha256")})
+    # The digest is an unkeyed hash, so a manifest built by hand can carry a
+    # recomputed one: a coverage gap emptied, a treatment raised, an item
+    # added outside the selection. The comparisons above would not see any
+    # of that. What this board reads now, from the manifest's own selection,
+    # must digest to exactly what the manifest says — anything else is
+    # refused rather than trusted, whether it moved or was edited.
+    if now["digest"] != manifest["digest"]:
+        out.append({"what": "manifest", "was": manifest["digest"][:12],
+                    "now": now["digest"][:12],
+                    "changed": True,
+                    "why": "the manifest does not match what its own selection reads "
+                           "now — inspect again rather than reuse it"})
     return out

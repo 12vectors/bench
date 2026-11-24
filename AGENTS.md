@@ -1868,9 +1868,11 @@ handbook: curated, sourced, said as it is"). Existing `reference/` files
 can be catalogued or explained there, one at a time, with every original
 left at its address (task 172, "Adopting reference material"). Seeding
 a Brain from an existing project starts with choosing and inspecting its
-sources (task 192, "Seeding the Brain: inspecting approved sources").
-What it does not do yet, said so nobody looks for it: generating a seed
-draft, applying one, and any agent classification. A run is given no
+sources (task 192, "Seeding the Brain: inspecting approved sources") and
+generating a private, evidence-linked draft from exactly those (task
+193, "Generating a private seed draft"). What it does not do yet, said
+so nobody looks for it: applying a seed draft, and any agent
+classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2306,9 +2308,10 @@ An existing project already explains itself somewhere: a README, a
 contribution policy, its code, its cards and plans. Seeding a Brain
 from it is three separate acts — **inspect** the sources a person
 approves (task 192, here), **generate** a private draft from exactly
-those (#193), and a person **reviews and applies** it (#194). Only the
-first exists on this board yet, and it is useful on its own: a static
-inventory of what the two repositories hold, before any generation.
+those (#193, the next section), and a person **reviews and applies** it
+(#194). The first two exist on this board; inspecting is useful on its
+own: a static inventory of what the two repositories hold, before any
+generation.
 
 **Two ways in, each with its way back.** An empty Brain offers **Seed
 Brain**, and **Settings → Setup guide** has a **Seed the Brain** panel.
@@ -2394,8 +2397,11 @@ as proof the project has nothing more — and a `digest` over all of it but
 the time it was made. `seedsources.drift(manifest)` inspects the same
 selection again and lists what moved (a commit, a destination revision,
 an item's bytes or state); a manifest of another version, or one whose
-digest does not match its contents, is refused. #193 and #194 hold their
-work to it.
+digest does not match its contents, is refused. The digest is an unkeyed
+hash, so `drift` also digests what the selection reads now and lists the
+manifest itself when that differs: a manifest edited by hand with its
+digest recomputed (a gap emptied, a treatment raised, an item added) is
+drift, never trusted. #193 and #194 hold their work to it.
 
 **What it is not.** The manifest **authorizes nothing**: it is not
 permission to generate, and generating a draft is a separate, explicit
@@ -2414,10 +2420,126 @@ file clean.
 | `GET /api/brain/seed` | the identities, destination, candidates, treatments, sections, fixed exclusions and bounds; a read |
 | `POST /api/brain/seed/inspect` | `{sources: [{root, path, treatment?, lines?}], exclude?, sections?}` — the manifest; a read with a body, behind the browser-mutation door |
 
-**Not in this version:** generating a draft, applying one, re-seeding,
-remote sources, and any write to the Brain. Tests: `tests/test_seedsources.py`
+**Not in this version:** applying a draft, re-seeding, remote sources,
+and any write to the Brain. Tests: `tests/test_seedsources.py`
 (split, vendored and source-hosted layouts; instrumented git verbs,
 processes and sockets) and `verify/browser_cases/case_brain_seed.py`.
+
+### Generating a private seed draft
+
+Step two (task 193) turns an inspected manifest into a **private** draft
+of the handbook's sections, written by the Brain Agent from exactly the
+bytes the manifest recorded. It is the Brain drafting request of "Drafting
+with the Brain Agent" in a `seed` mode — the same store
+(`manager/local/state/brain/drafts/`), rounds, questions, cancellation,
+time limit, restart handling and launch accounting, the same `brain`
+intent and adapter — not a second operation store or agent stack.
+
+**5 · Generate a private draft**, under the inspection result:
+
+| step | what happens | launches | writes |
+| --- | --- | --- | --- |
+| **Review what generation would use** | `POST /api/brain/seed/preflight` `{manifest}`: the harness, model and profile, the policy and the template (`brain-seed.md`), every exact read with its treatment and hash, where the run starts, the destinations, what the harness enforces, the budget, what cost stays uncertain, the retention, and an **approval** digest over manifest, harness, model, policy, template and budget | nothing | nothing |
+| **Generate draft** (armed) | `POST /api/brain/seed/generate` `{request, manifest, approval, text?}`: one round | one run | the private request |
+| the agent asks | *Waiting for your answers* | — | — |
+| **Continue** | the drafting route, with answers, a redraft note, or a retry | one run | the private request |
+| **Cancel**, **Discard** | the drafting routes | nothing | the private request |
+
+**Frozen identity.** Generate must name the approval its preflight
+showed. Every later round computes it again: a changed source (the
+manifest's `drift`), model, policy, template or budget refuses the round
+(`approval-stale`, `source-drift`) with nothing launched, and the way on
+is a new inspection and a new approval. Nothing is relaunched by itself,
+on resume or after a restart, and resuming grants no new budget.
+
+**Frozen inputs, read only.** Each read item is re-read from the root the
+board resolves, through no link, held to its recorded sha256
+(`seedsources.item_bytes`), pinned as a read-only copy granted by one
+exact read. The round **starts in an empty scratch directory** under the
+system's temporary directory — not the application checkout, and not the
+bundle, which sits under the tool where a CLI would discover the tool's
+(and, vendored, the application's) `CLAUDE.md` above it. It is made in the first of `TMPDIR`, `/tmp`,
+`/var/tmp` and `/dev/shm` that is outside the tool, the application and
+the work root and has no `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or
+`.claude/` memory at or above it; when none qualifies the launch is
+refused (`memory-files`), and the directory is removed when the round
+ends. The operator's own
+user-level memory (`~/.claude/CLAUDE.md`) is outside every repository and
+is not withheld; the preflight says so. The other state directories,
+credentials and other rounds' bundles are denied as for any drafting run.
+This is the vendor's
+permission rules and tool roster, **not an operating-system sandbox**. A
+harness that does not declare `read-only-tools` and `shell-withheld` as
+enforced and `exact-read` delivery is refused by name rather than run
+with broader access (opencode today).
+
+**What an answer must be.** One JSON object, kind
+`bench-brain-seed-draft`, with every approved section once. Each section
+is a title, a summary, a Markdown body (the Brain's own entry rules), and
+claims, contradictions, gaps and uncertainty. Bench validates each
+section on its own, and refuses one that:
+
+- cites anything but a read manifest item, by id (`app:README.md`,
+  `work:plans/roadmap.md`, `app:big.md#L1-L40`) — a neighbouring file the
+  person did not approve, say — or cites a **background** item;
+- says `implemented` or `deployed` and cites nothing, or says `deployed`
+  when the selection held no operations source (deployment stays
+  unknown);
+- leaves a section the manifest found no source for without `gaps`;
+- in Ways of working, gives a claim no `authority`, calls something
+  `documented-policy` without citing a source approved as policy, or
+  calls a `proposed-agreement` implemented;
+- names a contradiction with fewer than two sources.
+
+The sections that pass are the draft; the rest are listed as refused (a
+**partial** draft, said so); none passing is **Failed**. A redraft that
+refuses a section an earlier round drafted keeps the earlier version,
+marked with its round, beside the refusal — every round of one request is
+held to the same approval. Every kept claim is bound to the item's sha256.
+Nothing is filled in by bench.
+
+**Progress, said apart.** Done, now, remaining and blocked are bench's
+observations; the run's process and last tool activity are shown
+separately as activity, not progress. A reload resumes the newest open
+seed draft from `GET /api/brain/drafts` (`seeds`, kept apart from the
+entry drafts).
+
+**Lost receipts.** A launch intent is recorded durably before the
+process starts. A board that stopped between the two reads, at its next
+start, a run log as *may have started*: the round is counted as
+`launch-unknown` and never repeated by itself; no log means nothing ran
+(`not-launched`) and nothing is counted. The same request identity again
+answers rather than launching twice.
+
+**Private and expiring.** A seed draft is on this board only, never
+committed, and its text (and its manifest) is removed 14 days after it
+was made — at the first reading after that, while the board runs, and at
+its next start — keeping the record of what happened. Apply on a seed draft is
+refused (`seed-apply-unavailable`): reviewing and applying is #194's.
+
+**What is proved, and what is not.** `tests/test_seeddraft.py` runs the
+whole lifecycle through the Claude adapter's real `run` against a stub
+vendor that reads only what it was granted, and
+`verify/browser_cases/case_brain_seed_draft.py` drives the page. Whether
+the installed CLI with a real model honours the exact-read grants and
+writes a good draft is a separately approved, billable run that nothing
+runs by itself; a stub run is not that proof. That run is
+`python3 develop/brain-agent-probe.py --seed --approve-real-agent`
+(without the flag it prints its plan and launches nothing). On a
+disposable split fixture it approves a README, a CONTRIBUTING, code and a
+plan, withholds a neighbouring note, a credential-named file, a `.env`
+and three `CLAUDE.md`/`AGENTS.md` files, each with a random marker, and
+reads the verdict off disk: the app and work markers drafted and cited,
+no withheld marker in the draft or the log, no successful Read of a
+withheld file in the vendor's own tool events, the round started outside
+the fixture and the tool with its scratch directory gone afterwards, and
+nothing written. Its `report.json` keeps the preflight (harness, model,
+policy, capabilities, budget), the frozen approval, the citations, the
+read-deny rules and the pinned sources — no marker values. It cannot
+tell a denied Read from one never attempted, and it is not an
+operating-system sandbox. `tests/test_seed_probe.py` runs the probe
+against a stub to hold its own machinery, and shows a run with no tool
+events never passes.
 
 ### Drafting with the Brain Agent
 

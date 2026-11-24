@@ -141,7 +141,8 @@ the mapping), the static candidate listing, and the inspection of an
 approved selection into the version 1 seed manifest that draft generation
 (#193) and Apply (#194) are held to. It imports `brain`, `config`,
 `gitrepo`, `handbook` and `redact`, runs only local git reads and writes
-nothing; `routes` and `board` import it.
+nothing; `routes`, `board` and `braindraft` (task 193: checking a manifest,
+its drift and an item's verified bytes) import it.
 
 `brainreviews` (task 168) sits beside `gates` (L12), directly above
 `acceptance`: the Brain's reading of the reviews filed on cards. It reads
@@ -169,6 +170,12 @@ sources pinned by `profiles.pin` and granted by exact reads, its answer
 validated against what that round was given, and the person's Apply
 written through `brainwrite.write` — the Brain's one writer. It writes no
 entry itself, and only `routes` (and `board`, for `recover`) import it.
+Since task 193 it also holds a seed request — the same store, rounds and
+lifecycle in a `seed` mode — drafting the handbook's sections from an
+inspected seed manifest: it asks `seedsources` (L7) to check the manifest,
+report drift and re-read each approved item held to its hash, and
+`handbook` for the section names. A seed draft is private and is never
+written by it; applying one is #194's.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -771,5 +778,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 180
+routes 182
 ```
