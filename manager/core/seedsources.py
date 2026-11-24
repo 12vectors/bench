@@ -67,6 +67,7 @@ import redact
 CONTRACT = 1
 KIND = "bench-brain-seed-manifest"
 ROOTS = ("app", "work")
+WORK_DIRS = ("tasks", "plans", "reference", brain.DIRECTORY)
 
 # bounds: every one is said in the reading, so a truncation is never silent
 MAX_LISTED = 4000              # candidates listed per root
@@ -444,13 +445,19 @@ def _excluded_by_location(root_path: Path, rel: str, tool: Path, work: Path,
     the work root's, not twice. Paths as written: a link is refused when
     it is read."""
     if root != "app":
+        # the work state is its four directories and nothing else: in a
+        # vendored or source-hosted install the work root is the tool's own
+        # root, beside its private configuration and runtime state
+        if rel.split("/", 1)[0] not in WORK_DIRS:
+            return ("only the work state's " + ", ".join(f"{d}/" for d in WORK_DIRS)
+                    + " are work sources")
         return None
     path = Path(os.path.abspath(root_path / rel))
     if _inside(path, tool / "manager" / "local"):
         return "it is bench's private configuration and runtime state"
     if tool != root_path and _inside(path, tool):
         return "it is part of bench's own installation, which is never a source"
-    for name in ("tasks", "plans", "reference", brain.DIRECTORY):
+    for name in WORK_DIRS:
         if _inside(path, work / name):
             return "it is in the work root, listed under Work instead"
     return None

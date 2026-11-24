@@ -446,6 +446,12 @@ class _OneRepo(unittest.TestCase):
             {"root": "app", "path": ("" if self.hosted else ".task-manager/")
              + "manager/local/AGENTS.md"}]})
         self.assertEqual(refused["items"][0]["state"], "excluded")
+        # here the work root is the tool's own root: its private
+        # configuration is not a work source either
+        private = seedsources.inspect({"sources": [
+            {"root": "work", "path": "manager/local/AGENTS.md"}]})
+        self.assertEqual(private["items"][0]["state"], "excluded")
+        self.assertIsNone(private["items"][0]["sha256"])
         self.assertEqual(git_state(self.app), before)
 
 
