@@ -118,6 +118,14 @@ class Seed(unittest.TestCase):
     def pick(self, key):
         return f'#bshell [data-spick="{key}"]'
 
+    def reveal(self, b, key):
+        """Open the category fold a source sits in, as a person would."""
+        sel = json.dumps(self.pick(key))
+        if not b.eval(f"(() => {{ const c = document.querySelector({sel}); if (!c) return false;"
+                      " const d = c.closest('details'); if (d && !d.open) d.open = true;"
+                      " c.scrollIntoView({block: 'center'}); return true; })()"):
+            raise bv.CheckFailed(f"no source {key} to choose: {self.text(b)[:800]}")
+
     # ── the journey, in order ──
 
     def test_1_empty_brain_offers_seeding_and_returns_to_the_brain(self):
@@ -136,8 +144,10 @@ class Seed(unittest.TestCase):
                          "Brain stays the selected destination")
         page = self.text(b)
         for words in ("Back to Brain", "Application", "Work", "independent", "brain/",
-                      "README.md", "CONTRIBUTING.md", "plans/roadmap.md"):
+                      "README.md", "CONTRIBUTING.md"):
             self.assertIn(words, page)
+        # a category with nothing chosen starts folded, and is listed all the same
+        self.assertTrue(b.eval(f"!!document.querySelector({json.dumps(self.pick('work:plans/roadmap.md'))})"))
         self.assertIn(git(self.backend.app, "rev-parse", "HEAD").stdout.strip()[:12], page)
         self.assertNotIn("hunter2", page)
         # suggested sources are chosen; excluded ones cannot be
@@ -172,13 +182,12 @@ class Seed(unittest.TestCase):
         self.seed_page(b)
         self.theme(b, False)
         # a pointer adds a source; the planned reads follow
+        self.reveal(b, "work:plans/roadmap.md")
         b.click(self.pick("work:plans/roadmap.md"))
         self.wait_text(b, ["Work repository · plans/roadmap.md"],
                        '#bshell section[aria-labelledby="sd-h-plan"]')
         # a keyboard adds another: Space on a focused checkbox
-        b.eval(f"document.querySelector({json.dumps(self.pick('app:server.py'))}).scrollIntoView(); true")
-        b.eval("(() => { const d = document.querySelector('#bshell [data-spick=\"app:server.py\"]')"
-               ".closest('details'); if (d) d.open = true; return true; })()")
+        self.reveal(b, "app:server.py")
         b.eval(f"document.querySelector({json.dumps(self.pick('app:server.py'))}).focus(); true")
         b.key(" ")
         if not b.wait(f"document.querySelector({json.dumps(self.pick('app:server.py'))})?.checked", 5):
