@@ -1185,6 +1185,8 @@ def _repo_path(file: str) -> str:
 
 
 def _public(entry: dict) -> dict:
+    if entry.get("kind") == "batch":
+        return _public_batch(entry)
     commit = entry.get("commit") or {}
     out = {"kind": entry.get("kind"), "id": entry.get("id"), "file": entry.get("file"),
            "what": entry.get("what"), "actor": entry.get("actor"),
@@ -1230,6 +1232,21 @@ def retry(payload: dict) -> dict:
         entry = _journal().get(request)
         if entry is None or not entry.get("saved"):
             raise Refused("no saved Brain write has this request identity", 404)
+        if entry.get("kind") == "batch" and action == "commit":
+            if (entry.get("commit") or {}).get("state") == "committed":
+                return dict(_public(entry), request=request)
+            if not config.COMMIT_MOVES:
+                raise Refused("committing board edits is off (BOARD_COMMIT_MOVES)", 409)
+            paths = [_batch_path(f["file"], make=False) for f in entry["files"]]
+            for f, path in zip(entry["files"], paths):
+                if _now_rev(path) != f.get("revision"):
+                    raise Refused(f"brain/{f['file']} has changed since this batch saved it, "
+                                  "so the batch is not committed as one; commit it by hand",
+                                  409)
+            entry["commit"] = _commit_batch(entry, paths)
+            _journal_put(request, entry)
+            state.broadcast({"type": "board"})
+            return dict(_public(entry), request=request)
         if action == "commit":
             if (entry.get("commit") or {}).get("state") == "committed":
                 return dict(_public(entry), request=request)
@@ -1289,5 +1306,524 @@ def revisions(entry_id: str, limit: int = 30) -> dict:
             "history": found["history"] if found else []}
 
 
+# ── a batch: several Brain files, all or none (task 194) ───────────────
+#
+# Seeding writes several entries and the handbook's membership record as
+# one decision, so it is one operation, not a loop of single writes:
+#
+# 1. **Plan** every file under the write locks, each held to the revision
+#    the person reviewed (`expected`; none for a new entry), and journal
+#    the whole intent — every file's bytes — before anything is touched.
+# 2. **Stage** each new version durably beside its destination under a
+#    hidden name (`.bench-stage-…`), which no reading of brain/ lists.
+# 3. **Switch** with `brain.VISIBLE` held, so no reading in this process
+#    sees a half-applied batch: every destination read once more, every
+#    replaced file kept aside (`.bench-was-…`), then each staged file
+#    renamed into place.
+# 4. **Commit** every file in one scoped work-state commit; sync publishes
+#    it like any board edit.
+#
+# A batch whose process died part way is finished by the same request
+# again, or by `recover()` at start-up: forward while every destination
+# still holds what the plan replaces or what it writes, otherwise back to
+# exactly what was there (the kept originals put back, new files
+# removed) — none or all, never a mix. Another writer's change is never
+# written over.
+
+BATCH_MAX_FILES = 12
+STAGE_PREFIX = ".bench-stage-"
+BACKUP_PREFIX = ".bench-was-"
+HANDBOOK_FILE = f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}"
+BATCH_FIELDS = {"request", "label", "entries", "handbook"}
+BATCH_ENTRY_FIELDS = {"id", "expected", "title", "kind", "summary", "sources", "related",
+                      "body", "bindings", "classification", "reason"}
+_FAULT = None   # tests only: called with a phase name; what it raises is what a crash there does
+
+
+class Interrupted(Exception):
+    """A batch stopped part way through for a reason bench did not expect;
+    it was put back to none before this was raised."""
+
+
+def _fault(phase: str) -> None:
+    if _FAULT is not None:
+        _FAULT(phase)
+
+
+def _batch_path(file: str, *, make: bool = True) -> Path:
+    if file == HANDBOOK_FILE:
+        return _handbook_directory(make=make) / handbook.FILE
+    if not isinstance(file, str) or not brain.NAME_RE.match(file):
+        raise Refused("a batch writes plain flat names under brain/ and the handbook "
+                      "record, nothing else", 409)
+    return _check_directory(create=True, make=make) / file
+
+
+def _side(path: Path, prefix: str, token: str) -> Path:
+    return path.parent / f"{prefix}{token}-{path.name}"
+
+
+def _plan_batch_entry(item: dict, reading: dict, actor: str, created: set[str]) -> dict:
+    if not isinstance(item, dict):
+        raise Refused("each entry of a batch is a JSON object")
+    for key in item:
+        if key not in BATCH_ENTRY_FIELDS:
+            raise Refused(f"{str(key)[:40]!r} is not a field a batch entry writes",
+                          field=str(key)[:40])
+    entry_id = item.get("id")
+    if not isinstance(entry_id, str) or not brain.ID_RE.match(entry_id):
+        raise Refused(f"{str(entry_id)[:70]!r} is not a Brain entry id", field="id")
+    title = _title(item.get("title"))
+    kind = _kind(item.get("kind"))
+    summary = _line(item.get("summary"), "summary", cap=brain.MAX_FIELD_CHARS)
+    sources = _sources(item.get("sources"))
+    body = _body(item.get("body"))
+    known = {e["id"] for e in reading["entries"]} | created
+    expected = item.get("expected")
+    if expected in (None, "", "none"):
+        taken = {r.get("id") for r in reading["scan"]["records"]}
+        if entry_id in taken or entry_id in reading["duplicates"]:
+            raise Refused(f"{entry_id} already exists on this board; review it again — "
+                          "it is an update now, not a new entry", 409, stale=True,
+                          id=entry_id)
+        if os.path.lexists(brain.directory() / f"{entry_id}.md"):
+            raise Refused(f"brain/{entry_id}.md already exists; nothing was written", 409,
+                          stale=True, id=entry_id)
+        related = _ids(item.get("related"), "related")
+        for target in related:
+            if target == entry_id or target not in known:
+                raise Refused(f"related: {target} is not an entry on this board",
+                              field="related")
+        klass = _classification(item.get("classification") or "Unclassified")
+        if klass == "Superseded":
+            raise Refused("a new entry cannot start Superseded", field="classification")
+        reason = _reason(item.get("reason") or "written; not yet assessed")
+        fields = {"Brain": str(brain.CONTRACT), "Id": entry_id, "Kind": kind,
+                  "Classification": klass, "Summary": summary,
+                  "Source": ", ".join(sources), "Related": ", ".join(related)}
+        _authority(item, fields)
+        text = render(title, fields, body, [_history_line(_now(), klass, actor, reason)])
+        return {"id": entry_id, "file": f"{entry_id}.md", "expected": None, "text": text,
+                "what": "created"}
+    found = _found(reading, entry_id)
+    if found["removed"] is not None:
+        raise Refused(f"{entry_id} is retired; a tombstone is kept as it is", 409)
+    if expected != found["revision"]:
+        raise Refused(f"{entry_id} changed since it was reviewed (reviewed {str(expected)[:16]}, "
+                      f"now {found['revision']}); nothing was written. Review it again.",
+                      409, stale=True, id=entry_id, current=brain.entry(entry_id))
+    if "classification" in item or "reason" in item:
+        raise Refused("an update keeps the entry's classification and its reasons; "
+                      "classify it on its own page", field="classification")
+    parts = _parts(_current_bytes(brain.directory() / found["file"]) or b"")
+    fields = dict(parts["fields"])
+    if "related" in item:
+        related = _ids(item.get("related"), "related")
+        for target in related:
+            if target == entry_id or target not in known:
+                raise Refused(f"related: {target} is not an entry on this board",
+                              field="related")
+        fields["Related"] = ", ".join(related)
+    fields.update({"Kind": kind, "Summary": summary, "Source": ", ".join(sources)})
+    _authority(item, fields)
+    text = render(title, fields, body, parts["history"], parts["extra"])
+    if brain.revision(text.encode("utf-8")) == found["revision"]:
+        raise Refused(f"{entry_id} would not change; leave it out of the batch",
+                      field="entries", id=entry_id)
+    return {"id": entry_id, "file": found["file"], "expected": found["revision"],
+            "text": text, "what": "edited"}
+
+
+def _plan_batch_handbook(change: dict, reading: dict, actor: str,
+                         created: set[str]) -> dict | None:
+    if not isinstance(change, dict) or set(change) - {"expected", "add", "reason"}:
+        raise Refused("the handbook part of a batch says which entries each section adds, "
+                      "the record's revision and why — nothing else", field="handbook")
+    _handbook_directory(make=False)
+    rec = handbook.read_record()
+    if rec["state"] == "refused":
+        raise Refused(f"{rec['file']} was not read: {rec['why']}; nothing was written", 409)
+    if rec["state"] in ("invalid", "unsupported"):
+        raise Refused(f"{rec['file']} does not follow the handbook format; fix it by hand "
+                      "first — the board does not write over a record it cannot read", 409)
+    expected = change.get("expected")
+    expected = None if expected in (None, "", "none") else expected
+    if expected != rec["revision"]:
+        raise Refused(f"the handbook changed since it was reviewed (reviewed "
+                      f"{expected or 'none'}, now {rec['revision'] or 'none'}); nothing was "
+                      "written. Review it again.", 409, stale=True, id="handbook",
+                      current=handbook.reading())
+    add = change.get("add") or {}
+    if not isinstance(add, dict):
+        raise Refused("handbook.add maps a section to the entries it gains", field="handbook")
+    by_id = {e["id"]: e for e in reading["entries"]}
+    sections = {s: list(rec["sections"].get(s) or []) for s in handbook.SECTION_IDS}
+    words = []
+    for sid, ids in add.items():
+        if sid not in handbook.SECTION_IDS:
+            raise Refused("section is one of " + ", ".join(handbook.SECTION_IDS),
+                          field="handbook")
+        gained = []
+        for entry_id in _ids(ids, "handbook entries"):
+            if entry_id in sections[sid]:
+                continue
+            found = by_id.get(entry_id)
+            if entry_id not in created and (found is None or found["removed"] is not None):
+                raise Refused(f"{entry_id} is not a live entry on this board, so the handbook "
+                              "cannot link it", field="handbook")
+            sections[sid].append(entry_id)
+            gained.append(entry_id)
+        if len(sections[sid]) > handbook.MAX_ITEMS:
+            raise Refused(f"a section links at most {handbook.MAX_ITEMS} entries",
+                          field="handbook")
+        if gained:
+            title = dict((s[0], s[1]) for s in handbook.SECTIONS)[sid]
+            words.append(f"{title}: added {', '.join(gained)}")
+    if not words:
+        return None
+    reason = _reason(change.get("reason") or "seeded")
+    history = list(rec.get("history") or []) + [
+        f"- {_now()} · {actor} — {'; '.join(words)}; {reason}"]
+    text = handbook.render(sections, history)
+    if len(text.encode("utf-8")) > brain.MAX_ENTRY_BYTES:
+        raise Refused("this batch would take the handbook record over the size the board "
+                      "reads; nothing was written", 409)
+    return {"id": "handbook", "file": HANDBOOK_FILE, "expected": rec["revision"],
+            "text": text, "what": "linked"}
+
+
+def plan_batch(payload: dict, reading: dict | None = None,
+               actor: str | None = None) -> list[dict]:
+    """The files a batch would write, each with the revision it replaces
+    and its new bytes — or `Refused`. Reads and writes nothing, so a
+    review can show exactly what Apply would do."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    for key in payload:
+        if key not in BATCH_FIELDS:
+            raise Refused(f"{str(key)[:40]!r} is not part of a Brain batch", field=str(key)[:40])
+    actor = actor or _who()
+    reading = reading if reading is not None else brain.reading()
+    entries = payload.get("entries") or []
+    if not isinstance(entries, list):
+        raise Refused("entries is a list", field="entries")
+    ids = [e.get("id") for e in entries if isinstance(e, dict)]
+    if len(set(ids)) != len(ids):
+        raise Refused("a batch names each entry once", field="entries")
+    created = {e.get("id") for e in entries
+               if isinstance(e, dict) and e.get("expected") in (None, "", "none")}
+    files = [_plan_batch_entry(e, reading, actor, created) for e in entries]
+    if payload.get("handbook") is not None:
+        hb = _plan_batch_handbook(payload["handbook"], reading, actor, created)
+        if hb is not None:
+            files.append(hb)
+    if not files:
+        raise Refused("this batch would write nothing; select at least one section",
+                      field="entries")
+    if len(files) > BATCH_MAX_FILES:
+        raise Refused(f"a batch writes at most {BATCH_MAX_FILES} files", field="entries")
+    for f in files:
+        f["target"] = brain.revision(f["text"].encode("utf-8"))
+    return files
+
+
+def write_batch(payload: dict) -> dict:
+    """One protected, all-or-none write of several Brain files (entries
+    and the handbook record) under one request identity. Returns the
+    operation's public result; raises `Refused` with nothing written."""
+    request = _request(payload)
+    label = _line(payload.get("label"), "label", cap=160) or "batch"
+    digest = _digest({k: v for k, v in payload.items() if k != "request"} | {"kind": "batch"})
+    with _LOCK, LOCK:
+        prior = _journal().get(request)
+        if prior is not None:
+            if prior.get("kind") != "batch" or prior.get("digest") != digest:
+                raise Refused("this request identity was already used for a different "
+                              "Brain write; nothing was written", 409)
+            if prior.get("status") == "done" and not prior.get("saved"):
+                raise Refused(f"this batch was refused ({prior.get('refused') or 'not saved'}): "
+                              f"{prior.get('why') or 'nothing was written'}. Review it again "
+                              "and apply it as a new request.", 409, stale=True,
+                              code=prior.get("refused"))
+            if prior.get("status") == "done":
+                return dict(_public(prior), request=request, duplicate=True)
+            return _finish_batch(request, prior, resumed=True)
+        actor = _who()
+        reading = brain.reading()
+        files = plan_batch(payload, reading, actor)
+        entry = {"kind": "batch", "digest": digest, "status": "staging", "at": _now(),
+                 "id": "batch", "file": files[0]["file"], "label": label,
+                 "what": label, "actor": actor, "token": secrets.token_hex(4),
+                 "files": files}
+        _journal_put(request, entry)
+        return _finish_batch(request, entry, resumed=False)
+
+
+def _now_rev(path: Path) -> str | None:
+    current = _current_bytes(path)
+    return brain.revision(current) if current is not None else None
+
+
+def _remove(path: Path) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def _stage(path: Path, token: str, text: str) -> Path:
+    staged = _side(path, STAGE_PREFIX, token)
+    records.write_bytes(staged, text.encode("utf-8"), durable=True, mkdir=False)
+    return staged
+
+
+def _cleanup(entry: dict, paths: list[Path]) -> None:
+    for path in paths:
+        _remove(_side(path, STAGE_PREFIX, entry["token"]))
+        _remove(_side(path, BACKUP_PREFIX, entry["token"]))
+
+
+def _roll_back(entry: dict, paths: list[Path]) -> list[str]:
+    """Every destination this batch already switched goes back to what it
+    held: a kept original is put back, a new file removed. A destination
+    that holds neither is someone else's and is left alone (named)."""
+    untouched: list[str] = []
+    if entry.get("status") != "switching":
+        _cleanup(entry, paths)      # nothing was switched yet
+        return untouched
+    for f, path in zip(entry["files"], paths):
+        now = _now_rev(path)
+        if now != f["target"] or now == f["expected"]:
+            if now not in (f["expected"], f["target"]):
+                untouched.append(f["file"])
+            continue
+        if f["expected"] is None:
+            _remove(path)
+        else:
+            kept = _side(path, BACKUP_PREFIX, entry["token"])
+            if kept.is_file():
+                os.replace(kept, path)
+            else:
+                untouched.append(f["file"])
+    for directory in {p.parent for p in paths}:
+        records._sync_dir(directory)
+    _cleanup(entry, paths)
+    return untouched
+
+
+def _batch_refused(request: str, entry: dict, code: str, why: str, **extra) -> None:
+    refused = {k: v for k, v in entry.items() if k != "files"}
+    refused["files"] = [{k: v for k, v in f.items() if k != "text"} for f in entry["files"]]
+    refused.update(status="done", saved=False, refused=code, why=why, finished=_now())
+    _journal_put(request, refused)
+    raise Refused(why, 409, stale=True, code=code, **extra)
+
+
+def _finish_batch(request: str, entry: dict, *, resumed: bool) -> dict:
+    files = entry["files"]
+    paths = [_batch_path(f["file"]) for f in files]
+    with brain.VISIBLE:
+        nows = [_now_rev(p) for p in paths]
+        moved = [f["file"] for f, now in zip(files, nows)
+                 if now not in (f["expected"], f["target"])]
+        if moved:
+            untouched = _roll_back(entry, paths)
+            _batch_refused(request, entry, "conflict",
+                           f"brain/{moved[0]} changed while this batch was being applied, "
+                           "so none of it was applied (anything it had switched was put "
+                           "back). Review it again against what is there now.",
+                           files=moved, untouched=untouched)
+    try:
+        if entry["status"] == "staging":
+            for n, (f, path, now) in enumerate(zip(files, paths, nows)):
+                if now != f["target"]:
+                    _stage(path, entry["token"], f["text"])
+                _fault(f"staged:{n}")
+            entry["status"] = "switching"
+            _journal_put(request, entry)
+            _fault("switching")
+        with brain.VISIBLE:
+            nows = [_now_rev(p) for p in paths]
+            moved = [f["file"] for f, now in zip(files, nows)
+                     if now not in (f["expected"], f["target"])]
+            if moved:
+                untouched = _roll_back(entry, paths)
+                _batch_refused(request, entry, "conflict",
+                               f"brain/{moved[0]} changed just before this batch was "
+                               "switched in, so none of it was applied. Review it again.",
+                               files=moved, untouched=untouched)
+            for f, path, now in zip(files, paths, nows):
+                kept = _side(path, BACKUP_PREFIX, entry["token"])
+                if f["expected"] is not None and now == f["expected"] and not kept.exists():
+                    records.write_bytes(kept, _current_bytes(path) or b"", durable=True,
+                                        mkdir=False)
+            for n, (f, path, now) in enumerate(zip(files, paths, nows)):
+                if now == f["target"]:
+                    continue
+                staged = _side(path, STAGE_PREFIX, entry["token"])
+                if not staged.is_file():
+                    _stage(path, entry["token"], f["text"])
+                os.replace(staged, path)
+                _fault(f"switched:{n}")
+            for directory in {p.parent for p in paths}:
+                records._sync_dir(directory)
+    except Refused:
+        raise
+    except Exception as exc:
+        # bench did not expect this: put back what was switched, so nothing
+        # half-applied stays visible, and say so
+        with brain.VISIBLE:
+            _roll_back(entry, paths)
+        _batch_refused(request, entry, "interrupted",
+                       f"applying the batch stopped part way ({exc}); everything it had "
+                       "switched was put back, so none of it was applied. Apply again.")
+    _cleanup(entry, paths)
+    commit = _commit_batch(entry, paths)
+    done = {k: v for k, v in entry.items() if k != "files"}
+    done["files"] = [dict({k: v for k, v in f.items() if k != "text"}, revision=f["target"])
+                     for f in files]
+    done.update(status="done", saved=True, revision=None, commit=commit,
+                finished=_now(), resumed=resumed)
+    _journal_put(request, done)
+    state.record_board_event({
+        "kind": "brain", "actor": entry["actor"], "file": "brain/",
+        "summary": f"Brain: {entry['label']} by {entry['actor']} — {len(files)} file(s) "
+                   + ("committed" if commit["state"] == "committed"
+                      else "saved, not committed" if commit["state"] == "off"
+                      else "saved; the commit failed")})
+    state.broadcast({"type": "board"})
+    return dict(_public(done), request=request)
+
+
+def _commit_batch(entry: dict, paths: list[Path]) -> dict:
+    if not config.COMMIT_MOVES:
+        return {"state": "off", "detail": "committing board edits is off "
+                "(BOARD_COMMIT_MOVES); the files are saved and not committed"}
+    if config.state_repo() is None:
+        return {"state": "failed", "detail": "the work root is in no work-state repository"}
+    for path in paths:
+        if config.escapes_work(path) is not None:
+            return {"state": "failed", "detail": f"brain/{path.name} resolves outside the "
+                    "work root"}
+    failure = f"brain: {entry['label']} saved, but committing it failed"
+    seen = {id(e) for e in list(state.BOARD_EVENTS)}
+    try:
+        name = str(paths[0].relative_to(config.work_root()))
+    except ValueError:
+        name = paths[0].name
+    ok = taskfiles.commit_paths(name, f"board: brain {entry['label']} ({entry['actor']})",
+                                [str(p) for p in paths], failure)
+    if ok:
+        sha = _git("log", "-1", "--format=%H", "--", *[str(p) for p in paths]).stdout.strip()
+        return {"state": "committed", "sha": sha}
+    said = [e.get("summary", "") for e in list(state.BOARD_EVENTS)
+            if id(e) not in seen and str(e.get("summary", "")).startswith(failure)]
+    detail = said[-1][len(failure):].lstrip(": ") if said else "git refused the commit"
+    return {"state": "failed", "detail": detail[:300]}
+
+
+def _push_batch(entry: dict) -> dict:
+    commit = entry.get("commit") or {}
+    if commit.get("state") != "committed":
+        return {"state": "not-committed"}
+    if not config.SYNC:
+        return {"state": "off", "detail": "sync is off (BOARD_SYNC); the commit stays in "
+                "this work-state repository until someone pushes it"}
+    remote = config.state_git_remote()
+    if not remote:
+        return {"state": "failed", "detail": "sync has no remote to publish through"}
+    upstream = f"{remote}/{config.STATE_BASE}"
+    sha = commit.get("sha") or ""
+    if sha and _git("merge-base", "--is-ancestor", sha, upstream).returncode == 0:
+        return {"state": "shared", "upstream": upstream}
+    differs = []
+    for f in entry.get("files") or []:
+        shown = _git("show", f"{upstream}:{_repo_path(f['file'])}")
+        there = brain.revision(shown.stdout.encode("utf-8")) if shown.returncode == 0 else None
+        if there != f.get("revision"):
+            differs.append({"file": f["file"], "local": f.get("revision"), "remote": there,
+                            "base": f.get("expected")})
+    if not differs:
+        return {"state": "shared", "upstream": upstream}
+    status = sync.status()
+    # the remote holds another version than the one this batch replaced:
+    # someone else changed it there. Sync will not force over it, and
+    # neither does this: the person compares the two.
+    clash = [d for d in differs if d["remote"] not in (None, d["base"])]
+    if clash and status.get("state") in ("stalled",):
+        return {"state": "conflict", "upstream": upstream,
+                "detail": status.get("detail") or "the remote holds another version",
+                "files": clash}
+    if status.get("state") in ("offline", "stalled"):
+        return {"state": "failed", "detail": status.get("detail") or status["state"],
+                "upstream": upstream}
+    return {"state": "pending", "upstream": upstream}
+
+
+def compare(request: str) -> dict:
+    """A remote conflict, side by side: for each file of a batch whose
+    remote version is neither the one the batch replaced nor the one it
+    wrote, this board's text and the remote's. A read of local git (the
+    last fetch); nothing is fetched, merged or overwritten."""
+    if not isinstance(request, str) or not REQUEST_RE.match(request):
+        raise Refused("not a request identity")
+    entry = _journal().get(request)
+    if entry is None or entry.get("kind") != "batch" or not entry.get("saved"):
+        raise Refused("no applied batch has this request identity", 404)
+    push = _push_batch(entry)
+    out = []
+    remote = config.state_git_remote()
+    upstream = f"{remote}/{config.STATE_BASE}" if remote else None
+    for d in push.get("files") or []:
+        local = _current_bytes(_batch_path(d["file"], make=False))
+        shown = _git("show", f"{upstream}:{_repo_path(d['file'])}") if upstream else None
+        out.append({"file": d["file"], "local": (local or b"").decode("utf-8", "replace")[:64_000],
+                    "remote": shown.stdout[:64_000] if shown and shown.returncode == 0 else None,
+                    "localRevision": d["local"], "remoteRevision": d["remote"]})
+    return {"request": request, "push": push, "files": out,
+            "next": "settle the difference in the work-state repository by hand (merge or "
+                    "keep one version), then Retry push; bench never forces either side"}
+
+
+def _public_batch(entry: dict) -> dict:
+    commit = entry.get("commit") or {}
+    files = []
+    for f in entry.get("files") or []:
+        row = {"file": f["file"], "id": f.get("id"), "what": f.get("what"),
+               "expected": f.get("expected"), "revision": f.get("revision")}
+        if entry.get("saved"):
+            try:
+                row["onDisk"] = _now_rev(_batch_path(f["file"], make=False))
+            except Refused:
+                row["onDisk"] = None
+        files.append(row)
+    out = {"kind": "batch", "label": entry.get("label"), "actor": entry.get("actor"),
+           "at": entry.get("at"), "finished": entry.get("finished"),
+           "status": entry.get("status"), "saved": bool(entry.get("saved")),
+           "files": files, "commit": commit, "refused": entry.get("refused"),
+           "why": entry.get("why")}
+    if entry.get("saved"):
+        out["push"] = _push_batch(entry)
+    return out
+
+
+def recover() -> list[str]:
+    """At start-up: every batch an earlier process left part way through
+    is settled — finished where every destination still holds what it
+    replaces or what it writes, otherwise put back to none. Returns the
+    requests it settled."""
+    settled = []
+    with _LOCK, LOCK:
+        for request, entry in list(_journal().items()):
+            if entry.get("kind") != "batch" or entry.get("status") == "done":
+                continue
+            try:
+                _finish_batch(request, entry, resumed=True)
+            except Refused:
+                pass
+            settled.append(request)
+    return settled
+
+
 __all__ = ["Refused", "render", "write", "operation", "retry", "revisions",
-           "journal_path"]
+           "journal_path", "plan_batch", "write_batch", "compare", "recover"]
