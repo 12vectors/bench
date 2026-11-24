@@ -1828,7 +1828,7 @@ def _launch_seed(draft: dict, *, continue_request: str) -> None:
             name = f"seed-src-{n}"
             suffix = Path(item["path"]).suffix[:12]
             staged = staging / f"{name}{suffix}"
-            staged.write_bytes(data)
+            records.write_bytes(staged, data)
             named[name] = item["id"]
             context.append({
                 "name": name, "source": f"{item['root']}:{item['path']}",
