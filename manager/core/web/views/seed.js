@@ -534,7 +534,7 @@ const PUSH_WORDS = { shared: 'Shared', pending: 'Committed locally; sync pending
 
 /* A bounded line diff — the same reading as the Brain Agent's, kept here so
    this module imports nothing from the Brain view that imports it. */
-function lineDiff(before, after, label) {
+function seedDiff(before, after, label) {
   const a = (before || '').split('\n').slice(0, 1200);
   const b = (after || '').split('\n').slice(0, 1200);
   const n = a.length, m = b.length;
@@ -686,7 +686,7 @@ function reviewSectionHtml(row) {
     `<ul class="sd-list">${cites || '<li>None.</li>'}</ul></details>` +
     `<details class="sd-excl"${row.before ? ' open' : ''}><summary>${row.before ? 'Before and after' : 'What would be written'} — ` +
     `<code>brain/${esc(row.target)}.md</code></summary>` +
-    (row.after ? lineDiff(row.before || '', row.after, `Changes to ${row.target}`)
+    (row.after ? seedDiff(row.before || '', row.after, `Changes to ${row.target}`)
       : '<p class="b-note">Not computed while the section is not selected or Apply is refused.</p>') +
     '</details></article>';
 }
@@ -723,7 +723,7 @@ function outcomeHtml() {
     '<a class="b-btn" href="/board" data-route>Return to board</a></div>' +
     (cmp ? (cmp.error ? `<p class="b-missing">${esc(cmp.error)}</p>`
       : `<p class="b-note">${esc(cmp.next)}</p>` + cmp.files.map(f => `<h3 class="sd-root"><code>brain/${esc(f.file)}</code></h3>` +
-        lineDiff(f.remote || '', f.local || '', `The remote's version against this board's, ${f.file}`)).join('')) : '') +
+        seedDiff(f.remote || '', f.local || '', `The remote's version against this board's, ${f.file}`)).join('')) : '') +
     '<p class="b-note">The new entries start Unclassified. Nothing here gives a run this content, ' +
     'launches anything, or makes the handbook a requirement.</p></section>';
 }
@@ -754,7 +754,7 @@ function reviewHtml() {
     r.sections.map(reviewSectionHtml).join('') +
     '<article class="b-panel" aria-labelledby="sd-rv-hb"><h3 id="sd-rv-hb">Handbook</h3>' +
     (hb.after ? `<details class="sd-excl" open><summary>Before and after — <code>brain/${esc(hb.file)}</code></summary>` +
-      lineDiff(hb.before || '', hb.after, 'Changes to the handbook') + '</details>'
+      seedDiff(hb.before || '', hb.after, 'Changes to the handbook') + '</details>'
       : '<p class="b-note">The handbook would not change.</p>') + '</article>' +
     '<dl class="sd-facts">' +
     `<dt>Covered</dt><dd>${esc((r.coverage.applied || []).join(', ') || 'nothing')}</dd>` +
