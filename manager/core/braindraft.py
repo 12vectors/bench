@@ -58,6 +58,7 @@ import re
 import secrets
 import shutil
 import stat
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -1379,6 +1380,7 @@ def evidence_section(draft: dict, rnd: dict, bindings: list[dict],
 
 def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
     record, stopped, rc = agents.finish(agent_id, proc, log_file)
+    _drop_scratch(agent_id)
     with LOCK:
         draft = DRAFTS.get(draft_id)
         if draft is None:
@@ -1509,6 +1511,58 @@ MAX_SECTION_CLAIMS = 30
 MAX_SECTION_LIST = 10
 SEED_RETENTION = 14 * 24 * 3600
 REQUIRED_ENFORCEMENT = (("read-only-tools", "enforced"), ("shell-withheld", "enforced"))
+# Instruction files a coding-agent CLI discovers by itself in the directory
+# it starts in and in every ancestor of it (the Claude CLI's CLAUDE.md
+# memory, which may import AGENTS.md). A seed round's harness must be given
+# none of them: they are not in the approved manifest. So the round starts
+# in an empty scratch directory outside the tool, the application and the
+# work root, and a launch whose scratch directory has any of these at or
+# above it is refused rather than run on unapproved instructions.
+MEMORY_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md",
+                ".claude/CLAUDE.md", ".claude/rules")
+SCRATCH_PREFIX = "bench-seed-round-"
+SCRATCH: dict[str, Path] = {}      # agent id: the scratch directory it started in
+
+
+def memory_files_at_or_above(path: Path) -> list[str]:
+    """The instruction files a CLI started in `path` would discover there
+    or in an ancestor — every one of them, by absolute path."""
+    found: list[str] = []
+    here = Path(path).resolve()
+    for d in (here, *here.parents):
+        for name in MEMORY_FILES:
+            candidate = d / name
+            try:
+                if candidate.exists():
+                    found.append(str(candidate))
+            except OSError:
+                found.append(str(candidate))
+    return found
+
+
+def _seed_scratch() -> Path:
+    """An empty directory for one seed round to start in: outside every
+    root bench knows (so nothing of the tool, the application or the work
+    state is beside it) and with no instruction file at or above it.
+    Refused, with nothing left behind, when the system's temporary
+    directory cannot give one."""
+    scratch =Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
+    roots = [Path(r).resolve() for r in (config.REPO, config.WORK, config.TM_ROOT,
+                                          config.LOCAL) if r]
+    inside = [str(r) for r in roots if _within(r, scratch)]
+    found = memory_files_at_or_above(scratch)
+    if inside or found:
+        shutil.rmtree(scratch, ignore_errors=True)
+        why = (f"inside {inside[0]}" if inside else
+               f"below the instruction file {found[0]}, which the harness would read "
+               f"though it is not an approved source")
+        raise Refused(f"the seed round's starting directory {scratch} is {why} — set "
+                      f"TMPDIR for the board to a directory outside every repository "
+                      f"with no CLAUDE.md or AGENTS.md above it; nothing was launched",
+                      409, code="memory-files")
+    return scratch
+
+
 TOKEN_BUDGET = {
     "limit": None, "enforced": False,
     "why": ("the harness reports no token usage to bench and accepts no token cap, so "
@@ -1669,7 +1723,13 @@ def seed_preflight(payload) -> dict:
                    "sha256": i["sha256"][:12], "git": i.get("git")} for i in items],
         "notRead": len(manifest.get("items") or []) - len(items),
         "launch": {
-            "cwd": "the round's own pinned bundle — not the application checkout",
+            "cwd": ("an empty scratch directory outside the tool, the application "
+                    "and the work root, with no CLAUDE.md or AGENTS.md at or above "
+                    "it, so the harness discovers no instruction file the person did "
+                    "not approve; not the application checkout"),
+            "memory": ("the vendor CLI may still load the operator's own user-level "
+                       "memory (~/.claude/CLAUDE.md), outside every repository; "
+                       "bench does not withhold it"),
             "how": "each approved item re-read, held to its recorded sha256, and pinned "
                    "as a read-only copy granted by one exact read",
             "denied": "credential-shaped paths, the tool's manager/local/.env and "
@@ -1854,11 +1914,15 @@ def _launch_seed(draft: dict, *, continue_request: str) -> None:
     if not found.get("bundle"):
         raise Refused("no approved source could be pinned; nothing was launched", 409)
     bundle = Path(found["bundle"]["path"])
-    found["cwd"] = {"policy": "pinned-bundle", "path": str(bundle)}
     found["readDeny"] = read_deny(bundle.name)
     unsafe = deny_problems(found["readDeny"])
     if unsafe:
         raise Refused(_deny_refusal(unsafe), 409)
+    # The bundle lives under the tool's state, so starting there would hand
+    # the harness every instruction file above it (the tool's CLAUDE.md, and
+    # in a vendored install the application's). The round starts in an
+    # empty scratch directory instead (made just before the launch, below)
+    # and reads its sources by exact path.
     note = draft["text"]
     conversation = _conversation_text(draft)
     if round_no >= config.BRAIN_DRAFT_ROUNDS:
@@ -1879,7 +1943,7 @@ def _launch_seed(draft: dict, *, continue_request: str) -> None:
     prompt = templates.render(SEED_TEMPLATE, loaded["text"], fields)
     found["template"] = templates.identity(loaded)
     agent_id = f"brain-{draft['id']}-{round_no}-{secrets.token_hex(2)}"
-    _start_round(draft, round_no, continue_request, agent_id, found, prompt, bundle, {
+    facts = {
         "manifest": manifest["digest"], "approval": draft["frozen"]["approval"],
         "app": {"root": None,
                 "commit": (manifest["repositories"].get("app") or {}).get("commit")},
@@ -1888,8 +1952,23 @@ def _launch_seed(draft: dict, *, continue_request: str) -> None:
                      "root": i["root"], "path": i["path"],
                      **({"lines": i["lines"]} if i.get("lines") else {})} for i in items],
         "excluded": len(manifest.get("items") or []) - len(items),
-        "template": templates.identity(loaded), "cwd": "pinned-bundle"},
-        f"drafting a private Brain seed (round {round_no}, {len(items)} approved sources)")
+        "template": templates.identity(loaded), "cwd": "seed-scratch"}
+    scratch = _seed_scratch()
+    found["cwd"] = {"policy": "seed-scratch", "path": str(scratch)}
+    SCRATCH[agent_id] = scratch
+    try:
+        _start_round(draft, round_no, continue_request, agent_id, found, prompt, scratch,
+                     facts, f"drafting a private Brain seed (round {round_no}, "
+                            f"{len(items)} approved sources)")
+    except BaseException:
+        _drop_scratch(agent_id)
+        raise
+
+
+def _drop_scratch(agent_id: str) -> None:
+    scratch = SCRATCH.pop(agent_id, None)
+    if scratch is not None:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _seed_refs(value, where: str, given: dict, problems: list,

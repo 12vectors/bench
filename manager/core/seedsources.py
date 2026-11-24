@@ -1033,4 +1033,16 @@ def drift(manifest: dict) -> list[dict]:
         if (b["state"], b.get("sha256")) != (i["state"], i.get("sha256")):
             out.append({"what": i["id"], "was": b["state"], "now": i["state"],
                         "changed": b.get("sha256") != i.get("sha256")})
+    # The digest is an unkeyed hash, so a manifest built by hand can carry a
+    # recomputed one: a coverage gap emptied, a treatment raised, an item
+    # added outside the selection. The comparisons above would not see any
+    # of that. What this board reads now, from the manifest's own selection,
+    # must digest to exactly what the manifest says — anything else is
+    # refused rather than trusted, whether it moved or was edited.
+    if now["digest"] != manifest["digest"]:
+        out.append({"what": "manifest", "was": manifest["digest"][:12],
+                    "now": now["digest"][:12],
+                    "changed": True,
+                    "why": "the manifest does not match what its own selection reads "
+                           "now — inspect again rather than reuse it"})
     return out

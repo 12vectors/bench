@@ -33,6 +33,7 @@ permission text it generates, never that a vendor honours it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -71,8 +72,13 @@ with open(here / "calls.txt", "a") as calls:
     calls.write("call\n")
 allow = settings.get("permissions", {}).get("allow", [])
 reads = [r[len("Read(/"):-1] for r in allow if r.startswith("Read(")]
-(here / "seen.json").write_text(json.dumps({"cwd": os.getcwd(), "prompt": prompt,
-    "reads": reads, "deny": settings.get("permissions", {}).get("deny", [])}))
+cwd = Path(os.getcwd()).resolve()
+memory = [str(d / n) for d in (cwd, *cwd.parents)
+          for n in ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".claude/CLAUDE.md")
+          if (d / n).exists()]
+(here / "seen.json").write_text(json.dumps({"cwd": str(cwd), "prompt": prompt,
+    "reads": reads, "memory": memory,
+    "deny": settings.get("permissions", {}).get("deny", [])}))
 draft = re.search(r'"draft": "(bd-[0-9a-f]+)"', prompt).group(1)
 rnd = int(re.search(r'"round": (\d+)', prompt).group(1))
 ids = dict(re.findall(r"- `((?:app|work):[^`]+)` .*?: `([^`]+)`", prompt))
@@ -269,6 +275,44 @@ class Preview(_Seeding):
         with self.assertRaises(braindraft.Refused):
             braindraft.seed_preflight({"manifest": bad})
 
+    def test_a_forged_manifest_with_a_recomputed_digest_is_refused(self):
+        # the digest is unkeyed: an edit that recomputes it must still be
+        # caught, by reading the manifest's own selection again
+        def forged(change):
+            bad = json.loads(json.dumps(self.manifest))
+            change(bad)
+            bad["digest"] = seedsources.digest_of(bad)
+            return bad
+
+        def no_gaps(m):
+            m["coverage"]["gaps"] = []
+
+        def raised(m):
+            for i in m["items"]:
+                if i["id"] == "app:misc.txt":
+                    i["treatment"] = "policy"
+
+        def added(m):
+            extra = dict(next(i for i in m["items"] if i["id"] == "app:README.md"))
+            extra.update(id="app:NOTES.md", path="NOTES.md",
+                         sha256=hashlib.sha256(NOTES.encode()).hexdigest(),
+                         bytes=len(NOTES))
+            m["items"].append(extra)
+
+        for change in (no_gaps, raised, added):
+            bad = forged(change)
+            seedsources.check(bad)          # the digest alone cannot tell
+            pre = braindraft.seed_preflight({"manifest": bad})
+            self.assertFalse(pre["ready"], change.__name__)
+            self.assertIn("manifest", [d["what"] for d in pre["manifest"]["drift"]])
+            with self.assertRaises(braindraft.Refused) as caught:
+                braindraft.start_seed({"request": f"seed-forged-{change.__name__}",
+                                       "manifest": bad, "approval": pre["approval"]})
+            self.assertEqual(caught.exception.extra.get("code"), "source-drift",
+                             change.__name__)
+        self.assertEqual(self.calls(), 0)
+        self.assertEqual(seedsources.drift(self.manifest), [])
+
     def test_an_unsupported_harness_blocks_rather_than_broadens(self):
         with mock.patch.object(config, "ADAPTER", "opencode"):
             pre = braindraft.seed_preflight({"manifest": self.manifest})
@@ -328,21 +372,47 @@ class Generate(_Seeding):
     def test_the_round_reads_only_its_pinned_bundle(self):
         draft = self.generate()
         seen = self.seen()
-        bundle = Path(seen["cwd"])
-        self.assertNotEqual(bundle.resolve(), self.app.resolve())
-        self.assertTrue(str(bundle).startswith(str(braindraft.pin_dir())))
+        cwd = Path(seen["cwd"])
+        self.assertNotEqual(cwd.resolve(), self.app.resolve())
         self.assertEqual(len(seen["reads"]), 5)
-        for path in seen["reads"]:
-            self.assertTrue(Path("/" + path.lstrip("/")).resolve().is_relative_to(
-                bundle.resolve()), path)
+        reads = [Path("/" + path.lstrip("/")).resolve() for path in seen["reads"]]
+        bundles = {p.parent for p in reads}
+        self.assertEqual(len(bundles), 1, bundles)
+        bundle = bundles.pop()
+        self.assertTrue(bundle.is_relative_to(braindraft.pin_dir().resolve()))
+        # the round started in an empty scratch directory with no
+        # instruction file at or above it, outside every root
+        self.assertTrue(cwd.name.startswith(braindraft.SCRATCH_PREFIX), cwd)
+        self.assertEqual(seen["memory"], [])
+        for root in (self.app, self.work, self.dir, config.TM_ROOT):
+            self.assertFalse(cwd.resolve().is_relative_to(Path(root).resolve()), root)
+        self.assertFalse(cwd.exists(), "the scratch directory outlived its round")
         self.assertNotIn("NOTES", " ".join(seen["reads"]))
         self.assertIn("orchard-prod-1", NOTES)
         self.assertNotIn("orchard-prod-1", json.dumps(draft))
         deny = " ".join(seen["deny"])
         self.assertIn(str((self.dir / "local" / "state" / "agent").resolve()), deny)
         rnd = braindraft.DRAFTS[draft["id"]]["rounds"][0]
-        self.assertEqual(rnd["cwd"], "pinned-bundle")
+        self.assertEqual(rnd["cwd"], "seed-scratch")
         self.assertEqual(rnd["approval"], draft["seed"]["frozen"]["approval"])
+
+    def test_an_instruction_file_above_the_start_refuses_the_launch(self):
+        # A temporary directory under a CLAUDE.md would hand the harness an
+        # instruction file nobody approved: refused, nothing launched or left.
+        tmp = self.dir / "tmp-with-memory"
+        tmp.mkdir()
+        (self.dir / "CLAUDE.md").write_text("unapproved instructions\n")
+        pre = braindraft.seed_preflight({"manifest": self.manifest})
+        self.scenario("seed")
+        with mock.patch.object(braindraft.tempfile, "tempdir", str(tmp)):
+            with self.assertRaises(braindraft.Refused) as caught:
+                braindraft.start_seed({"request": "seed-memory-0001",
+                                       "manifest": self.manifest,
+                                       "approval": pre["approval"]})
+        self.assertEqual(caught.exception.extra.get("code"), "memory-files")
+        self.assertEqual(self.calls(), 0)
+        self.assertEqual(list(tmp.iterdir()), [])
+        self.assertEqual(braindraft.listing()["seeds"], [])
 
     def test_the_page_is_sent_no_private_runtime_data(self):
         draft = self.generate()
@@ -598,6 +668,12 @@ class _OneRepoSeeding:
         state.broadcast = lambda *_a, **_k: None
 
     def test_a_shared_repository_drafts_from_both_roots(self):
+        # instruction files above the tool and in the application: none of
+        # them is an approved source, so the round must not start under them
+        (self.tool / "CLAUDE.md").write_text("tool instructions\n")
+        (self.tool / "manager" / "local" / "CLAUDE.md").write_text("local\n")
+        if not (self.app / "CLAUDE.md").exists():
+            (self.app / "CLAUDE.md").write_text("app instructions\n")
         head = git(self.app, "rev-parse", "HEAD").stdout
         manifest = seedsources.inspect({"sources": [
             {"root": "app", "path": "README.md", "treatment": "cite"},
@@ -617,6 +693,10 @@ class _OneRepoSeeding:
         by = {s["section"]: s for s in draft["seed"]["draft"]["sections"]}
         self.assertEqual(by["direction"]["claims"][0]["sources"], ["work:plans/roadmap.md"])
         self.assertIn("9090", by["how-it-works"]["body"])
+        seen = json.loads((self.dir / "seen.json").read_text())
+        self.assertEqual(seen["memory"], [])
+        for root in (self.app, self.tool):
+            self.assertFalse(Path(seen["cwd"]).is_relative_to(root.resolve()), root)
         self.assertEqual(git(self.app, "rev-parse", "HEAD").stdout, head)
         self.assertFalse((self.tool / "brain").exists())
 
