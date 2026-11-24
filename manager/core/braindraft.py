@@ -747,6 +747,9 @@ def continue_(payload: dict) -> dict:
         except Exception:
             draft.clear()
             draft.update(backup)
+            # a launch intent may already be on disk: the request as the
+            # page saw it is what stays there too
+            _save(draft)
             raise
         return {"draft": public(draft), "duplicate": False}
 
@@ -950,8 +953,7 @@ def _start_round(draft: dict, round_no: int, continue_request: str, agent_id: st
                 _path(draft["id"]).unlink()
             except OSError:
                 pass
-        else:
-            _save(draft)
+        # an existing request is put back as the page saw it by its caller
         raise Refused(f"the Brain Agent could not be launched: {exc}", 409)
     name = agents.pick_name(draft["id"])
     with state.LOCK:
