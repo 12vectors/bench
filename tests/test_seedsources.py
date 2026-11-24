@@ -190,6 +190,38 @@ class Identities(_Seed):
         self.assertIn("destination-refused", [p["code"] for p in out["problems"]])
 
 
+    def test_an_application_root_that_is_missing_or_not_a_repository_is_refused(self):
+        with mock.patch.object(config, "app_repo", lambda: self.dir / "nowhere"):
+            out = seedsources.identities()
+        self.assertIn("app-missing", [p["code"] for p in out["problems"]])
+        plain = self.dir / "plain"
+        plain.mkdir()
+        with mock.patch.object(config, "app_repo", lambda: plain):
+            out = seedsources.identities()
+        self.assertIn("app-not-repository", [p["code"] for p in out["problems"]])
+        self.assertTrue(out["refused"])
+        self.assertFalse((plain / ".git").exists(), "a repository was created")
+        self.assertFalse((self.dir / "nowhere").exists(), "a directory was created")
+
+    def test_roots_that_contain_one_another_are_refused(self):
+        nested = self.app / "docs"
+        with mock.patch.object(config, "work_root", lambda: nested):
+            out = seedsources.identities()
+            self.assertIn("roots-overlap", [p["code"] for p in out["problems"]])
+            with self.assertRaises(seedsources.Refused) as caught:
+                self.inspect(("app", "README.md"))
+        self.assertEqual(caught.exception.code, "mapping-refused")
+
+    def test_a_handbook_record_that_is_a_link_is_refused(self):
+        outside = self.dir / "handbook.md"
+        outside.write_text("# Project handbook\n\n**Brain handbook:** 1\n")
+        (self.work / "brain" / "handbook").mkdir(parents=True)
+        os.symlink(outside, self.work / "brain" / "handbook" / "handbook.md")
+        out = seedsources.identities()
+        self.assertEqual(out["destination"]["handbook"]["state"], "refused")
+        self.assertIn("destination-refused", [p["code"] for p in out["problems"]])
+
+
 class Listing(_Seed):
 
     def test_candidates_are_names_and_sizes_with_exclusions_said(self):
@@ -310,6 +342,96 @@ class Inspect(_Seed):
             with self.assertRaises(seedsources.Refused) as caught:
                 seedsources.inspect(payload)
             self.assertEqual(caught.exception.code, code, payload)
+
+    def test_a_large_file_is_read_only_as_a_bounded_slice(self):
+        line = "a line of the long design notes, repeated\n"
+        big = line * (seedsources.MAX_FILE_BYTES // len(line) + 50)
+        (self.app / "long.md").write_text(big)
+        (self.app / "huge.md").write_bytes(b"x\n" * (seedsources.MAX_SLICE_SOURCE // 2 + 10))
+        self.app_before = tree(self.app)
+        app = {c["path"]: c for c in seedsources.reading()["candidates"]["app"]}
+        self.assertEqual(app["long.md"]["state"], "candidate")
+        self.assertTrue(app["long.md"]["sliceOnly"])
+        self.assertFalse(app["long.md"]["default"])
+        self.assertEqual(app["huge.md"]["state"], "excluded")
+        self.assertFalse(app["huge.md"].get("sliceOnly"))
+        items = self.by_id(self.inspect(
+            ("app", "long.md"), ("app", "long.md", {"lines": [1, 10]}),
+            ("app", "long.md", {"lines": [1, 1_000_000]}),
+            ("app", "huge.md", {"lines": [1, 2]})))
+        whole = items["app:long.md"]
+        self.assertEqual(whole["state"], "excluded")
+        self.assertIn("slice", whole["why"])
+        part = items["app:long.md#L1-L10"]
+        self.assertEqual(part["state"], "read")
+        self.assertEqual((part["bytes"], part["sha256"]), (len(line * 10), sha(line * 10)))
+        self.assertEqual((part["fileBytes"], part["fileSha256"]), (len(big), sha(big)))
+        self.assertEqual(part["git"], "untracked")
+        everything = items["app:long.md#L1-L1000000"]
+        self.assertEqual(everything["state"], "excluded")
+        self.assertIsNone(everything["sha256"])
+        self.assertIn("slice", everything["why"])
+        self.assertEqual(items["app:huge.md#L1-L2"]["state"], "excluded")
+
+    def test_the_total_bound_excludes_what_does_not_fit(self):
+        with mock.patch.object(seedsources, "MAX_TOTAL_BYTES", len(README) + 5):
+            m = self.inspect(("app", "README.md"), ("app", "CONTRIBUTING.md"))
+        items = self.by_id(m)
+        self.assertEqual(items["app:README.md"]["state"], "read")
+        self.assertEqual(items["app:CONTRIBUTING.md"]["state"], "excluded")
+        self.assertTrue(items["app:CONTRIBUTING.md"]["bound"])
+        self.assertEqual(m["coverage"]["bytes"], len(README))
+
+    def test_binary_and_non_utf8_content_is_excluded(self):
+        (self.app / "latin.md").write_bytes("caf\xe9\n".encode("latin-1"))
+        (self.app / "blob.txt").write_bytes(b"head\0tail\n")
+        self.app_before = tree(self.app)
+        items = self.by_id(self.inspect(("app", "latin.md"), ("app", "blob.txt")))
+        self.assertIn("UTF-8", items["app:latin.md"]["why"])
+        self.assertIn("binary", items["app:blob.txt"]["why"])
+        for i in items.values():
+            self.assertEqual(i["state"], "excluded")
+            self.assertIsNone(i["sha256"])
+
+    def test_only_listed_candidates_are_read(self):
+        (self.app / ".gitignore").write_text("ignored.md\nscratch/\n")
+        (self.app / "ignored.md").write_text("an ignored file\n")
+        (self.app / "scratch").mkdir()
+        (self.app / "scratch" / "copy.md").write_text("a copy\n")
+        (self.app / ".envrc").write_text("export X=1\n")
+        outside = self.dir / "ref-outside"
+        outside.mkdir()
+        (outside / "spec.md").write_text("# Spec\n")
+        os.symlink(outside, self.work / "reference")
+        self.app_before = tree_safe(self.app)
+        app = {c["path"] for c in seedsources.reading()["candidates"]["app"]}
+        work = {c["path"] for c in seedsources.reading()["candidates"]["work"]}
+        self.assertNotIn("ignored.md", app)
+        self.assertNotIn("reference/spec.md", work)
+        items = self.by_id(self.inspect(
+            ("app", "ignored.md"), ("app", "scratch/copy.md"), ("app", ".envrc"),
+            ("work", "reference/spec.md"), ("work", "tasks/review/.gitkeep"),
+            ("app", "README.md"), ("app", "not-there.md")))
+        for rid in ("app:ignored.md", "app:scratch/copy.md", "app:.envrc",
+                    "work:reference/spec.md", "work:tasks/review/.gitkeep"):
+            self.assertEqual(items[rid]["state"], "excluded", rid)
+            self.assertIsNone(items[rid]["sha256"], rid)
+        self.assertIn("candidate", items["app:ignored.md"]["why"])
+        self.assertIn("credential", items["app:.envrc"]["why"])
+        self.assertEqual(items["app:README.md"]["state"], "read")
+        self.assertEqual(items["app:not-there.md"]["state"], "absent")
+
+    def test_a_git_state_that_cannot_be_read_is_unknown_not_untracked(self):
+        real = seedsources._git_out
+
+        def failing(repo, *args):
+            return None if args and args[0] == "ls-tree" else real(repo, *args)
+
+        with mock.patch.object(seedsources, "_git_out", failing):
+            items = self.by_id(self.inspect(("app", "README.md"), ("app", "notes.md")))
+        self.assertEqual(items["app:README.md"]["git"], "unknown")
+        self.assertEqual(items["app:notes.md"]["git"], "unknown")
+        self.assertEqual(items["app:README.md"]["state"], "read")
 
     def test_coverage_names_gaps_and_never_fills_them(self):
         m = self.inspect(("app", "README.md"), sections=["overview", "operations",

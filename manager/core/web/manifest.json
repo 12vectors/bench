@@ -361,8 +361,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/seed.js": {
-   "bytes": 20416,
-   "sha256": "8650a3f56565207b5c136296342b146417a3363c88dda4ba19890f8c25c8171d",
+   "bytes": 21514,
+   "sha256": "2a515a21e95bd21c1f70f02f3dd8a0d2a27a2de68404108a4bebfa857e452e13",
    "type": "text/javascript; charset=utf-8"
   },
   "views/sessions.js": {

@@ -24,7 +24,7 @@ const ROOT_WORDS = { app: 'Application', work: 'Work repository' };
 const STATE_WORDS = { read: 'Read', absent: 'Absent', inaccessible: 'Inaccessible',
   excluded: 'Excluded' };
 const GIT_WORDS = { committed: 'as committed', modified: 'modified, not committed',
-  untracked: 'not in git' };
+  untracked: 'not in git', unknown: 'git state unknown' };
 
 // the page's one seed session: kept across repaints and a visit elsewhere
 // in the Brain, dropped by nothing but a reload or a fresh reading
@@ -142,7 +142,18 @@ function candidateRow(c) {
   return `<li class="sd-row"><input type="checkbox" id="${esc(id)}" data-spick="${esc(k)}" ` +
     `data-skey="p:${esc(k)}"${on ? ' checked' : ''}> <label for="${esc(id)}">` +
     `<span class="sd-path">${esc(c.path)}</span></label> <span class="b-note">${bytes(c.bytes)}` +
-    `${c.tracked === false ? ' · not in git' : ''}</span></li>`;
+    `${c.tracked === false ? ' · not in git' : ''}${c.sliceOnly ? ' · a slice of lines only' : ''}` +
+    '</span></li>';
+}
+
+// a picked source that cannot be inspected as it stands, and why — or null
+function sliceProblem(k, p) {
+  const c = candidateFor(k);
+  if (p.lines.trim() && !parseLines(p.lines)) return 'Write a slice as first-last, for example 1-40.';
+  if (c && c.sliceOnly && !p.lines.trim()) {
+    return 'This file is over the size read whole: choose a slice of its lines, for example 1-200.';
+  }
+  return null;
 }
 
 function rootHtml(d, root) {
@@ -182,8 +193,10 @@ function plannedHtml(d) {
   const total = rows.reduce((n, [k]) => {
     const [root] = k.split(':');
     const c = (d.candidates[root] || []).find(x => keyOf(x) === k);
-    return n + ((c && c.bytes) || 0);
+    // a slice reads at most the bound for one file
+    return n + Math.min((c && c.bytes) || 0, d.bounds.fileBytes);
   }, 0);
+  const problems = rows.filter(([k, p]) => sliceProblem(k, p)).length;
   const sections = d.sections.map(s => {
     const id = `sd-s-${s.id}`;
     return `<li><input type="checkbox" id="${esc(id)}" data-ssection="${esc(s.id)}" ` +
@@ -191,13 +204,16 @@ function plannedHtml(d) {
       `<label for="${esc(id)}"><b>${esc(s.title)}</b></label> <span class="b-note">${esc(s.about)}</span></li>`;
   }).join('');
   const list = rows.length ? `<ul class="sd-list sd-planned">` + rows.map(([k, p]) => {
-    const bad = p.lines.trim() && !parseLines(p.lines);
+    const bad = sliceProblem(k, p);
+    const c = candidateFor(k);
+    const hint = `sd-lh-${encodeURIComponent(k).replace(/%/g, '_')}`;
     return `<li class="sd-row"><span class="sd-path">${esc(ROOT_WORDS[p.root])} · ${esc(p.path)}</span>` +
       `<span class="sd-ctl">${treatmentSelect(k, p.treatment, d.treatments, `treatment for ${p.path}`)}` +
-      `<input type="text" inputmode="numeric" placeholder="whole file" size="9" value="${esc(p.lines)}" ` +
-      `data-slines="${esc(k)}" data-skey="l:${esc(k)}" aria-label="lines of ${esc(p.path)} to read, ` +
-      `for example 1-40"${bad ? ' aria-invalid="true"' : ''}></span>` +
-      (bad ? '<br><span class="b-missing">Write a slice as first-last, for example 1-40.</span>' : '') +
+      `<input type="text" inputmode="numeric" placeholder="${c && c.sliceOnly ? 'lines, e.g. 1-200' : 'whole file'}" ` +
+      `size="9" value="${esc(p.lines)}" data-slines="${esc(k)}" data-skey="l:${esc(k)}" ` +
+      `aria-label="lines of ${esc(p.path)} to read, for example 1-40"` +
+      `${bad ? ` aria-invalid="true" aria-describedby="${esc(hint)}"` : ''}></span>` +
+      (bad ? `<br><span class="b-missing" id="${esc(hint)}">${esc(bad)}</span>` : '') +
       '</li>';
   }).join('') + '</ul>'
     : '<p class="b-none">Nothing is chosen yet. Choose sources above.</p>';
@@ -208,6 +224,8 @@ function plannedHtml(d) {
     `(at most ${bytes(d.bounds.fileBytes)} a file and ${bytes(d.bounds.totalBytes)} in all). ` +
     'Nothing beyond this list is read.</p>' +
     (over ? `<p class="b-warn">At most ${d.bounds.selected} sources are inspected at once.</p>` : '') +
+    (problems ? `<p class="b-warn">${problems} source${problems === 1 ? ' needs' : 's need'} a ` +
+      'slice before it can be inspected.</p>' : '') +
     list +
     '<details class="sd-treat"><summary>What each treatment means</summary><dl class="sd-facts">' +
     Object.entries(d.treatments).map(([t, w]) => `<dt>${esc(t)}</dt><dd>${esc(w)}</dd>`).join('') +
@@ -220,7 +238,7 @@ function plannedHtml(d) {
     `<textarea id="sd-exclude" rows="3" data-sexclude data-skey="x">${esc(sd.exclude)}</textarea>` +
     '<div class="sd-acts">' +
     `<button type="button" class="b-btn b-primary${sd.busy ? ' busy' : ''}" data-sact="inspect"` +
-    `${!rows.length || over || !sd.sections.size || sd.busy ? ' disabled' : ''}` +
+    `${!rows.length || over || problems || !sd.sections.size || sd.busy ? ' disabled' : ''}` +
     `${sd.busy ? ' aria-busy="true"' : ''}>${sd.busy ? 'Inspecting…' : `Inspect ${rows.length} selected`}</button>` +
     '<button type="button" class="b-btn" data-sact="defaults">Choose the suggested sources</button>' +
     '<button type="button" class="b-btn" data-sact="clear">Clear the choice</button></div>' +
@@ -307,6 +325,8 @@ async function inspect() {
   const sources = [];
   for (const p of sd.picked.values()) {
     const item = { root: p.root, path: p.path, treatment: p.treatment };
+    const bad = sliceProblem(keyOf(p), p);
+    if (bad) { sd.error = `${p.path}: ${bad}`; sd.result = null; repaint(true); return; }
     if (p.lines.trim()) {
       const lines = parseLines(p.lines);
       if (!lines) { sd.error = `the slice for ${p.path} is not first-last`; sd.result = null; repaint(true); return; }

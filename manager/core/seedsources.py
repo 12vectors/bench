@@ -28,7 +28,11 @@ generation exists.
 - **Inspect reads only what was chosen.** `inspect(selection)` reads the
   chosen files — or line slices of them — through no link, inside their
   root, and records each one's bytes, sha256, git blob and whether it is
-  the committed version, modified or untracked. A file that is not there
+  the committed version, modified or untracked (`unknown` when git could
+  not be asked). A chosen path must also be one the listing would offer:
+  a file git ignores, or one inside another checkout, is excluded however
+  it is named. A file over 512 KiB (and at most 8 MiB) is read only as a
+  slice of its lines, and the slice itself is bounded. A file that is not there
   is **absent**; one that is there and cannot be read is **inaccessible**;
   neither is ever guessed at. A file whose content looks like it holds a
   credential is excluded and its digest withheld.
@@ -72,7 +76,8 @@ WORK_DIRS = ("tasks", "plans", "reference", brain.DIRECTORY)
 # bounds: every one is said in the reading, so a truncation is never silent
 MAX_LISTED = 4000              # candidates listed per root
 MAX_SELECTED = 200             # items one inspection may read
-MAX_FILE_BYTES = 512 * 1024    # one file read whole
+MAX_FILE_BYTES = 512 * 1024    # one file read whole, or one slice
+MAX_SLICE_SOURCE = 8 * 1024 * 1024   # a file a slice may be taken from
 MAX_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_EXCLUDES = 40
 MAX_PATTERN = 200
@@ -103,7 +108,7 @@ CATEGORIES = {
 # What is never read, whatever is selected. Pattern matching: it lowers the
 # risk and does not prove that a file it lets through holds no secret.
 SECRET_NAME = re.compile(
-    r"(^|/)\.env($|[._-])|(^|/)env\.(local|prod|production)$"
+    r"(^|/)\.env($|[._-])|(^|/)\.envrc$|(^|/)env\.(local|prod|production)$"
     r"|(^|/)(\.netrc|\.npmrc|\.pypirc|\.htpasswd|\.pgpass|\.git-credentials)$"
     r"|(^|/)id_(rsa|dsa|ecdsa|ed25519)"
     r"|\.(pem|key|p12|pfx|jks|keystore|asc|gpg|kdbx|ovpn)$"
@@ -509,11 +514,16 @@ def candidates(ident: dict | None = None) -> dict:
                         why = "it is not a regular file"
                     else:
                         item["bytes"] = info.st_size
-                        if info.st_size > MAX_FILE_BYTES:
+                        if info.st_size > MAX_SLICE_SOURCE:
                             why = (f"it is {info.st_size} bytes, over the "
-                                   f"{MAX_FILE_BYTES // 1024} KiB a file may be read whole; "
-                                   "choose a slice of it instead")
-                            item["sliceable"] = True
+                                   f"{MAX_SLICE_SOURCE // (1024 * 1024)} MiB a slice may be "
+                                   "taken from, so it is not read even in part")
+                        elif info.st_size > MAX_FILE_BYTES:
+                            # choosable, and only as a slice of lines
+                            item["sliceOnly"] = True
+                            item["why"] = (f"it is over the {MAX_FILE_BYTES // 1024} KiB a "
+                                           "file may be read whole: choose a slice of its "
+                                           "lines")
                 except FileNotFoundError:
                     item["state"] = "absent"
                     item["why"] = "git lists it, and it is not on disk"
@@ -523,7 +533,7 @@ def candidates(ident: dict | None = None) -> dict:
             if why is not None:
                 item.update(state="excluded", why=why)
             elif item["state"] == "candidate" and defaults < MAX_DEFAULTS \
-                    and _default(category, rel):
+                    and not item.get("sliceOnly") and _default(category, rel):
                 item["default"] = True
                 defaults += 1
             listed.append(item)
@@ -552,8 +562,11 @@ def reading() -> dict:
 
 
 FIXED_EXCLUSIONS = [
-    "credential-shaped names: .env and .env.*, keys and certificates, *secret*, "
-    "*credential*, *password*, *token* — never opened",
+    "credential-shaped names — never opened: .env, .env.*, .envrc, .netrc and similar, keys "
+    "and certificates, and names with secret(s), credential(s), password(s), token(s) or "
+    "api-key as a separate word (secrets.yaml, api_token.json — not tokenizer.py)",
+    "files git ignores, and anything outside the listing below: only listed candidates "
+    "are read",
     "private transcripts, raw logs and data dumps (.git/, .claude/, logs/, sessions/, "
     "*.log, *.jsonl)",
     "dependency and build trees (node_modules/, vendor/, .venv/, dist/, build/, target/ …)",
@@ -569,7 +582,8 @@ AUTHORIZES = ("nothing — this inventory is not permission to generate. Generat
 
 def bounds() -> dict:
     return {"listedPerRoot": MAX_LISTED, "selected": MAX_SELECTED,
-            "fileBytes": MAX_FILE_BYTES, "totalBytes": MAX_TOTAL_BYTES,
+            "fileBytes": MAX_FILE_BYTES, "sliceSourceBytes": MAX_SLICE_SOURCE,
+            "totalBytes": MAX_TOTAL_BYTES,
             "excludePatterns": MAX_EXCLUDES}
 
 
@@ -637,15 +651,26 @@ def _blob(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def _committed(repo: Path | None, prefix: str, rels: list[str]) -> dict[str, str]:
-    """Each path's blob at HEAD, for the paths that have one. Local git."""
+def _literal(path: str) -> str:
+    """A pathspec git reads as exactly this path, never as a glob."""
+    return ":(literal)" + path
+
+
+def _committed(repo: Path | None, prefix: str,
+               rels: list[str]) -> tuple[dict[str, str], set[str]]:
+    """Each path's blob at HEAD, for the paths that have one, and the paths
+    git could not be asked about (a failed or timed-out read): those are
+    unknown, never "untracked". Local git."""
     if repo is None or not rels:
-        return {}
+        return {}, set(rels)
     out: dict[str, str] = {}
+    unknown: set[str] = set()
     for start in range(0, len(rels), GIT_BATCH):
-        batch = [prefix + r for r in rels[start:start + GIT_BATCH]]
+        chunk = rels[start:start + GIT_BATCH]
+        batch = [_literal(prefix + r) for r in chunk]
         listed = _git_out(repo, "ls-tree", "-z", "--full-tree", "HEAD", "--", *batch)
         if listed is None:
+            unknown.update(chunk)
             continue
         for row in listed.split("\0"):
             if "\t" not in row:
@@ -654,10 +679,34 @@ def _committed(repo: Path | None, prefix: str, rels: list[str]) -> dict[str, str
             fields = meta.split()
             if len(fields) == 3 and fields[1] == "blob" and path.startswith(prefix):
                 out[path[len(prefix):]] = fields[2]
+    return out, unknown
+
+
+def _git_listed(repo: Path, rels: list[str]) -> set[str] | None:
+    """Which of `rels` git lists as an application candidate — tracked, or
+    untracked and not ignored — or None when git could not be asked."""
+    out: set[str] = set()
+    for start in range(0, len(rels), GIT_BATCH):
+        batch = [_literal(r) for r in rels[start:start + GIT_BATCH]]
+        listed = _git_out(repo, "ls-files", "-z", "--cached", "--others",
+                          "--exclude-standard", "--", *batch)
+        if listed is None:
+            return None
+        out.update(p for p in listed.split("\0") if p)
     return out
 
 
-def _read_contained(root: Path, rel: str) -> bytes:
+def _present(root: Path, rel: str) -> bool:
+    try:
+        os.lstat(root / rel)
+        return True
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+
+
+def _read_contained(root: Path, rel: str, limit: int = MAX_FILE_BYTES) -> bytes:
     """The file's bytes, reached through no link at any depth and inside
     `root`. Raises FileNotFoundError (absent), PermissionError or OSError
     (inaccessible) and _Excluded (a link, an escape, not a regular file,
@@ -689,9 +738,12 @@ def _read_contained(root: Path, rel: str) -> bytes:
             if not chunk:
                 break
             total += len(chunk)
-            if total > MAX_FILE_BYTES:
-                raise _Excluded(f"it is over the {MAX_FILE_BYTES // 1024} KiB a file may be "
-                                "read")
+            if total > limit:
+                if limit == MAX_FILE_BYTES:
+                    raise _Excluded(f"it is over the {MAX_FILE_BYTES // 1024} KiB a file may "
+                                    "be read whole; choose a slice of its lines")
+                raise _Excluded(f"it is over the {limit // (1024 * 1024)} MiB a slice may be "
+                                "taken from")
             chunks.append(chunk)
     finally:
         os.close(fd)
@@ -730,7 +782,8 @@ def _inspect_one(src: dict, root_path: Path, excludes: list[str]) -> dict:
         return {**item, "state": "excluded", "why": f"your exclusion {matched!r} matches it",
                 "byYou": True}
     try:
-        data = _read_contained(root_path, rel)
+        data = _read_contained(root_path, rel,
+                               MAX_SLICE_SOURCE if src.get("lines") else MAX_FILE_BYTES)
     except FileNotFoundError:
         return {**item, "state": "absent", "why": "there is no such file — a gap, never "
                 "inferred contents"}
@@ -760,6 +813,10 @@ def _inspect_one(src: dict, root_path: Path, excludes: list[str]) -> dict:
             return {**item, "state": "absent", "why": f"the file has "
                     f"{len(data.splitlines())} lines; the slice starts after its end",
                     "fileBytes": len(data), "fileSha256": hashlib.sha256(data).hexdigest()}
+        if len(part) > MAX_FILE_BYTES:
+            return {**item, "state": "excluded", "blob": None,
+                    "why": f"the slice is {len(part)} bytes, over the "
+                           f"{MAX_FILE_BYTES // 1024} KiB one slice may be; choose fewer lines"}
         item.update(fileBytes=len(data), fileSha256=hashlib.sha256(data).hexdigest(),
                     bytes=len(part), sha256=hashlib.sha256(part).hexdigest(),
                     linesRead=[src["lines"][0],
@@ -816,10 +873,24 @@ def inspect(payload) -> dict:
              "work": Path(ident["work"]["root"])}
     tool = _real(config.TM_ROOT)
     work_real = roots["work"]
+    # only what the listing would offer is read: git's view of the
+    # application (tracked, or untracked and not ignored) and the work
+    # state's listed files — never a gitignored file or a nested checkout
+    app_rels = sorted({s["path"] for s in sel["sources"] if s["root"] == "app"})
+    listed = {"app": _git_listed(roots["app"], app_rels) if app_rels else set(),
+              "work": set(_work_paths(work_real))}
     items, total = [], 0
     for src in sel["sources"]:
         root_path = roots[src["root"]]
         located = _excluded_by_location(root_path, src["path"], tool, work_real, src["root"])
+        if not located and _present(root_path, src["path"]):
+            known = listed[src["root"]]
+            if known is None:
+                located = "git could not say whether it is a candidate, so it is not read"
+            elif src["path"] not in known:
+                located = ("it is not among the listed candidates (git ignores it, or it is "
+                           "inside another checkout)" if src["root"] == "app" else
+                           "it is not among the listed work-state files")
         if located:
             items.append({"id": _item_id(src), "root": src["root"], "path": src["path"],
                           "treatment": src["treatment"],
@@ -844,12 +915,13 @@ def inspect(payload) -> dict:
     prefix = ident["work"]["prefix"]
     for root, repo, pre in (("app", app_repo, ""), ("work", state, prefix)):
         rels = sorted({i["path"] for i in items if i["root"] == root and i.get("blob")})
-        known = _committed(repo, pre, rels)
+        known, unknown = _committed(repo, pre, rels)
         for i in items:
             if i["root"] != root or not i.get("blob"):
                 continue
             head = known.get(i["path"])
-            i["git"] = ("untracked" if head is None else
+            i["git"] = ("unknown" if i["path"] in unknown else
+                        "untracked" if head is None else
                         "committed" if head == i["blob"] else "modified")
     counts: dict[str, int] = {}
     for i in items:
