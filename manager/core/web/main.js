@@ -178,6 +178,7 @@ function applyRoute(route, background) {
       // for the list or another entry
       S.brainEntry = route.entry || null;
       S.brainReview = route.review || null;
+      S.brainSeed = route.seed || null;
       S.brainBad = route.invalid === 'entry' ? route.raw : null;
     }
     if (route.view === 'flight') S.flightSid = named('session');
@@ -230,7 +231,9 @@ document.querySelectorAll('#views [data-view]').forEach(b =>
     if (!plainClick(e)) return;
     e.preventDefault();
     // the switcher's Brain is the Brain's list, as its href says
-    if (b.dataset.view === 'brain') { S.brainEntry = null; S.brainReview = null; S.brainBad = null; }
+    if (b.dataset.view === 'brain') {
+      S.brainEntry = null; S.brainReview = null; S.brainSeed = null; S.brainBad = null;
+    }
     setView(b.dataset.view);
   }));
 /* The Board's activity (task 159): the whole board's Sessions and Focus,

@@ -6,8 +6,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
-   "bytes": 7596,
-   "sha256": "ad11f6e6e8e9d5ed3edb42b1b3ba47b1d400857fd231373e7917d7a9683b9212",
+   "bytes": 7759,
+   "sha256": "099fefcacd71b979438f0876db9e52f0679490e90f6410fc79cf46c9866b051e",
    "type": "text/javascript; charset=utf-8"
   },
   "app/theme.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 152166,
-   "sha256": "16560a3dca38c419b01620096336c724a729d3389dac2653f32ece8ba81de2c4",
+   "bytes": 154951,
+   "sha256": "fecf72da88125db30e792df0cbd5599fdb240ace1109c10f29375b3c1aa99a97",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -231,8 +231,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/route.js": {
-   "bytes": 15902,
-   "sha256": "7c2a04cff9c40ae7741f04cebf75c49db1cf66ccae71ffcbb031d1512bfefcaf",
+   "bytes": 16693,
+   "sha256": "bcce9606f66099981d17c93e8a1674d2d4bad573db9341805d8ae0fe90b727e3",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/schedule.js": {
@@ -256,8 +256,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 23830,
-   "sha256": "3660a032f779bd4f4871fc33301d810649dcbbc91a7fc52ea57a51561d57f3d3",
+   "bytes": 23900,
+   "sha256": "8d2fca7503f6262400fd69b24a4a84fb49a61a83c7aa6d0d17bbe3c3ea8ebc1f",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -276,8 +276,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 158122,
-   "sha256": "03e89da83fb27aad8d6978ef2fe5b080c4624853ac371e2ef8a54c1c6cf1d699",
+   "bytes": 159251,
+   "sha256": "07fc0d15b930eadbe299f2bf822fbd8adfcec7418140211bc9d0c119dc6d1d67",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -360,6 +360,11 @@
    "sha256": "c0e373660d2b9431b9486281467889651ebd6d472c1071105055eb5b9904018d",
    "type": "text/javascript; charset=utf-8"
   },
+  "views/seed.js": {
+   "bytes": 21514,
+   "sha256": "2a515a21e95bd21c1f70f02f3dd8a0d2a27a2de68404108a4bebfa857e452e13",
+   "type": "text/javascript; charset=utf-8"
+  },
   "views/sessions.js": {
    "bytes": 14915,
    "sha256": "350237a5f035151b9f13979da5519a2e920a8490683f75b2568ceccb1073962f",
@@ -416,8 +421,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/setup.js": {
-   "bytes": 10308,
-   "sha256": "a62124340a7c4fd82e8cb6467d1ae9b473486c5039fe289089bf436ddb6fdab8",
+   "bytes": 11008,
+   "sha256": "94790aa86c194e8b8796da9f68140c9403e8b2dfea1cad0f7fa8ea12d5a63dfa",
    "type": "text/javascript; charset=utf-8"
   },
   "views/settings/setupcards.js": {

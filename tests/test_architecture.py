@@ -814,6 +814,10 @@ ROUTES: dict[str, str] = {
     "GET /api/brain/adoption": "read",
     "GET /api/brain/adoption/preview": "read",
     "POST /api/brain/adoption/apply": "browser-mutation",
+    # seeding the Brain, step one (task 192): the inventory, and the
+    # inspection of an approved selection — a read with a body
+    "GET /api/brain/seed": "read",
+    "POST /api/brain/seed/inspect": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

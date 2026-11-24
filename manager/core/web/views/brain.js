@@ -23,6 +23,7 @@ import { md } from '../lib/md.js';
 import { syncRoute } from '../lib/nav.js';
 import { pressHold } from '../lib/press.js';
 import { toast } from '../lib/toast.js';
+import { seedField, seedHtml, setSeedRepaint, wireSeed } from './seed.js';
 
 const CLASSES = ['Current', 'Historical', 'Superseded', 'Unclassified'];
 const KINDS = ['Guide', 'Investigation', 'Decision', 'Review', 'Prototype', 'Attachment'];
@@ -58,6 +59,8 @@ let press = null;
 let revsOpen = null;     // the entry whose Revisions fold is open
 
 function key() {
+  // seeding the Brain (task 192): a page of its own, `/brain/seed`
+  if (S.brainSeed) return 'seed';
   if (S.brainReview) return `r:${S.brainReview.card}/${S.brainReview.id}`;
   return S.brainEntry ? 'e:' + S.brainEntry : 'index';
 }
@@ -203,7 +206,12 @@ function emptyGuidance(dir) {
     ? '<p>There is no <code>brain/</code> directory in this board\'s work root yet. Reading never ' +
       'creates it; the first entry you save does.</p>'
     : '<p><code>brain/</code> holds no entries yet.</p>';
-  return `<div class="b-panel b-empty">${where}` +
+  // seeding (task 192): choose and inspect the project's own sources for a
+  // handbook. Opening it reads; it generates, launches and writes nothing
+  const seed = '<p><a class="b-btn b-primary" href="/brain/seed" data-route>Seed Brain from this ' +
+    'project</a> <span class="b-note">Choose which application and work files a handbook may be ' +
+    'drafted from, and inspect exactly those.</span></p>';
+  return `<div class="b-panel b-empty">${where}${seed}` +
     '<p>An entry is one Markdown file in <code>brain/</code> under the work root, committed to the ' +
     'work repository like the cards are. Ask the Brain Agent for one with <strong>New entry</strong> ' +
     '(it reads the project and proposes a draft you review and apply), write it yourself, or by hand ' +
@@ -2467,6 +2475,8 @@ function act(name, arg) {
 function wire(el) {
   if (wired) return;
   wired = true;
+  setSeedRepaint((force) => renderBrain(force));
+  wireSeed(el);
   el.addEventListener('click', (ev) => {
     const k = ev.target.closest && ev.target.closest('[data-bkind]');
     if (k && el.contains(k)) {
@@ -2481,6 +2491,7 @@ function wire(el) {
   });
   const onField = (ev) => {
     const f = ev.target;
+    if (S.brainSeed && seedField(f, ev)) return;
     if (f.dataset && f.dataset.bfind) {
       // the list follows the search as it is typed: a person's own act,
       // painted at once with the caret kept where it was
@@ -2658,7 +2669,11 @@ function renderBrain(force) {
   // markup may hold other loading notes (its Revisions fold), so this is
   // said, never searched for in the markup
   let loading = false;
-  if (S.brainBad) {
+  if (k === 'seed') {
+    const seed = seedHtml();
+    html = seed.html;
+    loading = seed.loading;
+  } else if (S.brainBad) {
     html = back + '<div class="b-panel" role="alert"><h1 class="b-title" tabindex="-1">Not a Brain address</h1>' +
       `<p><code>${esc(S.brainBad)}</code> does not name an entry or a review. An entry's address is ` +
       '<code>/brain/e/&lt;id&gt;</code>, its id in lower-case letters, digits and hyphens; a review filed ' +
@@ -2717,12 +2732,16 @@ function renderBrain(force) {
     // the caret is kept in the search box and in a draft's text fields (a
     // forced repaint — the current version read in — lands while typing)
     const caret = active && active.dataset && (active.dataset.bfind === 'q' ||
+      (active.dataset.skey && (active.tagName === 'TEXTAREA' || active.type === 'text' ||
+        active.type === 'search')) ||
       ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf ||
         active.dataset.hb || active.dataset.ad) &&
         (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
       ? (active.classList.contains('b-conflict') ? '.b-conflict'
+        : active.dataset.skey ? `[data-skey="${CSS.escape(active.dataset.skey)}"]`
+        : active.dataset.sact ? `[data-sact="${CSS.escape(active.dataset.sact)}"]`
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
         : active.dataset.bkind ? `[data-bkind="${CSS.escape(active.dataset.bkind)}"]`
         : active.dataset.bshow ? `[data-bshow="${CSS.escape(active.dataset.bshow)}"]`
@@ -2758,7 +2777,7 @@ function renderBrain(force) {
       el.querySelector(`.b-list [data-brain-id="${CSS.escape(returnTo)}"]`)))
       || el.querySelector('.b-title');
     if (target && document.activeElement !== target) target.focus();
-    if (k !== 'index') { el.scrollTop = 0; returnTo = k.slice(2); }
+    if (k !== 'index') { el.scrollTop = 0; if (k !== 'seed') returnTo = k.slice(2); }
   }
 }
 

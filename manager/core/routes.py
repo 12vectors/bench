@@ -72,6 +72,7 @@ import required
 import results
 import reviews
 import scheduler
+import seedsources
 import settings
 import setupguide
 import setuptasks
@@ -516,6 +517,9 @@ def ui_path(path: str) -> bool:
     parts = path.split("/")
     if len(parts) == 4 and parts[1] == "brain" and parts[2] == "e":
         return bool(brain.ID_RE.match(parts[3]))
+    # seeding the Brain (task 192): `/brain/seed`, its origin in the query
+    if len(parts) == 3 and parts[1] == "brain" and parts[2] == "seed":
+        return True
     # a filed review in the Brain (task 168): `/brain/r/<card>/<review>`,
     # the card by number or stem, the review by its rv-/rl- identity
     if len(parts) == 5 and parts[1] == "brain" and parts[2] == "r":
@@ -1203,6 +1207,25 @@ def post_brain_adoption_apply(req) -> None:
         req.reply(exc.status, {"error": str(exc), **exc.extra})
         return
     req.reply(200, {"operation": result})
+
+
+def get_brain_seed(req) -> None:
+    # Seeding a Brain, step one (task 192): the application and work
+    # identities a seed would use (or why the mapping is refused), the
+    # Brain destination and every candidate source by name and size.
+    # Local git reads and lstat only: nothing is opened, run, fetched,
+    # launched or written.
+    req.reply(200, {"seed": seedsources.reading()})
+
+
+def post_brain_seed_inspect(req) -> None:
+    # Reads exactly the sources a person approved and answers the version 1
+    # seed manifest. A read with a body, like a stack sheet's preview: it
+    # writes nothing, launches nothing, and authorizes no generation.
+    try:
+        req.reply(200, {"manifest": seedsources.inspect(req.body)})
+    except seedsources.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), "code": exc.code, **exc.extra})
 
 
 def get_brain_revisions(req) -> None:
@@ -2606,6 +2629,7 @@ ROUTES = (
     Route("GET", "/api/brain/reviews", "read", get_brain_reviews),
     Route("GET", "/api/brain/review", "read", get_brain_review),
     Route("GET", "/api/brain/handbook", "read", get_brain_handbook),
+    Route("GET", "/api/brain/seed", "read", get_brain_seed),
     Route("GET", "/api/brain/adoption", "read", get_brain_adoption),
     Route("GET", "/api/brain/adoption/preview", "read", get_brain_adoption_preview),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
@@ -2702,6 +2726,7 @@ ROUTES = (
     Route("POST", "/api/brain/retry", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/handbook", "browser-mutation", post_brain_write),
     Route("POST", "/api/brain/adoption/apply", "browser-mutation", post_brain_adoption_apply),
+    Route("POST", "/api/brain/seed/inspect", "browser-mutation", post_brain_seed_inspect),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),

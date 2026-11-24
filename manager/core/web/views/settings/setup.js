@@ -193,7 +193,16 @@ function settingsSetup() {
     `<p>Contract <code>${esc(g.kind)} v${esc(g.v)}</code>, revision ` +
     `<code>${esc(g.revision)}</code>. ${esc(g.endpoints.read)}, ` +
     `${esc(g.endpoints.decide)}, ${esc(g.endpoints.task)}.</p>`);
-  return head + interrupted + handoff + setupCards(g, ro) +
+  // seeding the Brain (task 192): one way in from setup, remembered as the
+  // way back. Opening it reads; it runs, launches and writes nothing
+  const seed = `<section class="panel setup-seed" aria-labelledby="setup-h-seed">` +
+    `<h2 id="setup-h-seed">Seed the Brain from this project</h2>` +
+    `<p>Choose which of the application's and the work repository's files a project ` +
+    `handbook may be drafted from, and see exactly what bench would read. Opening it and ` +
+    `inspecting run no project code, check or agent, fetch nothing and write nothing.</p>` +
+    `<div class="acts"><a class="sb" href="/brain/seed?from=setup" data-route>Seed Brain</a></div>` +
+    `</section>`;
+  return head + interrupted + handoff + seed + setupCards(g, ro) +
     setupReadiness(g.verificationReadiness, ro) +
     setupPreviewLife(g.applicationPreview, ro) + areas + store;
 }

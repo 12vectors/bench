@@ -21,6 +21,9 @@ const S = {
   brainBad: null,
   // the filed review the Brain shows (task 168): {card, id}, or null
   brainReview: null,
+  // seeding the Brain (task 192): 'brain' or 'setup' — where the seed page
+  // was opened from, and so where its way back leads — or null
+  brainSeed: null,
   // file -> true (a person opened a lane that closed itself because every
   // member is merged in) or false (they closed it again). The page
   // session's memory only (task 161): a lane that stops being complete

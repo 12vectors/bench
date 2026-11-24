@@ -8,6 +8,9 @@
      /board                      the Board        (`/`, `/index.html` too)
      /brain[/e/<entry>]          the Brain (task 157), its list or one entry
                                  by its stable id
+     /brain/seed[?from=setup]    seeding the Brain (task 192): choosing and
+                                 inspecting sources, returning to the Setup
+                                 guide or the Brain it was opened from
      /brain/r/<card>/<review>    one review filed on a card (task 168), by
                                  the card's number and the review's rv-/rl-
                                  identity
@@ -102,6 +105,14 @@ function parseRoute(where) {
   if (head === 'brain') {
     // `/brain`, `/brain/e/<entry>` or `/brain/r/<card>/<review>`, nothing else
     if (rest === undefined) return { view: 'brain' };
+    // seeding the Brain (task 192): `/brain/seed`, remembering whether it
+    // was reached from Settings → Setup guide (`?from=setup`) or the Brain
+    if (rest === 'seed' && !extra.length) {
+      const from = params.get('from');
+      const route = { view: 'brain', seed: from === 'setup' ? 'setup' : 'brain' };
+      if (from !== null && from !== 'setup') route.alias = true;
+      return route;
+    }
     if (rest === 'r' && extra.length === 2) {
       // a review filed on a card (task 168): the card as its address names
       // it, the review by its heading-derived identity
@@ -237,6 +248,7 @@ function formatRoute(route) {
   }
   const view = VIEWS.includes(r.view) ? r.view : 'board';
   const base = '/' + VIEW_PATHS[view];
+  if (view === 'brain' && r.seed) return `${base}/seed${r.seed === 'setup' ? '?from=setup' : ''}`;
   if (view === 'brain' && r.review) return `${base}/r/${enc(r.review.card)}/${enc(r.review.id)}`;
   if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}`;
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
@@ -325,6 +337,7 @@ function routeOf(S) {
   }
   switch (view) {
     case 'brain':
+      if (S.brainSeed) return { view, seed: S.brainSeed };
       if (S.brainReview) return { view, review: { card: S.brainReview.card, id: S.brainReview.id } };
       return S.brainEntry ? { view, entry: S.brainEntry } : { view };
     case 'phases': return S.phaseSel ? { view, phase: S.phaseSel } : { view };
