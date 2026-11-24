@@ -216,7 +216,14 @@ def render(sections: dict, history: list[str]) -> str:
 
 def read_record() -> dict:
     """The membership record now: `missing` (no handbook yet), `refused`
-    (a link, not a regular file, out of the work root), or the parse."""
+    (a link, not a regular file, out of the work root), or the parse.
+    Read under `brain.VISIBLE`, so a seed batch is seen whole or not at
+    all (task 194)."""
+    with brain.VISIBLE:
+        return _read_record()
+
+
+def _read_record() -> dict:
     base = {"file": f"{brain.DIRECTORY}/{brain.HANDBOOK_DIRECTORY}/{FILE}"}
     state, why = _containment()
     if state != "present":
@@ -570,8 +577,9 @@ def reading() -> dict:
     a convention, Historical, Superseded, unassessed, retired, missing,
     duplicate or invalid, with its remedy and its source authority — the
     section's coverage, and the record's history."""
-    rec = read_record()
-    read = brain.reading()
+    with brain.VISIBLE:     # the record and the entries, from one moment
+        rec = read_record()
+        read = brain.reading()
     budget = _Budget()
     sections = []
     for sid, title, purpose in SECTIONS:

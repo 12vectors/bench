@@ -54,10 +54,16 @@ import hashlib
 import os
 import re
 import stat
+import threading
 from pathlib import Path
 
 import config
 import taskfiles
+
+# Held while a batch of Brain files is switched into place (task 194) and
+# by every reading of brain/ in this process, so a reader here sees either
+# none or all of a batch, never half of one. Reentrant: the writer reads too.
+VISIBLE = threading.RLock()
 
 CONTRACT = 1
 DIRECTORY = "brain"
@@ -644,6 +650,11 @@ def _resolve_links(entries: list[dict], ids: set[str]) -> None:
 
 
 def _read() -> dict:
+    with VISIBLE:
+        return _read_visible()
+
+
+def _read_visible() -> dict:
     scan = _scan()
     valid = [r for r in scan["records"] if r["state"] == "entry"]
     by_id: dict[str, list[dict]] = {}

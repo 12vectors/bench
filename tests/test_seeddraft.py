@@ -499,7 +499,7 @@ class Generate(_Seeding):
             braindraft.apply({"id": draft["id"], "request": "seed-apply-0001",
                               "round": draft["proposalRound"], "title": "x",
                               "kind": "Guide", "body": "x"})
-        self.assertEqual(caught.exception.extra.get("code"), "seed-apply-unavailable")
+        self.assertEqual(caught.exception.extra.get("code"), "use-seed-apply")
 
 
 class Evidence(_Seeding):

@@ -175,7 +175,13 @@ lifecycle in a `seed` mode — drafting the handbook's sections from an
 inspected seed manifest: it asks `seedsources` (L7) to check the manifest,
 report drift and re-read each approved item held to its hash, and
 `handbook` for the section names. A seed draft is private and is never
-written by it; applying one is #194's.
+written by it. Since task 194 a reviewed seed draft is applied through
+`brainwrite.write_batch` — one all-or-none batch of entries and the
+handbook record, journalled before it touches a file, staged under hidden
+names and switched in under `brain.VISIBLE`, the lock every reading of
+`brain/` (and `handbook.read_record`) takes, so a reader in this process
+sees none or all of a batch; `brainwrite.recover` settles a batch a dead
+process left part way.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -556,6 +562,7 @@ neither.
 | Brain entry files (portable) and their write journal (machine-local) (task 158) | `brainwrite` | `brainwrite.LOCK`, interprocess; each entry write is also held to the file's exact revision | yes |
 | review classification records under `brain/reviews/` (portable) (task 168) | `brainwrite` (format: `brainreviews`) | `brainwrite.LOCK`, interprocess; each write is held to the record's exact revision, or to its absence | yes |
 | the handbook's membership record `brain/handbook/handbook.md` (portable) (task 171) | `brainwrite` (format: `handbook`) | `brainwrite.LOCK`, interprocess; each write changes one section, held to the record's exact revision, or to its absence | yes |
+| a seed batch: several entries and the handbook record, all or none (task 194) | `brainwrite.write_batch` | `brainwrite.LOCK`, interprocess, and `brain.VISIBLE` while switching; every file held to its reviewed revision; journalled whole before staging, settled forward or back by `recover` | yes |
 
 **Durable writers** — the call sites passing `durable=True`, held equal
 to the code by `tests/test_records_adoption.py`:
@@ -569,7 +576,9 @@ artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
 braindraft._save
+brainwrite._finish_batch
 brainwrite._journal_put
+brainwrite._stage
 brainwrite._write
 completion._record_delivered
 completion._remember
@@ -778,5 +787,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 182
+routes 185
 ```

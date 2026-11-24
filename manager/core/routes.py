@@ -1379,6 +1379,39 @@ def post_brain_seed_generate(req) -> None:
     req.reply(200, result)
 
 
+def post_brain_seed_review(req) -> None:
+    # The review of a seed draft (task 194) for the person's choices: per
+    # section the target, the text before and after, citations, strength,
+    # coverage and risks, the handbook before and after, and the preview
+    # digest Apply must name. A read with a body: nothing is written.
+    try:
+        req.reply(200, {"review": braindraft.seed_review(req.body)})
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_seed_apply(req) -> None:
+    # Apply a reviewed seed draft (task 194): the selected sections and the
+    # handbook's links as one all-or-none Brain batch, under one request
+    # identity, held to the review the page showed.
+    try:
+        result = braindraft.seed_apply(req.body)
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, result)
+
+
+def get_brain_seed_compare(req) -> None:
+    # A seed batch's remote conflict, side by side (task 194): this board's
+    # text and the remote's, from the last fetch. Nothing is fetched,
+    # merged or overwritten.
+    try:
+        req.reply(200, {"compare": brainwrite.compare(_q(req, "request"))})
+    except brainwrite.Refused as exc:
+        req.reply(exc.status, {"error": str(exc)})
+
+
 def get_brain_draft_preflight(req) -> None:
     # What a Brain drafting Generate would launch and read (task 175): the
     # roots, the harness, model and profile, the source selection and its
@@ -2656,6 +2689,7 @@ ROUTES = (
     Route("GET", "/api/brain/review", "read", get_brain_review),
     Route("GET", "/api/brain/handbook", "read", get_brain_handbook),
     Route("GET", "/api/brain/seed", "read", get_brain_seed),
+    Route("GET", "/api/brain/seed/compare", "read", get_brain_seed_compare),
     Route("GET", "/api/brain/adoption", "read", get_brain_adoption),
     Route("GET", "/api/brain/adoption/preview", "read", get_brain_adoption_preview),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
@@ -2755,6 +2789,8 @@ ROUTES = (
     Route("POST", "/api/brain/seed/inspect", "browser-mutation", post_brain_seed_inspect),
     Route("POST", "/api/brain/seed/preflight", "browser-mutation", post_brain_seed_preflight),
     Route("POST", "/api/brain/seed/generate", "browser-mutation", post_brain_seed_generate),
+    Route("POST", "/api/brain/seed/review", "browser-mutation", post_brain_seed_review),
+    Route("POST", "/api/brain/seed/apply", "browser-mutation", post_brain_seed_apply),
     Route("POST", "/api/brain/review/classify", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/review/override", "browser-mutation", post_brain_review_write),
     Route("POST", "/api/brain/reviews/rebuild", "browser-mutation", post_brain_reviews_rebuild),

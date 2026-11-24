@@ -317,9 +317,13 @@ inspection, **Generate draft** — after a preview of the harness, model,
 exact reads, budget and what stays uncertain — asks the Brain Agent for a
 private draft of each handbook section, every claim citing the approved
 sources and anything they do not cover said as a gap. The draft stays on
-your board; applying it is a later, separate step. See "Seeding the Brain:
-inspecting approved sources" and "Generating a private seed draft" in
-`AGENTS.md`.
+your board until you **Review sections** — each one's before and after,
+citations and evidence strength, and the handbook's — edit and choose
+what to publish, and **Apply** it: one all-or-none batch of Brain entries
+and handbook links, committed and synced like any board edit, with
+saved, committed and shared said apart. See "Seeding the Brain:
+inspecting approved sources", "Generating a private seed draft" and
+"Reviewing and applying a seed draft" in `AGENTS.md`.
 
 ## Update
 

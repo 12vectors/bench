@@ -193,6 +193,13 @@ def recover() -> int:
     Brain's own request journal, so a restart mid-Apply settles to what
     actually happened."""
     closed = 0
+    # a Brain batch an earlier process left part way is settled first —
+    # finished or put back to none — so a seed draft's Apply reconciles
+    # against its real outcome
+    try:
+        brainwrite.recover()
+    except brainwrite.Refused:
+        pass
     with LOCK:
         _load()
         for draft in DRAFTS.values():
@@ -207,7 +214,10 @@ def recover() -> int:
                       "relaunched; Continue to ask again when you are ready")
                 closed += 1
             elif draft.get("status") == "applying":
-                _reconcile_apply(draft)
+                if draft.get("mode") == SEED_MODE:
+                    _reconcile_seed_apply(draft)
+                else:
+                    _reconcile_apply(draft)
     return closed
 
 
@@ -2465,9 +2475,9 @@ def apply(payload: dict) -> dict:
     with LOCK:
         draft = _get(payload.get("id"))
         if draft["mode"] == SEED_MODE:
-            raise Refused("a seed draft is private: reviewing and applying it is the next "
-                          "step (#194), which this board does not offer yet — nothing was "
-                          "written", 409, code="seed-apply-unavailable")
+            raise Refused("a seed draft is applied as one reviewed batch (Review and "
+                          "apply), not as a single entry — nothing was written", 409,
+                          code="use-seed-apply")
         if draft["status"] == "applied":
             return {"draft": public(draft), "already": True,
                     "operation": brainwrite.operation(draft["applied"]["request"])
@@ -2540,6 +2550,537 @@ def apply(payload: dict) -> dict:
             draft["status"] = "proposed"
             draft.pop("applyRequest", None)
             _save(draft)
+        out = {"draft": public(draft), "operation": op}
+    state.broadcast({"type": "brain"})
+    return out
+
+
+# ── reviewing and applying a seed draft (task 194) ─────────────────────
+#
+# A seed draft becomes Brain content only through a person's review and a
+# separate, armed Apply. The review is a read: for every drafted section
+# it says what Apply would write (a new entry, or an update of the entry a
+# seed wrote before, at its stable id `s-<section>`), the exact text
+# before and after, the handbook record before and after, every citation
+# and its strength, the coverage left missing, and what publishing means.
+# Apply is held to that exact review (`preview`, a digest of everything it
+# would write against) and to every source, the work state and the policy
+# the draft was generated under, and it is one all-or-none Brain batch
+# (`brainwrite.write_batch`) under one request identity.
+
+SEED_ID_PREFIX = "s-"
+VERBATIM_LIMIT = 600            # characters one section may copy from a source in one run
+VERBATIM_POLICY_LIMIT = 2000    # from a source approved as policy, which may be quoted
+SEED_EDIT_KEYS = {"section", "selected", "title", "summary", "body"}
+
+
+def seed_target(section: str) -> str:
+    return f"{SEED_ID_PREFIX}{section}"
+
+
+def _seed_edits(draft: dict, given) -> dict[str, dict]:
+    """The person's choices per section: selected or not, and the edited
+    title, summary and body. A section the request does not name keeps the
+    review's default."""
+    out: dict[str, dict] = {}
+    if given is None:
+        return out
+    if not isinstance(given, list):
+        raise Refused("sections is a list of the person's choices")
+    expected = set((draft.get("seedDraft") or {}).get("expected") or [])
+    for item in given:
+        if not isinstance(item, dict) or set(item) - SEED_EDIT_KEYS:
+            raise Refused("each section choice is a section, selected, title, summary "
+                          "and body")
+        sid = item.get("section")
+        if sid not in expected:
+            raise Refused(f"{str(sid)[:40]!r} is not a section of this draft")
+        if sid in out:
+            raise Refused(f"{sid} is named twice")
+        out[sid] = item
+    return out
+
+
+def _seed_body(sec: dict, body: str, draft: dict, items: dict) -> str:
+    """The entry body: the person's prose, then what bench appends from the
+    validated draft — every claim with its status, authority and the
+    sources it cites, the contradictions, what is not covered, and what
+    stays uncertain. The person edits the prose; the evidence is bench's."""
+    manifest = draft.get("manifest") or {}
+    lines = [body.strip("\n"), "", EVIDENCE_HEADING, "",
+             f"Drafted by the Brain Agent from seed manifest "
+             f"`{str(manifest.get('digest'))[:12]}` (request {draft['id']}, round "
+             f"{sec.get('fromRound') or (draft.get('seedDraft') or {}).get('round')}) and "
+             f"reviewed before it was applied. Each claim is bound to the bytes the "
+             f"manifest recorded; being in the Brain is not approved context."]
+    if sec["claims"]:
+        lines.append("")
+        for c in sec["claims"]:
+            cites = ", ".join(f"`{r}` ({(items.get(r) or {}).get('sha256', '')[:12]})"
+                              for r in c["sources"]) or "no source"
+            who = f", {c['authority']}" if c.get("authority") else ""
+            lines.append(f"- **{c['status']}**{who} — {c['statement']} — {cites}")
+    if sec["contradictions"]:
+        lines += ["", "### Contradictions", ""]
+        for c in sec["contradictions"]:
+            lines.append(f"- {c['statement']} — " + ", ".join(f"`{r}`" for r in c["sources"]))
+    if sec["gaps"]:
+        lines += ["", "### Not covered yet", ""]
+        for g in sec["gaps"]:
+            lines.append(f"- {g['what']}" + (f" — {g['why']}" if g.get("why") else ""))
+    if sec.get("uncertainty"):
+        lines += ["", "### Uncertain", "", sec["uncertainty"]]
+    return "\n".join(lines).strip("\n")
+
+
+def _seed_entry_refs(sec: dict, manifest: dict, items: dict) -> tuple[list[str], list[str]]:
+    """The entry's sources (plain text the Brain shows) and its typed
+    bindings (`app:`/`work:` at the manifest's commit, for a source that was
+    the committed version)."""
+    sources, bindings = [], []
+    repos = manifest.get("repositories") or {}
+    for b in sec.get("bindings") or []:
+        item = items.get(b["ref"]) or {}
+        root, path = item.get("root"), item.get("path") or ""
+        if root == "work" and brain.FILE_REF_RE.match(path):
+            text = path
+        else:
+            text = b["ref"]
+        if "," not in text and text not in sources and len(sources) < brain.MAX_LIST_ITEMS:
+            sources.append(text)
+        commit = (repos.get(root) or {}).get("commit")
+        binding = f"{root}:{path}@{commit}"
+        if item.get("git") == "committed" and commit and brain.parse_binding(binding) \
+                and binding not in bindings and len(bindings) < brain.MAX_LIST_ITEMS:
+            bindings.append(binding)
+    return sources, bindings
+
+
+def _verbatim(body: str, source: str) -> int:
+    """The most characters `body` copies from `source` as one run of whole,
+    consecutive lines (leading and trailing space ignored)."""
+    index: dict[str, list[int]] = {}
+    src = [line.strip() for line in source.splitlines()]
+    for n, line in enumerate(src):
+        if line:
+            index.setdefault(line, []).append(n)
+    best, prev = 0, {}
+    for line in (x.strip() for x in body.splitlines()):
+        cur = {}
+        if line:
+            for n in index.get(line, ()):
+                cur[n] = prev.get(n - 1, 0) + len(line)
+                best = max(best, cur[n])
+        prev = cur
+    return best
+
+
+def _strength(sec: dict, items: dict) -> dict:
+    statuses: dict[str, int] = {}
+    cited = uncited = 0
+    for c in sec["claims"]:
+        statuses[c["status"]] = statuses.get(c["status"], 0) + 1
+        if c["sources"]:
+            cited += 1
+        else:
+            uncited += 1
+    treatments = sorted({(items.get(r) or {}).get("treatment") for c in sec["claims"]
+                         for r in c["sources"]} - {None})
+    if not cited:
+        word, why = "none", "no claim cites a source — only what is missing or unknown"
+    elif uncited == 0 and not set(statuses) & {"unknown", "unresolved"}:
+        word, why = "sourced", "every claim cites an approved source"
+    else:
+        word, why = "partial", (f"{uncited} claim(s) cite nothing, or some are unknown or "
+                                f"unresolved")
+    return {"word": word, "why": why, "claims": len(sec["claims"]), "cited": cited,
+            "uncited": uncited, "statuses": statuses, "treatments": treatments,
+            "contradictions": len(sec["contradictions"]), "gaps": len(sec["gaps"])}
+
+
+def _before(current: dict | None) -> str | None:
+    if current is None:
+        return None
+    try:
+        data = brainwrite.current_bytes(current["file"])
+    except brainwrite.Refused as exc:
+        return f"(not readable: {exc})"
+    return (data or b"").decode("utf-8", "replace")
+
+
+def _seed_identity_checks(draft: dict) -> list[dict]:
+    """The work state, the policy and the mapping, against what the draft
+    was generated under."""
+    problems = []
+    manifest = draft.get("manifest") or {}
+    frozen = draft.get("frozen") or {}
+    try:
+        ident = seedsources.identities()
+    except Exception as exc:     # a read that failed is a refusal, not a pass
+        return [{"code": "work-drift", "why": f"the work state could not be read ({exc})"}]
+    if ident["refused"]:
+        problems.append({"code": "mapping-refused",
+                         "why": "the application and work roots cannot be used for seeding "
+                                f"now: {ident['problems'][0]['why']}"})
+    for root in ("app", "work"):
+        was = ((manifest.get("repositories") or {}).get(root) or {}).get("root")
+        now = (ident.get(root) or {}).get("root")
+        if was != now:
+            problems.append({"code": "work-drift" if root == "work" else "app-drift",
+                             "why": f"the {root} repository is not the one this draft was "
+                                    f"generated from ({was} then, {now} now)"})
+    policy = profiles.resolve(INTENT).get("policyId")
+    if policy != frozen.get("policyId"):
+        problems.append({"code": "policy-drift",
+                         "why": "the execution policy changed since this draft was generated "
+                                f"({str(frozen.get('policyId'))[:12]} then, "
+                                f"{str(policy)[:12]} now); inspect and generate again"})
+    return problems
+
+
+def _seed_plan(draft: dict, given=None) -> dict:
+    """Everything Apply would do with these choices, read now: per section,
+    the target, the action, the text before and after, citations, strength,
+    coverage and risks; the handbook before and after; the drift found;
+    the batch Apply would write and the `preview` digest Apply must name."""
+    sd = draft.get("seedDraft") or {}
+    manifest = draft.get("manifest") or {}
+    items = {i["id"]: i for i in manifest.get("items") or []}
+    edits = _seed_edits(draft, given)
+    reading = brain.reading()
+    by_id = {e["id"]: e for e in reading["entries"]}
+    written = brainwrite.batch_revisions()
+    gaps = {g["section"]: g.get("why") for g in (manifest.get("coverage") or {}).get("gaps")
+            or []}
+    titles = {s[0]: s[1] for s in handbook.SECTIONS}
+    texts: dict[str, str | None] = {}
+    drifted: dict[str, str] = {}
+    for ref, item in items.items():
+        if item.get("state") != "read":
+            continue
+        try:
+            texts[ref] = seedsources.item_bytes(item).decode("utf-8", "replace")
+        except seedsources.Refused as exc:
+            texts[ref] = None
+            drifted[ref] = str(exc)
+    blockers = [dict(p) for p in _seed_identity_checks(draft)]
+    invalidated = set(sd.get("invalidated") or [])
+    rows, entries, adds = [], [], {}
+    by_section = {s["section"]: s for s in sd.get("sections") or []}
+    for sid in sd.get("expected") or []:
+        sec = by_section.get(sid)
+        refusal = next((r for r in sd.get("refused") or [] if r["section"] == sid), None)
+        target = seed_target(sid)
+        row = {"section": sid, "heading": titles.get(sid, sid), "target": target,
+               "gapInManifest": gaps.get(sid)}
+        if sec is None:
+            row.update(action="declined", selected=False, defaultSelected=False,
+                       why=("the agent's draft of this section was refused: "
+                            + "; ".join((refusal or {}).get("problems") or ["not drafted"])),
+                       coverage="missing — nothing is written, so the handbook keeps saying "
+                                "this section is not covered")
+            rows.append(row)
+            continue
+        edit = edits.get(sid, {})
+        current = by_id.get(target)
+        human = current is not None and written.get(target) != current["revision"]
+        sourced = any(c["sources"] for c in sec["claims"])
+        default = sourced and not human and sid not in invalidated
+        selected = bool(edit.get("selected", default)) if "selected" in edit else default
+        title = edit.get("title", sec["title"])
+        summary = edit.get("summary", sec.get("summary") or "")
+        prose = edit.get("body", sec["body"])
+        problems, risks = [], []
+        cites = []
+        for b in sec.get("bindings") or []:
+            item = items.get(b["ref"]) or {}
+            cites.append({"ref": b["ref"], "treatment": b["treatment"],
+                          "sha256": b["sha256"][:12], "git": item.get("git"),
+                          "drift": drifted.get(b["ref"])})
+        moved = [c["ref"] for c in cites if c["drift"]]
+        if moved:
+            problems.append({"code": "source-drift",
+                             "why": f"{moved[0]} changed since the draft read it; this "
+                                    f"section must be generated again from a new inspection"})
+        if sid in invalidated and not moved:
+            problems.append({"code": "source-drift", "why": "a source of this section "
+                             "changed after it was drafted; generate it again"})
+        if not isinstance(prose, str):
+            prose = ""
+        if redact.found(prose) or redact.found(str(title)) or redact.found(str(summary)):
+            problems.append({"code": "credential", "why": "the text looks like it holds a "
+                             "credential; remove it — masking it is not permission to "
+                             "publish it"})
+        for ref, text in texts.items():
+            if not text:
+                continue
+            limit = (VERBATIM_POLICY_LIMIT if (items[ref].get("treatment") == "policy")
+                     else VERBATIM_LIMIT)
+            copied = _verbatim(prose, text)
+            if copied > limit:
+                problems.append({"code": "source-dump",
+                                 "why": f"the body copies {copied} characters of {ref} "
+                                        f"word for word (at most {limit}); explain and cite "
+                                        f"it instead of reproducing it"})
+                break
+        if "<!--" in prose:
+            problems.append({"code": "markup", "why": "the body carries an HTML comment, "
+                             "which the board reserves for its own records"})
+        if len(prose.encode("utf-8")) > MAX_SECTION_BODY:
+            problems.append({"code": "oversized", "why": f"the body is over "
+                             f"{MAX_SECTION_BODY // 1024} KiB"})
+        sources, bindings = _seed_entry_refs(sec, manifest, items)
+        fields = {"id": target, "title": title, "kind": "Guide", "summary": summary,
+                  "sources": sources, "bindings": bindings,
+                  "body": _seed_body(sec, prose, draft, items) if isinstance(prose, str)
+                  else prose}
+        if current is not None:
+            fields["expected"] = current["revision"]
+            row["classification"] = current["classification"]
+            if current["removed"] is not None:
+                problems.append({"code": "retired", "why": f"{target} was retired; a seed "
+                                 "does not bring a retired entry back"})
+            if current["classification"] != "Unclassified":
+                risks.append(f"{target} is classified {current['classification']} by a "
+                             f"person; the update keeps that and its reasons — classify it "
+                             f"again if the new text no longer earns it")
+            if human:
+                risks.append(f"{target} was changed since a seed wrote it (or was not "
+                             f"written by a seed here): read the before and after — Apply "
+                             f"replaces its text")
+        else:
+            fields["classification"] = "Unclassified"
+            fields["reason"] = (f"seeded from manifest {str(manifest.get('digest'))[:12]}; "
+                                f"not yet assessed")
+            row["classification"] = "Unclassified"
+        try:
+            checked = brainwrite.check_fields(fields)
+            fields["body"] = checked["body"]
+        except brainwrite.Refused as exc:
+            problems.append({"code": "invalid", "why": str(exc)})
+        if not sourced:
+            risks.append("no claim here cites a source: this section only says what is "
+                         "missing or unknown, and the handbook reads it as not covered")
+        row.update(action="update" if current is not None else "create",
+                   selected=selected, defaultSelected=default, humanEdited=human,
+                   title=title, summary=summary, body=prose,
+                   expected=current["revision"] if current else None,
+                   before=_before(current),
+                   claims=sec["claims"], contradictions=sec["contradictions"],
+                   gaps=sec["gaps"], uncertainty=sec.get("uncertainty"),
+                   strength=_strength(sec, items), citations=cites, problems=problems,
+                   risks=risks, fromRound=sec.get("fromRound"),
+                   sourced=sourced,
+                   coverage=("covered by this entry once a person classifies it Current"
+                             if sourced else "missing — the entry says what is "
+                             "not known"))
+        rows.append(row)
+        if selected:
+            for p in problems:
+                blockers.append({"code": p["code"], "section": sid,
+                                 "why": f"{titles.get(sid, sid)}: {p['why']}"})
+            entries.append(fields)
+            # linked where it is not already; an existing link is kept
+            adds.setdefault(sid, []).append(target)
+    record = handbook.read_record()
+    batch = {"label": f"seed {', '.join(e['id'] for e in entries)} and the handbook"
+             if entries else "seed",
+             "entries": entries,
+             "handbook": {"expected": record.get("revision") or "none", "add": adds,
+                          "reason": f"seeded from manifest "
+                                    f"{str(manifest.get('digest'))[:12]}"}}
+    planned, plan_problem = [], None
+    if entries and not blockers:
+        try:
+            planned = brainwrite.plan_batch(batch, reading)
+        except brainwrite.Refused as exc:
+            plan_problem = {"code": exc.extra.get("code") or "invalid", "why": str(exc)}
+            blockers.append(plan_problem)
+    after = {f["id"]: f for f in planned}
+    for row in rows:
+        f = after.get(row["target"])
+        row["after"] = f["text"] if f else None
+    hb = after.get("handbook")
+    shared = config.SYNC and bool(config.state_git_remote())
+    preview = brainwrite.digest({
+        "draft": draft["id"], "round": sd.get("round"), "manifest": manifest.get("digest"),
+        "batch": batch, "brain": reading["revision"]})
+    return {
+        "v": VERSION, "kind": "bench-brain-seed-review", "draft": draft["id"],
+        "round": draft.get("proposalRound") or sd.get("round"),
+        "manifest": manifest.get("digest"), "sections": rows,
+        "handbook": {"file": brainwrite.HANDBOOK_FILE,
+                     "expected": record.get("revision") or "none",
+                     "state": record.get("state"),
+                     "before": (record.get("data") or b"").decode("utf-8", "replace")
+                     if record.get("data") else None,
+                     "after": hb["text"] if hb else None, "adds": adds},
+        "coverage": {
+            "applied": [r["section"] for r in rows if r.get("selected")
+                        and r.get("sourced")],
+            "missing": [r["section"] for r in rows if not r.get("selected")
+                        or not r.get("sourced")],
+            "manifestGaps": gaps},
+        "drift": {"sources": [{"ref": k, "why": v} for k, v in drifted.items()]},
+        "blockers": blockers, "ready": bool(entries) and not blockers,
+        "batch": batch if entries else None, "preview": preview,
+        "publication": {
+            "writes": [f"brain/{f['file']}" for f in planned],
+            "commit": ("one board: commit in the work-state repository, touching only "
+                       "these files" if config.COMMIT_MOVES else
+                       "not committed — BOARD_COMMIT_MOVES is off"),
+            "share": (f"published by sync to {config.state_git_remote()}/"
+                      f"{config.STATE_BASE}, where every teammate's board reads it"
+                      if shared else "not shared — BOARD_SYNC is off"),
+            "never": ("no application file, card, AGENTS file, configuration, gate or "
+                      "check is written or run, and no agent is launched; being in the "
+                      "Brain gives no run any context")},
+    }
+
+
+def seed_review(payload) -> dict:
+    """The review of a seed draft for the person's current choices: a read
+    — nothing is written, launched or fetched."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    with LOCK:
+        draft = _get(payload.get("id"))
+        if draft.get("mode") != SEED_MODE:
+            raise Refused("only a seed draft is reviewed section by section")
+        if draft["status"] not in ("proposed", "applying", "applied") \
+                or not draft.get("seedDraft"):
+            raise Refused(f"there is no seed draft to review — the request is "
+                          f"{draft['status']}", 409)
+        out = _seed_plan(draft, payload.get("sections"))
+        out.pop("batch", None)
+        return out
+
+
+def _reconcile_seed_apply(draft: dict) -> None:
+    key = draft.get("applyRequest")
+    op = None
+    if key:
+        try:
+            op = brainwrite.operation(key)
+        except brainwrite.Refused:
+            op = None
+    if op and op.get("saved"):
+        _seed_applied(draft, op)
+        return
+    if op is not None and op.get("status") in ("staging", "switching"):
+        return      # still part way: the same request again, or start-up, finishes it
+    draft["status"] = "proposed"
+    draft.pop("applyRequest", None)
+    draft.pop("applyBatch", None)
+    if op is not None and op.get("refused"):
+        draft["conflict"] = {"code": op.get("refused"), "why": op.get("why"), "at": _now()}
+    _save(draft)
+
+
+def _seed_applied(draft: dict, op: dict) -> None:
+    draft.pop("error", None)
+    draft.pop("conflict", None)
+    files = op.get("files") or []
+    draft.update(status="applied", applied={
+        "request": draft.get("applyRequest"), "at": _now(),
+        "entries": [f["id"] for f in files if f.get("id") != "handbook"],
+        "handbook": any(f.get("id") == "handbook" for f in files),
+        "files": [f["file"] for f in files]})
+    draft.pop("applyBatch", None)
+    _say(draft, "you", "applied", f"applied {len(draft['applied']['entries'])} section(s)"
+         + (" and the handbook" if draft["applied"]["handbook"] else "")
+         + " as one batch")
+    _save(draft)
+
+
+def seed_apply(payload: dict) -> dict:
+    """Apply the person's reviewed choices: one all-or-none Brain batch.
+    Refused, with nothing written, when the review the page shows is not
+    what Apply would do now (`preview-stale`), a cited source moved
+    (`source-drift` — those sections must be generated again), the work
+    state or policy moved, an edited section fails the Brain's rules or
+    copies a source wholesale, or a destination changed. The same request
+    identity again answers with the first outcome."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    key = _request_key(payload)
+    with LOCK:
+        draft = _get(payload.get("id"))
+        if draft.get("mode") != SEED_MODE:
+            raise Refused("only a seed draft is applied as a batch; apply an entry draft "
+                          "with its own Apply")
+        if draft["status"] == "applied":
+            if (draft.get("applied") or {}).get("request") == key:
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+            raise Refused("this seed draft was already applied; the entries are the "
+                          "record now — seed again from a new inspection", 409)
+        if draft["status"] == "applying":
+            if draft.get("applyRequest") != key:
+                raise Refused("this draft is being applied by another request; wait for "
+                              "its outcome", 409)
+            _reconcile_seed_apply(draft)
+            if draft["status"] == "applied":
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+            if draft["status"] == "applying":
+                try:
+                    op = brainwrite.write_batch(dict(draft["applyBatch"], request=key))
+                except brainwrite.Refused as exc:
+                    _reconcile_seed_apply(draft)
+                    raise Refused(str(exc), exc.status, **exc.extra)
+                _seed_applied(draft, op)
+                return {"draft": public(draft), "operation": op, "resumed": True}
+        if draft["status"] != "proposed":
+            raise Refused(f"there is no seed draft to apply — the request is "
+                          f"{draft['status']}", 409)
+        if payload.get("round") != draft.get("proposalRound"):
+            raise Refused("the page shows an older draft than the newest one — "
+                          "refresh it; nothing was written", 409, stale=True,
+                          code="round-stale")
+        plan = _seed_plan(draft, payload.get("sections"))
+        drifted = sorted({b["section"] for b in plan["blockers"]
+                          if b.get("code") == "source-drift" and b.get("section")})
+        if drifted:
+            sd = draft["seedDraft"]
+            sd["invalidated"] = sorted(set(sd.get("invalidated") or []) | set(drifted))
+            draft["conflict"] = {"code": "source-drift", "sections": drifted, "at": _now(),
+                                 "why": "a source these sections cite changed since they "
+                                        "were drafted"}
+            _save(draft)
+        if plan["preview"] != payload.get("preview"):
+            raise Refused("what Apply would write is not what this page reviewed (the "
+                          "Brain, the handbook or your choices changed) — review it again; "
+                          "nothing was written", 409, stale=True, code="preview-stale",
+                          review={k: v for k, v in plan.items() if k != "batch"})
+        if plan["blockers"]:
+            first = plan["blockers"][0]
+            raise Refused(f"{first['why']} — nothing was written", 409,
+                          code=first["code"], blockers=plan["blockers"],
+                          stale=first["code"] in ("source-drift", "work-drift",
+                                                  "policy-drift", "app-drift"))
+        if not plan["batch"]:
+            raise Refused("select at least one section to apply; nothing was written")
+        batch = dict(plan["batch"], request=key)
+        draft["applyRequest"] = key
+        draft["applyBatch"] = plan["batch"]
+        draft["status"] = "applying"
+        _save(draft)
+        try:
+            op = brainwrite.write_batch(batch)
+        except brainwrite.Refused as exc:
+            draft["status"] = "proposed"
+            draft.pop("applyRequest", None)
+            draft.pop("applyBatch", None)
+            draft["conflict"] = {"code": exc.extra.get("code") or "destination-changed",
+                                 "why": str(exc), "at": _now()}
+            _save(draft)
+            raise Refused(str(exc), exc.status, **{k: v for k, v in exc.extra.items()
+                                                    if k != "current"})
+        except Exception:
+            _reconcile_seed_apply(draft)
+            raise
+        _seed_applied(draft, op)
         out = {"draft": public(draft), "operation": op}
     state.broadcast({"type": "brain"})
     return out
@@ -2684,8 +3225,10 @@ def _seed_public(draft: dict) -> dict:
         "expires": draft.get("expires"),
         "roundsUsed": len(rounds),
         "unknownRounds": sum(1 for r in rounds if r.get("outcome") == "unknown"),
-        "applies": "not here — reviewing and applying a seed draft is the next step "
-                   "(#194); nothing on this board writes it",
+        "applies": ("only through Review and apply: the sections a person selects, "
+                    "edited and checked, written as one all-or-none Brain batch"),
+        "applyRequest": draft.get("applyRequest") if draft.get("status") == "applying"
+        else None,
     }
 
 

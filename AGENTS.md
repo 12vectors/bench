@@ -1535,9 +1535,11 @@ each kind of problem, and are not found by search until they are fixed.
 The curated **Project handbook** sits above the library on the same page
 (task 171, "The project handbook: curated, sourced, said as it is"); the
 library below it is unchanged and still lists every entry. An empty
-Brain offers **Seed Brain**, which inspects approved sources and writes
-nothing (task 192); generating and applying a seed draft, and automatic
-classification, are later phases, and nothing on the page offers them.
+Brain offers **Seed Brain**: inspecting approved sources (task 192),
+generating a private draft (task 193), and reviewing it section by
+section and applying what a person chooses as one batch (task 194).
+Automatic classification is a later phase, and nothing on the page
+offers it.
 
 ### The page's script: modules under a policy
 
@@ -1870,9 +1872,10 @@ left at its address (task 172, "Adopting reference material"). Seeding
 a Brain from an existing project starts with choosing and inspecting its
 sources (task 192, "Seeding the Brain: inspecting approved sources") and
 generating a private, evidence-linked draft from exactly those (task
-193, "Generating a private seed draft"). What it does not do yet, said
-so nobody looks for it: applying a seed draft, and any agent
-classification. A run is given no
+193, "Generating a private seed draft"), and a person reviewing it and
+applying the sections they choose as one all-or-none batch (task 194,
+"Reviewing and applying a seed draft"). What it does not do yet, said
+so nobody looks for it: any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2309,7 +2312,7 @@ contribution policy, its code, its cards and plans. Seeding a Brain
 from it is three separate acts — **inspect** the sources a person
 approves (task 192, here), **generate** a private draft from exactly
 those (#193, the next section), and a person **reviews and applies** it
-(#194). The first two exist on this board; inspecting is useful on its
+(#194). All three exist on this board; inspecting is useful on its
 own: a static inventory of what the two repositories hold, before any
 generation.
 
@@ -2514,8 +2517,9 @@ answers rather than launching twice.
 **Private and expiring.** A seed draft is on this board only, never
 committed, and its text (and its manifest) is removed 14 days after it
 was made — at the first reading after that, while the board runs, and at
-its next start — keeping the record of what happened. Apply on a seed draft is
-refused (`seed-apply-unavailable`): reviewing and applying is #194's.
+its next start — keeping the record of what happened. The single-entry
+Apply refuses a seed draft (`use-seed-apply`): a seed draft is applied
+only through its review, as one batch (next section).
 
 **What is proved, and what is not.** `tests/test_seeddraft.py` runs the
 whole lifecycle through the Claude adapter's real `run` against a stub
@@ -2540,6 +2544,153 @@ tell a denied Read from one never attempted, and it is not an
 operating-system sandbox. `tests/test_seed_probe.py` runs the probe
 against a stub to hold its own machinery, and shows a run with no tool
 events never passes.
+
+### Reviewing and applying a seed draft
+
+Step three (task 194): a person reads the private draft section by
+section, edits it, chooses what to publish, and applies it in a
+separate, armed step. Nothing reaches `brain/` any other way.
+
+**6 · Review and apply**, under the draft:
+
+| step | what happens | writes |
+| --- | --- | --- |
+| **Review sections** | `POST /api/brain/seed/review` `{id, sections?}` — a read with a body | nothing |
+| choose, edit | a checkbox per section; its title, summary and explanation (Markdown). A checkbox, or leaving a field, asks for the review again | nothing |
+| **Apply N sections and the handbook** (armed) | `POST /api/brain/seed/apply` `{id, request, round, preview, sections}` | one batch |
+| **Discard**, **Redraft** | the drafting routes, as before | the private request |
+
+**What the review says, per section.** The target entry, at a stable id
+`s-<section>` (`s-overview`, `s-how-it-works`, …): **New entry**, or
+**Updates the entry** a seed wrote before; the classification (a new one
+starts **Unclassified** — the handbook does not read it as operative
+until a person classifies it — and an update keeps the entry's
+classification, override and history); the evidence strength (*every
+claim sourced*, *partly sourced*, *no sourced claim*) with the claims,
+contradictions and gaps counted; every citation with its treatment,
+sha256 and git state, and *changed since it was drafted* where it has;
+the coverage it leaves; its risks; and the exact text before and after
+(`brain/s-<section>.md`). Then the handbook record before and after, the
+sections covered and left missing, the files Apply would write, what
+commit and sync would do with them, and what it never does. Its
+`preview` is a digest of everything Apply would write against — the
+choices, the target revisions, the handbook's revision, the Brain's
+revision and the manifest.
+
+**What is selected to begin with.** A section with at least one sourced
+claim. A section that only says what is missing (no claim cites a
+source) is offered and not selected; a section the agent's answer was
+refused for is shown as *Not drafted* and cannot be selected. Either way
+nothing is written for it, so the handbook keeps saying the section is
+not covered — missing coverage stays honest. An update of an entry a
+person changed since a seed wrote it (or that no seed on this board
+wrote) is not selected either, and says so.
+
+**What an entry holds.** The person's explanation, then bench's own
+`## Sources and claims` — the manifest and round it came from, each
+claim with its status, authority and the sources it cites (with their
+hashes), the contradictions, what is not covered, and what stays
+uncertain. **Source** lists the cited ids (`plans/…` and `reference/…`
+as the Brain links them); **Bindings** pins each cited file that was
+committed when inspected at the manifest's commit (`app:<path>@<commit>`,
+`work:<path>@<commit>`), so the handbook's source authority can say
+whether it changed since. Kind **Guide**.
+
+**Apply refuses, with nothing written:**
+
+| code | when |
+| --- | --- |
+| `preview-stale` | what Apply would write now is not what the page reviewed: the Brain, the handbook or the choices changed. The answer carries the new review |
+| `source-drift` | a source a selected section cites no longer holds the bytes it was drafted from. Those sections are marked invalidated on the draft: deselect them, or inspect again and generate a new draft |
+| `work-drift`, `app-drift`, `mapping-refused` | the work state or the application is not the repository the draft was generated from, or the mapping is refused now |
+| `policy-drift` | the execution policy changed since the draft was generated |
+| `source-dump` | an edited explanation copies more than 600 characters of one approved source word for word (2,000 from a source approved as policy). Explain and cite; redaction is not permission to publish a source |
+| `credential` | an edited title, summary or explanation looks like it holds a credential |
+| `markup`, `oversized`, `invalid`, `retired` | an HTML comment, over 48 KiB, the Brain's own write rules, or a target a person retired |
+| `conflict` | another writer changed a target between the plan and the switch |
+| `interrupted` | the batch stopped part way for a reason bench did not expect; what it had switched was put back |
+
+**One batch, all or none** (`brainwrite.write_batch`). It is one
+operation, not a loop of single writes:
+
+1. **Plan** every file under the Brain's write locks, each held to the
+   revision the person reviewed (none for a new entry), and journal the
+   whole intent — every file's bytes — under
+   `manager/local/state/brain/operations.json` before anything is touched.
+2. **Stage** each new version durably beside its destination under a
+   hidden name (`.bench-stage-…`) no reading of `brain/` lists.
+3. **Switch** with `brain.VISIBLE` held — the lock every reading of
+   `brain/` and of the handbook record takes in this process — so a
+   reader sees the batch whole or not at all: every destination read
+   once more, every replaced file kept aside (`.bench-was-…`), then each
+   staged file renamed into place.
+4. **Commit** every file in one `board: brain seed …` commit in the
+   work-state repository, touching only those files, under
+   `BOARD_COMMIT_MOVES`; sync publishes it under `BOARD_SYNC`.
+
+A batch a dead process left part way is settled by the same request
+again, or at start-up (`brainwrite.recover`, before the drafts reconcile):
+forward while every destination holds what the plan replaces or what it
+writes, otherwise back to exactly what was there — the kept originals
+put back, new files removed. An unexpected failure part way puts
+everything back at once (`interrupted`). Another writer's change is never
+written over. Readers outside this process (git, another tool) are not
+held by the lock; a crash between two renames is visible to them until
+start-up settles it.
+
+**Once per request.** The page sends one request identity per Apply and
+keeps it until an answer arrives. The same identity again — a double
+click, a resend after a lost reply, a restart — answers with the first
+outcome (`already`), never a second entry, history line or commit; an
+Apply whose reply never came is settled from the journal at the next
+Apply and at start-up. A seed draft is applied once; seeding again is a
+new inspection and a new draft.
+
+**Re-seeding.** A new draft's review matches entries by their stable id:
+an `s-<section>` entry that exists is an **update**, previewed against
+the text on disk now, keeping its classification, override, history and
+the reasons in it; the handbook keeps every existing link and only
+gains the ones missing. A person's own edits are shown in the before,
+and the section is not selected by default.
+
+**Receipts, said apart.** After Apply the page reads the operation
+(`GET /api/brain/operation?request=`) and says three facts:
+
+| fact | says |
+| --- | --- |
+| Saved | *Applied locally* — every file holds its new version |
+| Committed | *Committed locally* with its commit; *Applied locally; not committed* (setting off); *Applied locally; commit pending* with git's reason |
+| Shared | *Shared* (the remote holds the commit, or those exact bytes); *Committed locally; sync pending*; *Push failed*; *Remote conflict*; *Not shared* |
+
+**Retry commit** commits the batch's files once more, only while every
+file still holds what the batch wrote; **Push now** / **Retry push** asks
+sync to publish. Neither writes a file again. A **remote conflict** — the
+remote holds another version of a file this batch wrote, and sync, which
+never forces, has stopped on it — offers **Compare with the remote**
+(`GET /api/brain/seed/compare?request=`, the last fetch, read only): the
+two texts side by side. Settle it in the work-state repository by hand,
+then retry the push.
+
+**When it is done.** **Open handbook** and **Return to board**. The
+entries start Unclassified; nothing gives a run their content, nothing
+is launched, and the handbook is no requirement or gate. Apply writes
+only `brain/s-<section>.md` and `brain/handbook/handbook.md` — no
+application file, card, AGENTS file, configuration, gate or check.
+
+**What is proved, and what is not.** `tests/test_seedapply.py` drives a
+real inspection and a stub-vendor draft through review and Apply on
+disposable split repositories: selection and edits, a declined section,
+a double click, a lost reply, a crash part way finished at start-up, a
+crash while staging finished by the same request, an unexpected failure
+put back, a concurrent reader seeing none or all, another writer between
+plan and switch, source, policy and Brain drift, a source dump and a
+credential refused, re-seeding over a person's edit and classification,
+a failed commit retried alone, a push pending then shared, and a remote
+conflict compared and never forced. `verify/browser_cases/case_brain_seed_apply.py`
+drives the page by pointer and keyboard at 1280 and 390 pixels in both
+themes. The real-agent seed probe (`develop/brain-agent-probe.py --seed`)
+still proves generation only; applying is deterministic and needs no
+model.
 
 ### Drafting with the Brain Agent
 
