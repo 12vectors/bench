@@ -46,6 +46,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "manager" / "core"))
 
 from tests.test_brainwrite import _Layout, git, tree  # noqa: E402
+import tests.test_seedsources as seed_tests  # noqa: E402
 
 import braindraft  # noqa: E402
 import config  # noqa: E402
@@ -558,6 +559,74 @@ class Lifecycle(_Seeding):
         draft = self.generate()
         braindraft.discard({"id": draft["id"]})
         self.assertEqual(braindraft.get(draft["id"])["status"], "discarded")
+
+
+class _OneRepoSeeding:
+    """The same journey where one repository holds the application and the
+    work state: a vendored and a source-hosted install."""
+
+    def setUp(self):
+        super().setUp()
+        tool = self.tool
+        for name, text in (("README.md", README), ("CONTRIBUTING.md", CONTRIB),
+                           ("server.py", SERVER), ("misc.txt", "misc\n")):
+            (self.app / name).write_text(text)
+        (tool / "plans").mkdir(exist_ok=True)
+        (tool / "plans" / "roadmap.md").write_text(ROADMAP)
+        git(self.app, "add", "-A")
+        git(self.app, "commit", "-qm", "sources")
+        local = tool / "manager" / "local"
+        (local / "state" / "agent").mkdir(parents=True)
+        (local / ".env").write_text("BOARD_AGENT_MODEL=opus\n")
+        stub = self.dir / "vendor"
+        stub.write_text(STUB.replace("__HERE__", repr(str(self.dir))))
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        patcher = mock.patch.multiple(
+            config, LOCAL=local, STATE=local / "state", ADAPTER="claude",
+            AGENT_PROFILES="", AGENT_DIR=local / "state" / "agent",
+            MANIFESTS_DIR=local / "state" / "manifests",
+            CONTEXT_DIR=local / "state" / "context",
+            BRAIN_DRAFT_TIMEOUT=60.0, BRAIN_DRAFT_ROUNDS=3,
+            _ENV={**config._ENV, "BOARD_CLAUDE_BIN": str(stub)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        state.AGENTS.clear()
+        self.addCleanup(state.AGENTS.clear)
+        braindraft.reset()
+        self.addCleanup(braindraft.reset)
+        self.addCleanup(setattr, state, "broadcast", state.broadcast)
+        state.broadcast = lambda *_a, **_k: None
+
+    def test_a_shared_repository_drafts_from_both_roots(self):
+        head = git(self.app, "rev-parse", "HEAD").stdout
+        manifest = seedsources.inspect({"sources": [
+            {"root": "app", "path": "README.md", "treatment": "cite"},
+            {"root": "app", "path": "CONTRIBUTING.md", "treatment": "policy"},
+            {"root": "app", "path": "server.py", "treatment": "evidence"},
+            {"root": "work", "path": "plans/roadmap.md", "treatment": "cite"}]})
+        self.assertEqual(manifest["separation"], "shared")
+        (self.dir / "scenario.txt").write_text("seed")
+        pre = braindraft.seed_preflight({"manifest": manifest})
+        self.assertTrue(pre["ready"], pre["blockers"])
+        out = braindraft.start_seed({"request": f"seed-one-{time.time_ns()}",
+                                     "manifest": manifest, "approval": pre["approval"]})
+        self.assertTrue(wait_for(lambda: braindraft.DRAFTS[out["draft"]["id"]]["status"]
+                                 != "running"))
+        draft = braindraft.get(out["draft"]["id"])
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        by = {s["section"]: s for s in draft["seed"]["draft"]["sections"]}
+        self.assertEqual(by["direction"]["claims"][0]["sources"], ["work:plans/roadmap.md"])
+        self.assertIn("9090", by["how-it-works"]["body"])
+        self.assertEqual(git(self.app, "rev-parse", "HEAD").stdout, head)
+        self.assertFalse((self.tool / "brain").exists())
+
+
+class Vendored(_OneRepoSeeding, seed_tests._OneRepo):
+    hosted = False
+
+
+class SourceHosted(_OneRepoSeeding, seed_tests._OneRepo):
+    hosted = True
 
 
 if __name__ == "__main__":
