@@ -1606,7 +1606,7 @@ def _roll_back(entry: dict, paths: list[Path]) -> list[str]:
             else:
                 untouched.append(f["file"])
     for directory in {p.parent for p in paths}:
-        records._sync_dir(directory)
+        records.sync_directory(directory)
     _cleanup(entry, paths)
     return untouched
 
@@ -1666,7 +1666,7 @@ def _finish_batch(request: str, entry: dict, *, resumed: bool) -> dict:
                 os.replace(staged, path)
                 _fault(f"switched:{n}")
             for directory in {p.parent for p in paths}:
-                records._sync_dir(directory)
+                records.sync_directory(directory)
     except Refused:
         raise
     except Exception as exc:
@@ -1805,6 +1805,33 @@ def _public_batch(entry: dict) -> dict:
     if entry.get("saved"):
         out["push"] = _push_batch(entry)
     return out
+
+
+def digest(value) -> str:
+    """The short digest a write's request identity is held to — for a
+    caller that binds a review to exactly what it would write."""
+    return _digest(value)
+
+
+def current_bytes(file: str) -> bytes | None:
+    """One flat entry file's bytes now (None when absent), refused when it
+    is a link, not regular or outside the work root. A read."""
+    if not isinstance(file, str) or not brain.NAME_RE.match(file):
+        raise Refused("not a plain flat entry file name")
+    return _current_bytes(brain.directory() / file)
+
+
+def batch_revisions() -> dict[str, str]:
+    """The revision every file was last written at by a batch on this board
+    (task 194), by entry id — what tells a seed's own text from a person's
+    edit since. Machine-local: the journal keeps the newest operations."""
+    found: dict[str, str] = {}
+    batches = [e for e in _journal().values() if e.get("kind") == "batch" and e.get("saved")]
+    for e in sorted(batches, key=lambda e: e.get("finished") or ""):
+        for f in e.get("files") or []:
+            if f.get("id"):
+                found[f["id"]] = f.get("revision")
+    return found
 
 
 def recover() -> list[str]:

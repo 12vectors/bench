@@ -2702,24 +2702,10 @@ def _before(current: dict | None) -> str | None:
     if current is None:
         return None
     try:
-        data = brainwrite._current_bytes(brain.directory() / current["file"])
+        data = brainwrite.current_bytes(current["file"])
     except brainwrite.Refused as exc:
         return f"(not readable: {exc})"
     return (data or b"").decode("utf-8", "replace")
-
-
-def _seed_written() -> dict[str, str]:
-    """The revision each seed entry was last written at by a batch on this
-    board, newest batch last — what tells a seed's own text from a
-    person's edit since."""
-    found: dict[str, str] = {}
-    batches = [e for e in brainwrite._journal().values()
-               if e.get("kind") == "batch" and e.get("saved")]
-    for e in sorted(batches, key=lambda e: e.get("finished") or ""):
-        for f in e.get("files") or []:
-            if f.get("id"):
-                found[f["id"]] = f.get("revision")
-    return found
 
 
 def _seed_identity_checks(draft: dict) -> list[dict]:
@@ -2763,7 +2749,7 @@ def _seed_plan(draft: dict, given=None) -> dict:
     edits = _seed_edits(draft, given)
     reading = brain.reading()
     by_id = {e["id"]: e for e in reading["entries"]}
-    written = _seed_written()
+    written = brainwrite.batch_revisions()
     gaps = {g["section"]: g.get("why") for g in (manifest.get("coverage") or {}).get("gaps")
             or []}
     titles = {s[0]: s[1] for s in handbook.SECTIONS}
@@ -2916,7 +2902,7 @@ def _seed_plan(draft: dict, given=None) -> dict:
         row["after"] = f["text"] if f else None
     hb = after.get("handbook")
     shared = config.SYNC and bool(config.state_git_remote())
-    preview = brainwrite._digest({
+    preview = brainwrite.digest({
         "draft": draft["id"], "round": sd.get("round"), "manifest": manifest.get("digest"),
         "batch": batch, "brain": reading["revision"]})
     return {

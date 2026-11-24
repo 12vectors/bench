@@ -21,7 +21,17 @@
    approval (`POST /api/brain/seed/generate`) and the private draft's
    progress, questions and sections are read back from
    `/api/brain/drafts`. Continue, Cancel and Discard are the drafting
-   routes. Nothing here applies a draft: that is the next step (#194).
+   routes.
+
+   Step three (task 194): **Review sections** asks the board
+   (`POST /api/brain/seed/review`, a read) what Apply would write for the
+   person's choices — per section the target entry, the text before and
+   after, citations, evidence strength, coverage and risks, and the
+   handbook before and after. **Apply** — armed, then fired — sends that
+   review's `preview` digest and the same choices under one request
+   identity (`POST /api/brain/seed/apply`); the outcome's saved,
+   committed and shared receipts are read from `/api/brain/operation`,
+   and only the step that did not happen is retried.
 
    Every string from the server — paths above all, which name files in
    somebody else's repository — goes through `esc`, and drafted Markdown
@@ -43,7 +53,12 @@ const sd = { slot: null, loading: false, picked: null, exclude: '', sections: nu
   filter: '', busy: false, result: null, error: null, gen: 0,
   // step two: the preflight shown, the armed Generate, the private draft
   pre: null, preBusy: false, preError: null, note: '', armed: false, genBusy: false,
-  genError: null, draft: null, answers: {}, contNote: '', stepBusy: false, poll: null };
+  genError: null, draft: null, answers: {}, contNote: '', stepBusy: false, poll: null,
+  // step three: the person's choices per section, the review shown, the
+  // armed Apply and its one request identity, and the batch's receipts
+  choices: new Map(), review: null, reviewBusy: false, reviewError: null, applyArmed: false,
+  applyBusy: false, applyError: null, applyKey: null, op: null, opRequest: null, opBusy: false,
+  opError: null, compare: null };
 let repaint = () => {};
 let wired = false;
 
@@ -89,10 +104,24 @@ async function load() {
       const res = await fetch('/api/brain/drafts');
       const list = await res.json().catch(() => ({}));
       const open = (list.seeds || []).find(x => !['discarded', 'cancelled', 'expired'].includes(x.status));
-      if (open && gen === sd.gen) { sd.draft = open; watch(); }
+      if (open && gen === sd.gen) { adopt(open); watch(); }
     } catch (e) { /* the draft list is a convenience; the page works without it */ }
   }
   repaint(true);
+}
+
+// a draft read back from the board: an Apply left part way keeps its own
+// request identity, so pressing Apply again finishes it rather than
+// starting another; a new round is a new draft to review
+function adopt(draft) {
+  const before = sd.draft;
+  if (before && (before.id !== draft.id || before.proposalRound !== draft.proposalRound)) {
+    sd.review = null;
+    sd.choices = new Map();
+  }
+  sd.draft = draft;
+  if (draft.status === 'applying' && draft.seed && draft.seed.applyRequest) sd.applyKey = draft.seed.applyRequest;
+  if (draft.status === 'applied' && draft.applied) sd.opRequest = draft.applied.request;
 }
 
 async function readDraft() {
@@ -100,7 +129,7 @@ async function readDraft() {
   try {
     const res = await fetch(`/api/brain/drafts?id=${encodeURIComponent(sd.draft.id)}`);
     const data = await res.json().catch(() => ({}));
-    if (res.ok && data.draft) sd.draft = data.draft;
+    if (res.ok && data.draft) adopt(data.draft);
   } catch (e) { /* asked again on the next beat */ }
   repaint(true);
   watch();
@@ -330,7 +359,8 @@ function resultHtml() {
 
 const DRAFT_WORDS = { running: 'Drafting', questions: 'Waiting for your answers',
   proposed: 'Private draft ready', failed: 'Failed', cancelled: 'Cancelled',
-  discarded: 'Discarded', expired: 'Expired' };
+  discarded: 'Discarded', expired: 'Expired', applying: 'Applying — part way',
+  applied: 'Applied to the Brain' };
 const AUTH_WORDS = { 'documented-policy': 'documented policy',
   'inferred-convention': 'inferred convention — not an approved agreement',
   'proposed-agreement': 'proposed agreement — not agreed' };
@@ -458,7 +488,7 @@ function draftHtml() {
         `<button type="button" class="b-btn" data-sact="draft-continue"${canCont ? '' : ' disabled'}>` +
         `${d.status === 'failed' ? 'Try again (one more round)' : 'Redraft (one more round)'}</button>` : '') +
     (d.status === 'running' ? '<button type="button" class="b-btn" data-sact="draft-cancel">Cancel this round</button>' : '') +
-    (!['running', 'discarded', 'cancelled', 'expired'].includes(d.status)
+    (!['running', 'discarded', 'cancelled', 'expired', 'applying', 'applied'].includes(d.status)
       ? '<button type="button" class="b-btn" data-sact="draft-discard">Discard the draft</button>' : '') +
     (['discarded', 'cancelled', 'expired', 'failed'].includes(d.status)
       ? '<button type="button" class="b-btn" data-sact="draft-new">Start a new draft</button>' : '') +
@@ -493,6 +523,258 @@ function draftHtml() {
     '</section>';
 }
 
+/* ── step three: review the draft section by section, then Apply (task 194) ── */
+
+const ACTION_WORDS = { create: 'New entry', update: 'Updates the entry', declined: 'Not drafted' };
+const STRENGTH_WORDS = { sourced: 'every claim sourced', partial: 'partly sourced',
+  none: 'no sourced claim' };
+const PUSH_WORDS = { shared: 'Shared', pending: 'Committed locally; sync pending',
+  failed: 'Push failed', conflict: 'Remote conflict — compare before anything else',
+  off: 'Not shared — sync is off', 'not-committed': 'Not shared — not committed' };
+
+/* A bounded line diff — the same reading as the Brain Agent's, kept here so
+   this module imports nothing from the Brain view that imports it. */
+function lineDiff(before, after, label) {
+  const a = (before || '').split('\n').slice(0, 1200);
+  const b = (after || '').split('\n').slice(0, 1200);
+  const n = a.length, m = b.length;
+  const w = new Array((n + 1) * (m + 1)).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      w[i * (m + 1) + j] = a[i] === b[j] ? w[(i + 1) * (m + 1) + j + 1] + 1
+        : Math.max(w[(i + 1) * (m + 1) + j], w[i * (m + 1) + j + 1]);
+    }
+  }
+  const rows = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { rows.push([' ', a[i]]); i++; j++; }
+    else if (j < m && (i >= n || w[i * (m + 1) + j + 1] >= w[(i + 1) * (m + 1) + j])) { rows.push(['+', b[j]]); j++; }
+    else { rows.push(['-', a[i]]); i++; }
+  }
+  if (!rows.some(r => r[0] !== ' ')) return '<p class="b-note">No change.</p>';
+  return `<pre class="b-diff" aria-label="${esc(label)}">` + rows.map(r =>
+    `<span class="b-diff-${r[0] === '+' ? 'add' : r[0] === '-' ? 'del' : 'same'}">` +
+    `${r[0] === '+' ? '+ ' : r[0] === '-' ? '− ' : '  '}${esc(r[1])}</span>`).join('\n') + '</pre>';
+}
+
+// the person's choices, as the review and Apply send them
+function choiceList() {
+  return [...sd.choices.entries()].map(([section, c]) => ({ section, ...c }));
+}
+
+async function review() {
+  const d = sd.draft;
+  if (!d || sd.reviewBusy) return;
+  sd.reviewBusy = true;
+  sd.reviewError = null;
+  sd.applyArmed = false;
+  repaint(true);
+  const res = await post('/api/brain/seed/review', { id: d.id, sections: choiceList() });
+  sd.reviewBusy = false;
+  if (res.ok) { sd.review = res.data.review; } else { sd.review = null; sd.reviewError = res.error; }
+  repaint(true);
+}
+
+async function applySeed() {
+  const d = sd.draft;
+  const r = sd.review;
+  if (!d || !r || !r.ready || sd.applyBusy) return;
+  if (!sd.applyArmed) { sd.applyArmed = true; repaint(true); return; }
+  sd.applyArmed = false;
+  sd.applyBusy = true;
+  sd.applyError = null;
+  repaint(true);
+  // one identity per Apply: a resend after a lost reply answers with the first outcome
+  sd.applyKey = sd.applyKey || `seed-apply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const res = await post('/api/brain/seed/apply', { id: d.id, request: sd.applyKey, round: d.proposalRound,
+    preview: r.preview, sections: choiceList() });
+  sd.applyBusy = false;
+  if (res.ok) {
+    sd.draft = res.data.draft;
+    sd.op = res.data.operation || null;
+    sd.opRequest = sd.applyKey;
+    sd.applyKey = null;
+  } else {
+    sd.applyError = res.error;
+    // no answer at all: the same identity again asks what happened, never writes twice
+    if (res.status !== 0) sd.applyKey = null;
+    if (res.data && res.data.review) sd.review = res.data.review;
+    readDraft();
+  }
+  repaint(true);
+  document.getElementById(res.ok ? 'sd-outcome' : 'sd-review')?.focus();
+}
+
+async function readOp() {
+  const key = sd.opRequest || (sd.draft && sd.draft.applied && sd.draft.applied.request);
+  if (!key || sd.opBusy) return;
+  sd.opRequest = key;
+  sd.opBusy = true;
+  try {
+    const res = await fetch(`/api/brain/operation?request=${encodeURIComponent(key)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) sd.op = data.operation; else sd.opError = data.error || `the board answered ${res.status}`;
+  } catch (e) { sd.opError = 'the board could not be asked'; }
+  sd.opBusy = false;
+  repaint(true);
+}
+
+async function retryOp(action) {
+  if (!sd.opRequest || sd.opBusy) return;
+  sd.opBusy = true;
+  sd.opError = null;
+  repaint(true);
+  const res = await post('/api/brain/retry', { request: sd.opRequest, action });
+  sd.opBusy = false;
+  if (res.ok) sd.op = res.data.operation || res.data; else sd.opError = res.error;
+  repaint(true);
+}
+
+async function compareOp() {
+  if (!sd.opRequest) return;
+  try {
+    const res = await fetch(`/api/brain/seed/compare?request=${encodeURIComponent(sd.opRequest)}`);
+    const data = await res.json().catch(() => ({}));
+    sd.compare = res.ok ? data.compare : { error: data.error || `the board answered ${res.status}` };
+  } catch (e) { sd.compare = { error: 'the board could not be asked' }; }
+  repaint(true);
+}
+
+function reviewSectionHtml(row) {
+  const id = `sd-rv-${esc(row.section)}`;
+  if (row.action === 'declined') {
+    return `<article class="b-panel sd-rv" aria-labelledby="${id}"><h3 id="${id}">${esc(row.heading)}</h3>` +
+      `<p><b>${esc(ACTION_WORDS.declined)}.</b> ${esc(row.why)}</p>` +
+      `<p class="b-warn">Coverage: ${esc(row.coverage)}.</p></article>`;
+  }
+  const c = sd.choices.get(row.section) || {};
+  const checked = row.selected;
+  const st = row.strength || {};
+  const problems = (row.problems || []).map(p => `<li><b>${esc(p.code)}</b> — ${esc(p.why)}</li>`).join('');
+  const risks = (row.risks || []).map(x => `<li>${esc(x)}</li>`).join('');
+  const cites = (row.citations || []).map(x => `<li><code>${esc(x.ref)}</code> <span class="b-note">` +
+    `${esc(x.treatment)} · sha256 <code>${esc(x.sha256)}</code>` +
+    `${x.git ? ` · ${esc(GIT_WORDS[x.git] || x.git)}` : ''}</span>` +
+    `${x.drift ? ` <span class="b-missing">changed since it was drafted</span>` : ''}</li>`).join('');
+  return `<article class="b-panel sd-rv${problems && checked ? ' b-bad' : ''}" aria-labelledby="${id}">` +
+    `<h3 id="${id}">${esc(row.heading)}</h3>` +
+    `<p class="sd-row"><input type="checkbox" id="${id}-sel" data-schoice="${esc(row.section)}" ` +
+    `data-sfield="selected" data-skey="rs:${esc(row.section)}"${checked ? ' checked' : ''}>` +
+    `<label for="${id}-sel">Apply this section — ${esc(ACTION_WORDS[row.action] || row.action)} ` +
+    `<code>${esc(row.target)}</code></label></p>` +
+    `<dl class="sd-facts"><dt>Classification</dt><dd>${esc(row.classification || 'Unclassified')}` +
+    `${row.action === 'create' ? ' — a person classifies it afterwards; until then the handbook does not read it as operative' : ' — kept, with its reasons'}</dd>` +
+    `<dt>Evidence</dt><dd>${esc(STRENGTH_WORDS[st.word] || st.word || '—')} · ${st.claims || 0} claim(s), ` +
+    `${st.cited || 0} cited · ${st.contradictions || 0} contradiction(s) · ${st.gaps || 0} gap(s)` +
+    `<br><span class="b-note">${esc(st.why || '')}</span></dd>` +
+    `<dt>Coverage</dt><dd>${esc(row.coverage)}</dd></dl>` +
+    (row.humanEdited ? '<p class="b-warn">This entry was changed since a seed wrote it, or was not ' +
+      'written by a seed here. It is not selected by default: read the before and after.</p>' : '') +
+    (problems ? `<div class="b-missing" role="alert"><p><b>Apply refuses this section:</b></p><ul class="sd-list">${problems}</ul></div>` : '') +
+    (risks ? `<ul class="sd-list b-note">${risks}</ul>` : '') +
+    `<p><label for="${id}-title">Title</label><br><input type="text" id="${id}-title" class="sd-wide" ` +
+    `data-schoice="${esc(row.section)}" data-sfield="title" data-skey="rt:${esc(row.section)}" ` +
+    `value="${esc(c.title !== undefined ? c.title : row.title)}"></p>` +
+    `<p><label for="${id}-sum">Summary</label><br><input type="text" id="${id}-sum" class="sd-wide" ` +
+    `data-schoice="${esc(row.section)}" data-sfield="summary" data-skey="ru:${esc(row.section)}" ` +
+    `value="${esc(c.summary !== undefined ? c.summary : row.summary || '')}"></p>` +
+    `<p><label for="${id}-body">Explanation (Markdown). Bench appends the claims and sources below it.</label><br>` +
+    `<textarea id="${id}-body" rows="6" class="sd-wide" data-schoice="${esc(row.section)}" data-sfield="body" ` +
+    `data-skey="rb:${esc(row.section)}">${esc(c.body !== undefined ? c.body : row.body || '')}</textarea></p>` +
+    `<details class="sd-excl"><summary>Citations (${(row.citations || []).length})</summary>` +
+    `<ul class="sd-list">${cites || '<li>None.</li>'}</ul></details>` +
+    `<details class="sd-excl"${row.before ? ' open' : ''}><summary>${row.before ? 'Before and after' : 'What would be written'} — ` +
+    `<code>brain/${esc(row.target)}.md</code></summary>` +
+    (row.after ? lineDiff(row.before || '', row.after, `Changes to ${row.target}`)
+      : '<p class="b-note">Not computed while the section is not selected or Apply is refused.</p>') +
+    '</details></article>';
+}
+
+function outcomeHtml() {
+  const d = sd.draft;
+  if (!d || d.status !== 'applied') return '';
+  if (!sd.op && !sd.opBusy && !sd.opError) readOp();
+  const op = sd.op;
+  const files = d.applied ? d.applied.files || [] : [];
+  const commit = op ? op.commit || {} : {};
+  const push = op ? op.push || {} : {};
+  const commitWord = !op ? 'Reading…' : commit.state === 'committed'
+    ? `Committed locally <code>${esc(short(commit.sha))}</code>`
+    : commit.state === 'off' ? 'Applied locally; not committed (BOARD_COMMIT_MOVES is off)'
+    : `Applied locally; commit pending — ${esc(commit.detail || 'the commit failed')}`;
+  const cmp = sd.compare;
+  return '<section class="b-panel" aria-labelledby="sd-h-out" id="sd-outcome" tabindex="-1">' +
+    '<h2 id="sd-h-out">Applied</h2>' +
+    `<p role="status">${files.length} file(s) written as one batch: ` +
+    files.map(f => `<code>brain/${esc(f)}</code>`).join(', ') + '.</p>' +
+    '<dl class="sd-facts">' +
+    `<dt>Saved</dt><dd>${op ? (op.saved ? 'Applied locally — every file holds its new version' : 'Not saved') : 'Reading…'}</dd>` +
+    `<dt>Committed</dt><dd>${commitWord}</dd>` +
+    `<dt>Shared</dt><dd>${esc(PUSH_WORDS[push.state] || push.state || '—')}` +
+    `${push.detail ? `<br><span class="b-note">${esc(push.detail)}</span>` : ''}</dd></dl>` +
+    (sd.opError ? `<p class="b-missing" role="alert">${esc(sd.opError)}</p>` : '') +
+    '<div class="sd-acts">' +
+    (op && commit.state === 'failed' ? '<button type="button" class="b-btn" data-sact="op-commit">Retry commit</button>' : '') +
+    (op && ['pending', 'failed'].includes(push.state) ? `<button type="button" class="b-btn" data-sact="op-push">${push.state === 'failed' ? 'Retry push' : 'Push now'}</button>` : '') +
+    (op && push.state === 'conflict' ? '<button type="button" class="b-btn" data-sact="op-compare">Compare with the remote</button>' : '') +
+    '<button type="button" class="b-btn" data-sact="op-read">Read again</button>' +
+    '<a class="b-btn b-primary" href="/brain" data-route>Open handbook</a>' +
+    '<a class="b-btn" href="/board" data-route>Return to board</a></div>' +
+    (cmp ? (cmp.error ? `<p class="b-missing">${esc(cmp.error)}</p>`
+      : `<p class="b-note">${esc(cmp.next)}</p>` + cmp.files.map(f => `<h3 class="sd-root"><code>brain/${esc(f.file)}</code></h3>` +
+        lineDiff(f.remote || '', f.local || '', `The remote's version against this board's, ${f.file}`)).join('')) : '') +
+    '<p class="b-note">The new entries start Unclassified. Nothing here gives a run this content, ' +
+    'launches anything, or makes the handbook a requirement.</p></section>';
+}
+
+function reviewHtml() {
+  const d = sd.draft;
+  if (!d || !['proposed', 'applying'].includes(d.status)) return '';
+  const r = sd.review;
+  const head = '<section class="b-panel" aria-labelledby="sd-h-review" id="sd-review" tabindex="-1">' +
+    '<h2 id="sd-h-review">6 · Review and apply</h2>' +
+    '<p>Choose the sections to publish, edit their words, and read exactly what Apply would ' +
+    'write. Apply is separate: one batch, all or nothing, held to this review.</p>';
+  if (!r) {
+    return head + '<div class="sd-acts"><button type="button" class="b-btn b-primary" data-sact="review"' +
+      `${sd.reviewBusy ? ' disabled aria-busy="true"' : ''}>${sd.reviewBusy ? 'Reading…' : 'Review sections'}</button></div>` +
+      (sd.reviewError ? `<p class="b-missing" role="alert">${esc(sd.reviewError)}</p>` : '') + '</section>';
+  }
+  const picked = r.sections.filter(s => s.selected);
+  const hb = r.handbook || {};
+  const pub = r.publication || {};
+  const blockers = (r.blockers || []).map(b => `<li><b>${esc(b.code)}</b> — ${esc(b.why)}</li>`).join('');
+  const label = `Apply ${picked.length} section${picked.length === 1 ? '' : 's'}` +
+    (hb.after ? ' and the handbook' : '');
+  return head +
+    ((r.drift && r.drift.sources.length) ? `<div class="b-warn" role="status"><p><b>Sources changed since the draft:</b> ` +
+      `${r.drift.sources.map(x => `<code>${esc(x.ref)}</code>`).join(', ')}. Sections citing them must be generated ` +
+      'again from a new inspection.</p></div>' : '') +
+    r.sections.map(reviewSectionHtml).join('') +
+    '<article class="b-panel" aria-labelledby="sd-rv-hb"><h3 id="sd-rv-hb">Handbook</h3>' +
+    (hb.after ? `<details class="sd-excl" open><summary>Before and after — <code>brain/${esc(hb.file)}</code></summary>` +
+      lineDiff(hb.before || '', hb.after, 'Changes to the handbook') + '</details>'
+      : '<p class="b-note">The handbook would not change.</p>') + '</article>' +
+    '<dl class="sd-facts">' +
+    `<dt>Covered</dt><dd>${esc((r.coverage.applied || []).join(', ') || 'nothing')}</dd>` +
+    `<dt>Left missing</dt><dd>${esc((r.coverage.missing || []).join(', ') || 'nothing')} — the handbook keeps ` +
+    'saying so</dd>' +
+    `<dt>Writes</dt><dd>${(pub.writes || []).map(w => `<code>${esc(w)}</code>`).join(', ') || 'nothing'}</dd>` +
+    `<dt>Commit</dt><dd>${esc(pub.commit || '')}</dd><dt>Sharing</dt><dd>${esc(pub.share || '')}</dd>` +
+    `<dt>Never</dt><dd>${esc(pub.never || '')}</dd></dl>` +
+    (blockers ? `<div class="b-panel b-bad" role="alert"><p><b>Apply is not available.</b></p><ul class="sd-list">${blockers}</ul></div>` : '') +
+    (sd.applyError ? `<p class="b-missing" role="alert">${esc(sd.applyError)}</p>` : '') +
+    '<div class="sd-acts">' +
+    `<button type="button" class="b-btn" data-sact="review"${sd.reviewBusy ? ' disabled aria-busy="true"' : ''}>` +
+    `${sd.reviewBusy ? 'Reading…' : 'Review again'}</button>` +
+    `<button type="button" class="b-btn b-primary${sd.applyArmed ? ' armed' : ''}" data-sact="apply"` +
+    `${r.ready && !sd.applyBusy ? '' : ' disabled'}${sd.applyBusy ? ' aria-busy="true"' : ''}>` +
+    `${sd.applyBusy ? 'Applying…' : sd.applyArmed ? `Confirm: ${label.toLowerCase()} as one batch` : label}</button>` +
+    (sd.applyArmed ? '<button type="button" class="b-btn" data-sact="apply-disarm">Not now</button>' : '') +
+    '</div></section>';
+}
+
 function seedHtml() {
   if (!sd.slot) {
     load();
@@ -502,8 +784,9 @@ function seedHtml() {
   const d = sd.slot.data;
   const head = originBack() + '<div class="b-head"><h1 class="b-title" tabindex="-1">Seed Brain from ' +
     'this project</h1><p class="b-lede">Choose which files a project handbook may be drafted ' +
-    'from, see exactly what would be read, and inspect them. This page reads; it never ' +
-    'generates or applies a draft.</p></div>';
+    'from, see exactly what would be read, and inspect them; then generate a private draft, ' +
+    'review it section by section, and apply what you choose. Nothing is written to the ' +
+    'Brain until you apply it.</p></div>';
   if (!d) {
     return { loading: false, html: head + `<div class="b-panel b-bad" role="alert"><p>` +
       `${esc(sd.slot.error || 'the seed reading could not be had')}</p>` +
@@ -525,7 +808,7 @@ function seedHtml() {
     '<div class="sd-acts"><button type="button" class="b-btn" data-sact="reread">Read the ' +
     'repositories again</button></div></section>';
   return { loading: false, html: head + identityHtml(d) + choose + plannedHtml(d) + resultHtml() +
-    generateHtml() + draftHtml() };
+    generateHtml() + draftHtml() + reviewHtml() + outcomeHtml() };
 }
 
 async function genPreflight() {
@@ -581,7 +864,7 @@ async function draftStep(step) {
   const res = await post(`/api/brain/draft/${step}`, body);
   sd.stepBusy = false;
   if (res.ok && res.data.draft) {
-    sd.draft = res.data.draft;
+    adopt(res.data.draft);
     sd.answers = {};
     sd.contNote = '';
     sd.genError = null;
@@ -641,8 +924,16 @@ function seedAct(name) {
   if (name === 'draft-cancel') { draftStep('cancel'); return; }
   if (name === 'draft-discard') { draftStep('discard'); return; }
   if (name === 'draft-new') {
-    sd.draft = null; sd.pre = null; sd.armed = false; repaint(true); return;
+    sd.draft = null; sd.pre = null; sd.armed = false; sd.review = null; sd.choices = new Map();
+    repaint(true); return;
   }
+  if (name === 'review') { review(); return; }
+  if (name === 'apply') { applySeed(); return; }
+  if (name === 'apply-disarm') { sd.applyArmed = false; repaint(true); return; }
+  if (name === 'op-read') { sd.op = null; sd.opError = null; readOp(); return; }
+  if (name === 'op-commit') { retryOp('commit'); return; }
+  if (name === 'op-push') { retryOp('push'); return; }
+  if (name === 'op-compare') { compareOp(); return; }
   if (name === 'reread') {
     // a fresh reading; the choice made so far is kept
     sd.slot = null;
@@ -672,6 +963,16 @@ function seedField(f, ev) {
   if (ds.sgnote !== undefined) { sd.note = f.value; return true; }
   if (ds.scnote !== undefined) { sd.contNote = f.value; return true; }
   if (ds.sanswer !== undefined) { sd.answers[ds.sanswer] = f.value; return true; }
+  // a review choice: kept as typed; a checkbox, or leaving a field, asks
+  // for the review again so what Apply would write is always what is shown
+  if (ds.schoice !== undefined) {
+    const c = sd.choices.get(ds.schoice) || {};
+    c[ds.sfield] = ds.sfield === 'selected' ? f.checked : f.value;
+    sd.choices.set(ds.schoice, c);
+    sd.applyArmed = false;
+    if (ev.type === 'change') review();
+    return true;
+  }
   if (ds.spick !== undefined) {
     if (ev.type !== 'change') return true;
     const c = candidateFor(ds.spick);

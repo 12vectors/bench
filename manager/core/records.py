@@ -72,6 +72,12 @@ def _sync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def sync_directory(directory) -> None:
+    """Flush a directory's entries (a rename into it) to disk, as far as
+    the platform allows. Never raises."""
+    _sync_dir(Path(directory))
+
+
 def write_bytes(path, data: bytes, *, durable: bool = False,
                 mkdir: bool = True) -> None:
     """Replace `path` with `data` atomically; with `durable`, also on disk.

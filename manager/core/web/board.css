@@ -2122,6 +2122,15 @@
   #sd-draft .b-chip,#sd-gen .b-chip{white-space:normal;max-width:100%}
   #sd-draft code,#sd-gen code,#sd-draft li,#sd-gen li,#sd-draft p,#sd-gen p{overflow-wrap:anywhere}
   #sd-draft .b-prose,#sd-draft textarea,#sd-gen textarea{max-width:100%;box-sizing:border-box}
+  /* reviewing and applying a seed draft (task 194): edits fill the panel,
+     long ids and diffs wrap at 390px, and the diff keeps its own scroll */
+  .b-main .sd-wide{width:100%;max-width:100%;box-sizing:border-box;min-height:32px;font:inherit;color:var(--text);
+    background:var(--sunken);border:1px solid var(--border);border-radius:6px;padding:4px 8px}
+  #sd-review code,#sd-outcome code,#sd-review li,#sd-outcome li,#sd-review p,#sd-outcome p{overflow-wrap:anywhere}
+  #sd-review .b-chip,#sd-outcome .b-chip{white-space:normal;max-width:100%}
+  .sd-rv{margin:10px 0}
+  #sd-outcome .sd-acts a.b-btn{display:inline-flex;align-items:center;min-height:32px;text-decoration:none}
+  @media (max-width:760px){ .b-main .sd-wide{min-height:44px} #sd-outcome .sd-acts a.b-btn{min-height:44px} }
   .sd-list{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px}
   .sd-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 0;min-height:32px}
   .sd-row input[type=checkbox]{width:20px;height:20px;margin:0;flex:none}
