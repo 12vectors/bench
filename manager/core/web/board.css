@@ -2118,6 +2118,10 @@
   .sd-facts dd{margin:0;overflow-wrap:anywhere}
   .sd-path{font-family:var(--mono);font-size:12.5px;overflow-wrap:anywhere;word-break:break-word}
   .sd-root{margin:12px 0 6px;font-size:13.5px;font-weight:600}
+  /* a seed draft (task 193): long claim words and source ids wrap at 390px */
+  #sd-draft .b-chip,#sd-gen .b-chip{white-space:normal;max-width:100%}
+  #sd-draft code,#sd-gen code,#sd-draft li,#sd-gen li,#sd-draft p,#sd-gen p{overflow-wrap:anywhere}
+  #sd-draft .b-prose,#sd-draft textarea,#sd-gen textarea{max-width:100%;box-sizing:border-box}
   .sd-list{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px}
   .sd-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:3px 0;min-height:32px}
   .sd-row input[type=checkbox]{width:20px;height:20px;margin:0;flex:none}
