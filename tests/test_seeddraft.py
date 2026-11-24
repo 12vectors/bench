@@ -590,6 +590,69 @@ class Lifecycle(_Seeding):
         self.assertFalse(again.get("duplicate") is None)
         self.assertEqual(self.calls(), 1)
 
+    def test_a_lost_receipt_on_the_first_generate_counts_and_never_relaunches(self):
+        # the board stopped between recording Generate's launch intent and
+        # recording its round: the request itself is all there is
+        draft = self.generate("questions")
+        record = braindraft.DRAFTS[draft["id"]]
+        key = record["request"]
+        record.update(status="running", rounds=[], conversation=record["conversation"][:1])
+        record["launching"] = {"agent": "brain-lost-0", "round": 1, "request": key,
+                               "at": time.time()}
+        braindraft._log_path("brain-lost-0").write_text("started\n")
+        braindraft._save(record)
+        braindraft.reset()
+        braindraft.recover()
+        draft = braindraft.get(draft["id"])
+        self.assertEqual(draft["error"]["code"], "launch-unknown")
+        self.assertEqual(draft["seed"]["roundsUsed"], 1)
+        self.assertEqual(draft["seed"]["unknownRounds"], 1)
+        # Generate again with the same identity answers with that request
+        pre = braindraft.seed_preflight({"manifest": self.manifest})
+        again = braindraft.start_seed({"request": key, "manifest": self.manifest,
+                                       "approval": pre["approval"]})
+        self.assertTrue(again["duplicate"])
+        self.assertEqual(again["draft"]["id"], draft["id"])
+        self.assertEqual(self.calls(), 1)
+
+    def test_a_redraft_keeps_an_earlier_section_it_could_not_redraft(self):
+        draft = self.generate("seed")
+        self.assertFalse(draft["seed"]["draft"]["partial"])
+        self.scenario("neighbour")
+        braindraft.continue_({"id": draft["id"], "request": "seed-redraft-0001",
+                              "round": draft["proposalRound"], "note": "tighten it"})
+        draft = self.settle(draft["id"])
+        sd = draft["seed"]["draft"]
+        self.assertEqual(draft["status"], "proposed")
+        self.assertEqual(len(sd["sections"]), 5)
+        self.assertFalse(sd["partial"])
+        by = {s["section"]: s for s in sd["sections"]}
+        self.assertEqual(by["overview"]["fromRound"], 1)
+        self.assertNotIn("fromRound", by["operations"])
+        self.assertEqual([r["section"] for r in sd["refused"]], ["overview"])
+        self.assertEqual(sd["refused"][0]["kept"], 1)
+        self.assertEqual(sd["round"], 2)
+
+    def test_the_round_limit_on_a_seed_draft_says_the_draft_stays(self):
+        with mock.patch.object(config, "BRAIN_DRAFT_ROUNDS", 1):
+            draft = self.generate("seed")
+            with self.assertRaises(braindraft.Refused) as caught:
+                braindraft.continue_({"id": draft["id"], "request": "seed-more-0002",
+                                      "round": 1, "note": "again"})
+        self.assertIn("stays here to read", str(caught.exception))
+        self.assertNotIn("no draft", str(caught.exception))
+
+    def test_retention_is_kept_while_the_board_runs(self):
+        draft = self.generate()
+        record = braindraft.DRAFTS[draft["id"]]
+        record["expires"] = time.time() - 1
+        # no restart: the next reading removes the text
+        listed = braindraft.listing()["seeds"][0]
+        self.assertEqual(listed["status"], "expired")
+        self.assertNotIn("Orchard tracks fruit trees",
+                         braindraft._path(draft["id"]).read_text())
+        self.assertIsNone(braindraft.get(draft["id"])["seed"]["draft"])
+
     def test_a_launch_that_never_started_counts_nothing(self):
         draft = self.generate("questions")
         record = braindraft.DRAFTS[draft["id"]]

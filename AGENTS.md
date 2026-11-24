@@ -2397,8 +2397,11 @@ as proof the project has nothing more — and a `digest` over all of it but
 the time it was made. `seedsources.drift(manifest)` inspects the same
 selection again and lists what moved (a commit, a destination revision,
 an item's bytes or state); a manifest of another version, or one whose
-digest does not match its contents, is refused. #193 and #194 hold their
-work to it.
+digest does not match its contents, is refused. The digest is an unkeyed
+hash, so `drift` also digests what the selection reads now and lists the
+manifest itself when that differs: a manifest edited by hand with its
+digest recomputed (a gap emptied, a treatment raised, an item added) is
+drift, never trusted. #193 and #194 hold their work to it.
 
 **What it is not.** The manifest **authorizes nothing**: it is not
 permission to generate, and generating a draft is a separate, explicit
@@ -2452,9 +2455,18 @@ on resume or after a restart, and resuming grants no new budget.
 **Frozen inputs, read only.** Each read item is re-read from the root the
 board resolves, through no link, held to its recorded sha256
 (`seedsources.item_bytes`), pinned as a read-only copy granted by one
-exact read, and the round **starts in its own pinned bundle**, not the
-application checkout. The other state directories, credentials and other
-rounds' bundles are denied as for any drafting run. This is the vendor's
+exact read. The round **starts in an empty scratch directory** under the
+system's temporary directory — not the application checkout, and not the
+bundle, which sits under the tool where a CLI would discover the tool's
+(and, vendored, the application's) `CLAUDE.md` above it. A scratch
+directory with a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or `.claude/`
+memory at or above it, or one inside the tool, the application or the work
+root, refuses the launch (`memory-files`; set the board's `TMPDIR`
+elsewhere), and it is removed when the round ends. The operator's own
+user-level memory (`~/.claude/CLAUDE.md`) is outside every repository and
+is not withheld; the preflight says so. The other state directories,
+credentials and other rounds' bundles are denied as for any drafting run.
+This is the vendor's
 permission rules and tool roster, **not an operating-system sandbox**. A
 harness that does not declare `read-only-tools` and `shell-withheld` as
 enforced and `exact-read` delivery is refused by name rather than run
@@ -2479,8 +2491,11 @@ section on its own, and refuses one that:
 - names a contradiction with fewer than two sources.
 
 The sections that pass are the draft; the rest are listed as refused (a
-**partial** draft, said so); none passing is **Failed**. Every kept claim
-is bound to the item's sha256. Nothing is filled in by bench.
+**partial** draft, said so); none passing is **Failed**. A redraft that
+refuses a section an earlier round drafted keeps the earlier version,
+marked with its round, beside the refusal — every round of one request is
+held to the same approval. Every kept claim is bound to the item's sha256.
+Nothing is filled in by bench.
 
 **Progress, said apart.** Done, now, remaining and blocked are bench's
 observations; the run's process and last tool activity are shown
@@ -2497,7 +2512,8 @@ answers rather than launching twice.
 
 **Private and expiring.** A seed draft is on this board only, never
 committed, and its text (and its manifest) is removed 14 days after it
-was made, keeping the record of what happened. Apply on a seed draft is
+was made — at the first reading after that, while the board runs, and at
+its next start — keeping the record of what happened. Apply on a seed draft is
 refused (`seed-apply-unavailable`): reviewing and applying is #194's.
 
 **What is proved, and what is not.** `tests/test_seeddraft.py` runs the

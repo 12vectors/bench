@@ -321,7 +321,18 @@ def _get(draft_id) -> dict:
     draft = DRAFTS.get(draft_id)
     if draft is None:
         raise Refused(f"no Brain draft {draft_id} on this board", 404)
+    if _expired(draft):
+        _expire(draft)
     return draft
+
+
+def _sweep_expired() -> None:
+    """Retention is kept while the board runs, not only at its start: a
+    private seed draft past its retention loses its text the first time
+    anything reads the requests after that moment."""
+    for draft in list(DRAFTS.values()):
+        if _expired(draft):
+            _expire(draft)
 
 
 def _expect_round(draft: dict, payload: dict) -> None:
@@ -715,12 +726,17 @@ def continue_(payload: dict) -> dict:
                           f"continue", 409)
         _expect_round(draft, payload)
         if len(draft["rounds"]) >= config.BRAIN_DRAFT_ROUNDS:
+            if draft.get("mode") == SEED_MODE:
+                way = ("the private draft stays here to read until it expires; Discard "
+                       "it, or start a new seed request (applying a seed draft is the "
+                       "next step, #194)" if draft.get("seedDraft") else
+                       "there is no draft yet: Discard it and start a new seed request")
+            elif draft.get("proposal"):
+                way = "edit the draft and Apply it, Discard it, or start a new request"
+            else:
+                way = "there is no draft to apply: Discard it and start a new request"
             raise Refused(f"this request has used its {config.BRAIN_DRAFT_ROUNDS} "
-                          f"rounds — " + ("edit the draft and Apply it, Discard it, "
-                                          "or start a new request"
-                                          if draft.get("proposal") else
-                                          "there is no draft to apply: Discard it and "
-                                          "start a new request"), 409, limit=True)
+                          f"rounds — {way}", 409, limit=True)
         answers = payload.get("answers") or {}
         note = _text(payload.get("note"), "your note", MAX_ANSWER, required=False)
         said = []
@@ -1434,13 +1450,16 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                      questions=[q["question"] for q in settled["questions"]])
             elif settled["status"] == "proposed" and seeding:
                 rnd["seedDraft"] = settled["seedDraft"]
-                draft["seedDraft"] = settled["seedDraft"]
+                sd = carry_forward(draft.get("seedDraft"), settled["seedDraft"])
+                draft["seedDraft"] = sd
                 draft["proposalRound"] = rnd["n"]
-                sd = settled["seedDraft"]
+                kept = sum(1 for s in sd["sections"] if s.get("fromRound"))
                 _say(draft, "agent", "proposal",
                      (settled.get("summary") or "proposed a private seed draft")
                      + (f" — {len(sd['sections'])} of {len(sd['expected'])} sections "
-                        f"passed validation" if sd.get("partial") else ""))
+                        f"passed validation" if sd.get("partial") else "")
+                     + (f"; {kept} section(s) this round did not pass keep their "
+                        f"earlier version" if kept else ""))
             elif settled["status"] == "proposed":
                 rnd["proposal"] = settled["proposal"]
                 rnd["bindings"] = settled["bindings"]
@@ -2215,6 +2234,36 @@ def validate_seed(draft: dict, rnd: dict, answer: dict) -> dict:
         "round": rnd["n"]}}
 
 
+def carry_forward(earlier: dict | None, new: dict) -> dict:
+    """A redraft that refuses a section the earlier draft had kept does not
+    take that section away: the earlier, validated version stays, marked
+    with the round it came from, and the refusal stays listed beside it.
+    Every round of one request is held to the same approval, so an earlier
+    section's bindings are still to the same frozen sources."""
+    if not earlier or not earlier.get("sections"):
+        return new
+    have = {s["section"] for s in new["sections"]}
+    before = {s["section"]: s for s in earlier["sections"]}
+    carried = []
+    for refusal in new["refused"]:
+        old = before.get(refusal["section"])
+        if old is None or refusal["section"] in have:
+            continue
+        carried.append(dict(old, fromRound=old.get("fromRound") or earlier.get("round")))
+        refusal["kept"] = old.get("fromRound") or earlier.get("round")
+    if not carried:
+        return new
+    by = {s["section"]: s for s in new["sections"] + carried}
+    ordered = [by[s] for s in new["expected"] if s in by]
+    counts: dict[str, int] = {}
+    for s in ordered:
+        for c in s["claims"]:
+            counts[c["status"]] = counts.get(c["status"], 0) + 1
+    return dict(new, sections=ordered, claims=counts,
+                partial=any(s not in by for s in new["expected"]),
+                contradictions=sum(len(s["contradictions"]) for s in ordered))
+
+
 def _questions(items, problems: list) -> list[dict]:
     kept: list[dict] = []
     if not isinstance(items, list) or not items or len(items) > MAX_QUESTIONS:
@@ -2651,10 +2700,12 @@ def public(draft: dict) -> dict:
 
 
 def listing() -> dict:
-    """Every request this board holds, newest first — a read."""
+    """Every request this board holds, newest first — a read, except that a
+    private seed draft past its retention has its text removed first."""
     with LOCK:
         _load()
-        found = sorted(DRAFTS.values(), key=lambda d: d.get("created") or 0, reverse=True)
+        _sweep_expired()
+        found =sorted(DRAFTS.values(), key=lambda d: d.get("created") or 0, reverse=True)
         entries = [d for d in found if d.get("mode") != SEED_MODE]
         seeds = [d for d in found if d.get("mode") == SEED_MODE]
         return {"drafts": [public(d) for d in entries[:50]],
@@ -2664,7 +2715,8 @@ def listing() -> dict:
 
 
 def get(draft_id) -> dict:
-    """One request as the page reads it. A read: nothing is reconciled,
-    launched or written here."""
+    """One request as the page reads it. A read: nothing is reconciled or
+    launched here, and the one write is retention — a private seed draft
+    past it has its text removed before it is shown."""
     with LOCK:
         return public(_get(draft_id))

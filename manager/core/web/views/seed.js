@@ -362,7 +362,9 @@ function preflightHtml() {
     `<dt>Policy</dt><dd><code>${esc(p.policyId || '—')}</code> · template ` +
     `<code>${esc(p.template ? p.template.name : '—')}</code> (${esc(p.template ? p.template.source : '')})</dd>` +
     `<dt>Where it runs</dt><dd>${esc(p.launch.cwd)}<br><span class="b-note">${esc(p.launch.how)}. ` +
-    `Denied: ${esc(p.launch.denied)}.</span></dd>` +
+    `Denied: ${esc(p.launch.denied)}.</span>` +
+    (p.launch.memory ? `<br><span class="b-note">${esc(p.launch.memory)}.</span>` : '') + '</dd>' +
+    `<dt>Also given to the run</dt><dd>${esc(p.launch.context || '—')}</dd>` +
     `<dt>Destinations</dt><dd>${esc(p.destinations.writes)}</dd>` +
     `<dt>Budget</dt><dd>${b.files} files · ${bytes(b.bytes)} · at most ${b.rounds} rounds of ` +
     `${b.secondsPerRound}s each<br><span class="b-note">${esc(b.attempts)}</span><br>` +
@@ -413,6 +415,8 @@ function claimHtml(c) {
 function sectionHtml(s) {
   return `<article class="b-panel sd-section" aria-labelledby="sd-sec-${esc(s.section)}">` +
     `<h3 id="sd-sec-${esc(s.section)}">${esc(s.title)}</h3>` +
+    (s.fromRound ? `<p class="b-note">Kept from round ${esc(s.fromRound)}: the newest round's ` +
+      'version of this section was refused.</p>' : '') +
     (s.summary ? `<p class="b-note">${esc(s.summary)}</p>` : '') +
     `<div class="b-prose">${md(s.body || '', { base: 3 }) || '<p class="b-none">No body.</p>'}</div>` +
     (s.claims.length ? `<h4>Claims, and how far each goes</h4><ul class="sd-list">${s.claims.map(claimHtml).join('')}</ul>` : '') +
@@ -460,9 +464,12 @@ function draftHtml() {
       ? '<button type="button" class="b-btn" data-sact="draft-new">Start a new draft</button>' : '') +
     '</div>';
   const refused = out && out.refused && out.refused.length
-    ? '<div class="b-warn" role="status"><p><b>A partial draft:</b> these sections were ' +
-      'refused and are not shown.</p><ul class="sd-list">' + out.refused.map(r =>
-        `<li><b>${esc(r.section)}</b> — ${esc(r.problems.join('; '))}</li>`).join('') + '</ul></div>' : '';
+    ? `<div class="b-warn" role="status"><p><b>${out.partial ? 'A partial draft:' : 'Refused this round:'}` +
+      '</b> the newest round\'s version of these sections was refused. A section an earlier ' +
+      'round drafted keeps that version; the rest are not shown.</p><ul class="sd-list">' +
+      out.refused.map(r => `<li><b>${esc(r.section)}</b> — ${esc(r.problems.join('; '))}` +
+        `${r.kept ? ` <span class="b-note">(round ${esc(r.kept)}'s version kept)</span>` : ''}</li>`).join('') +
+      '</ul></div>' : '';
   const gaps = (seed.manifest && seed.manifest.gaps) || [];
   return `<section class="b-panel${tone}" aria-labelledby="sd-h-draft" id="sd-draft" tabindex="-1">` +
     '<h2 id="sd-h-draft">5 · Private draft</h2>' +
