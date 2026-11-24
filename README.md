@@ -308,6 +308,14 @@ configured, what is not, and what to do next, with **Settings** holding
 the rest — the commands agents may run, the checks your team provides,
 and the merge rules.
 
+For an existing project, **Settings → Setup guide** (and an empty
+**Brain**) also offer **Seed Brain**: it shows the application and work
+repositories bench resolved, lets you choose which of their files a
+project handbook may be drafted from, and inspects exactly those —
+sizes, hashes and gaps, nothing run and nothing written. Generating and
+applying a draft are later, separate steps. See "Seeding the Brain:
+inspecting approved sources" in `AGENTS.md`.
+
 ## Update
 
 ```bash

@@ -1534,9 +1534,10 @@ from the default. Files that cannot be shown are listed with how to fix
 each kind of problem, and are not found by search until they are fixed.
 The curated **Project handbook** sits above the library on the same page
 (task 171, "The project handbook: curated, sourced, said as it is"); the
-library below it is unchanged and still lists every entry. There is no
-seeding and no automatic classification yet: those are later phases, and
-nothing on the page offers them.
+library below it is unchanged and still lists every entry. An empty
+Brain offers **Seed Brain**, which inspects approved sources and writes
+nothing (task 192); generating and applying a seed draft, and automatic
+classification, are later phases, and nothing on the page offers them.
 
 ### The page's script: modules under a policy
 
@@ -1865,9 +1866,11 @@ filed"). A curated handbook of five sections links maintained entries
 and says what authority stands behind each (task 171, "The project
 handbook: curated, sourced, said as it is"). Existing `reference/` files
 can be catalogued or explained there, one at a time, with every original
-left at its address (task 172, "Adopting reference material"). What it
-does not do yet, said so nobody looks for it: seeding a Brain from an
-application, and any agent classification. A run is given no
+left at its address (task 172, "Adopting reference material"). Seeding
+a Brain from an existing project starts with choosing and inspecting its
+sources (task 192, "Seeding the Brain: inspecting approved sources").
+What it does not do yet, said so nobody looks for it: generating a seed
+draft, applying one, and any agent classification. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2297,6 +2300,119 @@ whether the bytes still match and the catalogue or explanation beside it.
 file, compatibility redirects, seeding and any automatic classification.
 No installer step, update or read adopts anything.
 
+### Seeding the Brain: inspecting approved sources
+
+An existing project already explains itself somewhere: a README, a
+contribution policy, its code, its cards and plans. Seeding a Brain
+from it is three separate acts — **inspect** the sources a person
+approves (task 192, here), **generate** a private draft from exactly
+those (#193), and a person **reviews and applies** it (#194). Only the
+first exists on this board yet, and it is useful on its own: a static
+inventory of what the two repositories hold, before any generation.
+
+**Two ways in, each with its way back.** An empty Brain offers **Seed
+Brain**, and **Settings → Setup guide** has a **Seed the Brain** panel.
+Both open `/brain/seed` (`?from=setup` from the Setup guide); Brain stays
+the selected destination, and the page's first link leads back to where
+it was opened — **Back to Brain** or **Back to Settings › Setup guide**.
+Opening it, going back and reloading read; nothing is generated or
+applied by navigating.
+
+**1 · Repositories and destination.** What the board resolved, read back
+rather than what was asked for: the application checkout and the work
+root, each with its repository, branch, commit and how many paths hold
+uncommitted work; bench's own installation, named as never a source or a
+destination; the layout (vendored, source-hosted or external) and whether
+the two are one repository (`shared`) or two (`independent`); and the
+destination — `brain/` and `brain/handbook/handbook.md` with the
+revisions a later Apply would be held to. **A mapping bench cannot use is
+refused, never repaired**, and nothing is listed or inspected:
+
+| code | when |
+| --- | --- |
+| `layout-invalid` | `config.problems()` refuses the layout (the board's own validation) |
+| `app-missing`, `app-not-repository` | the application root is not a directory, or not in git |
+| `work-missing` | the work root is not a directory |
+| `work-not-repository` | the work root is in no repository: run `git init` there yourself — bench creates no repository and never commits a Brain to the application instead |
+| `work-in-app-repository`, `roots-overlap` | an external layout whose work state resolves into the application's repository, or whose roots contain one another |
+| `destination-refused` | `brain/` or the handbook record is a link, not a directory or file, or resolves outside the work root |
+
+In a vendored or source-hosted install the application and the work
+state really are one repository, and that is `shared`, not a refusal:
+the Brain is committed there as every board edit is.
+
+**2 · Choose sources.** Every candidate by name and size — `git ls-files`
+of the application (tracked, and untracked files `.gitignore` does not
+hide) and the work root's `tasks/` (archive apart), `plans/`,
+`reference/` and `brain/` — grouped by category (project instructions,
+documentation, non-secret configuration, source code, cards, plans, …).
+**Nothing is opened to list it.** Project instructions and top-level
+documentation are suggested; everything else is a person's choice. Always
+left out, listed with why and not choosable: credential-shaped names
+(`.env*`, keys, `*secret*`, `*token*`, …), private transcripts, raw logs
+and dumps (`.git/`, `.claude/`, `logs/`, `*.log`, `*.jsonl`), dependency
+and build trees (`node_modules/`, `vendor/`, `.venv/`, `dist/`, …),
+binaries, links, files over 512 KiB (a slice of one may be chosen),
+bench's own installation and `manager/local/`, and the work state's
+directories inside the application (listed once, as the work root's). At
+most 4,000 candidates are listed per root, and a truncated listing says
+so.
+
+**3 · Exactly what Inspect would read.** The chosen sources, each with a
+**treatment** — `cite` (facts cited in place, never copied wholesale),
+`policy` (quoted as existing human policy, never extended), `evidence`
+(how it is built, not proof it runs or is deployed) or `background`
+(may inform, never cited) — and an optional line **slice** (`1-40`); the
+handbook **sections** in scope (the five of "The project handbook");
+and **your exclusions**, one glob per line, which narrow and never
+un-exclude. The total on disk is shown against the bounds: 200 sources,
+512 KiB a file, 4 MiB in all.
+
+**4 · Inspect.** `POST /api/brain/seed/inspect` reads exactly that
+selection and answers the **seed manifest, version 1**. Each item is:
+
+| state | means |
+| --- | --- |
+| `read` | its `bytes` and `sha256` (a slice's own, beside the whole file's `fileBytes` and `fileSha256`), its git `blob`, and whether that is the committed version, `modified` or `untracked` |
+| `absent` | nothing is there (or a slice starts past the end): a gap, never inferred contents |
+| `inaccessible` | it is there and could not be read — kept apart from absent |
+| `excluded` | always left out, your exclusion matched, a link on its path, outside its root, binary, not UTF-8, over a bound, or its **content** looks like a credential (its digest withheld) |
+
+The manifest also holds the two repositories' identities (root, branch,
+commit, uncommitted count, the work state's prefix in a shared
+repository), the destination's revisions and the chosen sections, the
+selection itself, the fixed exclusions, the bounds, **coverage** — the
+counts and, per section, what no source read can speak to (no operations
+source, no project instructions, …), said as discovery coverage and never
+as proof the project has nothing more — and a `digest` over all of it but
+the time it was made. `seedsources.drift(manifest)` inspects the same
+selection again and lists what moved (a commit, a destination revision,
+an item's bytes or state); a manifest of another version, or one whose
+digest does not match its contents, is refused. #193 and #194 hold their
+work to it.
+
+**What it is not.** The manifest **authorizes nothing**: it is not
+permission to generate, and generating a draft is a separate, explicit
+approval. Source text is evidence, never instructions or permission; no
+source text is in the manifest, only identities, sizes and hashes.
+Opening the page, listing and inspecting run no project code, script,
+package manager, check or agent, fetch nothing, create no card and write
+nothing — not to either repository and not to bench's state. The only
+processes are local git reads (`rev-parse`, `symbolic-ref`, `status`,
+`ls-files`, `ls-tree`) through the hardened read path. Credential
+detection is pattern matching: it lowers the risk and does not prove a
+file clean.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/seed` | the identities, destination, candidates, treatments, sections, fixed exclusions and bounds; a read |
+| `POST /api/brain/seed/inspect` | `{sources: [{root, path, treatment?, lines?}], exclude?, sections?}` — the manifest; a read with a body, behind the browser-mutation door |
+
+**Not in this version:** generating a draft, applying one, re-seeding,
+remote sources, and any write to the Brain. Tests: `tests/test_seedsources.py`
+(split, vendored and source-hosted layouts; instrumented git verbs,
+processes and sockets) and `verify/browser_cases/case_brain_seed.py`.
+
 ### Drafting with the Brain Agent
 
 Nobody should have to write the Brain's articles by hand (task 175).
@@ -2706,6 +2822,7 @@ once the board has been read.
 | --- | --- |
 | `/board` | the Board. `/` is the same page, and the bar is corrected to `/board` |
 | `/brain`, `/brain/e/<id>` | the Brain's list, and one entry by its stable id (task 157) |
+| `/brain/seed[?from=setup]` | Seed Brain: choosing and inspecting sources, returning to the Brain or to Settings → Setup guide (task 192) |
 | `/brain/r/<card>/<review>` | one review filed on a card, by the card's number (its stem if it has none) and the review's `rv-`/`rl-` identity (task 168) |
 | `/cards/<card>` | the card's detail view, on its Overview, over the Board |
 | `/cards/<card>?tab=<section>` | one of its sections: `brief`, `inputs`, `acceptance`, `reviews`, `activity` |
