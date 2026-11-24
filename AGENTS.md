@@ -2458,11 +2458,12 @@ board resolves, through no link, held to its recorded sha256
 exact read. The round **starts in an empty scratch directory** under the
 system's temporary directory — not the application checkout, and not the
 bundle, which sits under the tool where a CLI would discover the tool's
-(and, vendored, the application's) `CLAUDE.md` above it. A scratch
-directory with a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or `.claude/`
-memory at or above it, or one inside the tool, the application or the work
-root, refuses the launch (`memory-files`; set the board's `TMPDIR`
-elsewhere), and it is removed when the round ends. The operator's own
+(and, vendored, the application's) `CLAUDE.md` above it. It is made in the first of `TMPDIR`, `/tmp`,
+`/var/tmp` and `/dev/shm` that is outside the tool, the application and
+the work root and has no `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or
+`.claude/` memory at or above it; when none qualifies the launch is
+refused (`memory-files`), and the directory is removed when the round
+ends. The operator's own
 user-level memory (`~/.claude/CLAUDE.md`) is outside every repository and
 is not withheld; the preflight says so. The other state directories,
 credentials and other rounds' bundles are denied as for any drafting run.
