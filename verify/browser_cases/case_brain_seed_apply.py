@@ -157,7 +157,7 @@ class SeedApply(unittest.TestCase):
             self.wait_text(b, ["s-overview"], "#bshell #sd-review")
         # Space deselects Ways of working; the review follows
         self.press(b, '#bshell [data-schoice="ways-of-working"][data-sfield="selected"]')
-        b.key(" ")
+        b.key("Space")
         if not b.wait("!document.querySelector('#bshell [data-schoice=\"ways-of-working\"]"
                       "[data-sfield=\"selected\"]').checked && "
                       "(document.querySelector('#bshell [data-sact=\"apply\"]')?.innerText || '')"
