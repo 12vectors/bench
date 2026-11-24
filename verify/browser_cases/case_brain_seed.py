@@ -65,6 +65,8 @@ class Seed(unittest.TestCase):
         (app / "README.md").write_text(README)
         (app / "CONTRIBUTING.md").write_text("# Contributing\n\nEvery change needs a review.\n")
         (app / "server.py").write_text("print('orchard')\n")
+        # over the size read whole: choosable only as a slice of its lines
+        (app / "design-notes.md").write_text("A long line of design notes.\n" * 20000)
         (app / ".env").write_text("API_KEY=hunter2\n")
         (app / "node_modules" / "pad").mkdir(parents=True)
         (app / "node_modules" / "pad" / "index.js").write_text("module.exports = 1\n")
@@ -114,6 +116,22 @@ class Seed(unittest.TestCase):
                       " innerWidth]; })()")
         self.assertLessEqual(wide[0], wide[1] + 1, f"{where}: the Brain view overflows {wide}")
         self.assertLessEqual(wide[2], wide[3] + 1, f"{where}: the page overflows {wide}")
+
+    def set_lines(self, b, key, value):
+        """Type a slice into a planned source's lines field and leave it."""
+        sel = json.dumps(f'#bshell [data-slines="{key}"]')
+        if not b.eval(f"(() => {{ const f = document.querySelector({sel}); if (!f) return false;"
+                      f" f.focus(); f.value = {json.dumps(value)};"
+                      " f.dispatchEvent(new Event('input', {bubbles: true}));"
+                      " f.dispatchEvent(new Event('change', {bubbles: true})); return true; })()"):
+            raise bv.CheckFailed(f"no lines field for {key}: {self.text(b)[:800]}")
+
+    def table_fits(self, b, where):
+        wide = b.eval("(() => { const t = document.querySelector('#bshell .sd-table');"
+                      " return t ? [t.scrollWidth, t.clientWidth] : null; })()")
+        if wide is None:
+            raise bv.CheckFailed(f"{where}: no result table")
+        self.assertLessEqual(wide[0], wide[1] + 1, f"{where}: the result table overflows {wide}")
 
     def pick(self, key):
         return f'#bshell [data-spick="{key}"]'
@@ -194,17 +212,34 @@ class Seed(unittest.TestCase):
             raise bv.CheckFailed("Space did not choose the source")
         self.assertEqual(b.eval("document.activeElement?.dataset?.spick"), "app:server.py",
                          "focus stays on the checkbox after the repaint")
+        # a file too large to read whole asks for a slice before Inspect
+        self.reveal(b, "app:design-notes.md")
+        self.assertIn("a slice of lines only", self.text(b))
+        b.click(self.pick("app:design-notes.md"))
+        self.wait_text(b, ["needs a slice"], '#bshell section[aria-labelledby="sd-h-plan"]')
+        self.assertTrue(b.eval("document.querySelector('#bshell [data-sact=\"inspect\"]').disabled"),
+                        "Inspect is offered before the large file has a slice")
+        self.assertEqual(b.eval("document.querySelector('#bshell [data-slines=\"app:design-notes.md\"]')"
+                                ".getAttribute('aria-invalid')"), "true")
+        self.set_lines(b, "app:design-notes.md", "1-200")
+        if not b.wait("!document.querySelector('#bshell [data-sact=\"inspect\"]').disabled", 5):
+            raise bv.CheckFailed("Inspect stayed disabled after the slice was given")
+        # a slice the server refuses: the refusal is drawn, nothing is read
+        self.set_lines(b, "app:README.md", "0-3")
+        b.click('#bshell [data-sact="inspect"]')
+        self.wait_text(b, ["Inspection refused", "a slice is"])
+        self.assertTrue(b.eval("document.querySelector('#bshell .b-bad[role=\"alert\"]') !== null"))
+        self.assertFalse(b.eval("!!document.querySelector('#bshell #sd-result')"))
+        shot("brain-seed-inspection-refused-day")
         # a slice of the README
-        b.eval("(() => { const f = document.querySelector('#bshell [data-slines=\"app:README.md\"]');"
-               " f.focus(); f.value = '1-3'; f.dispatchEvent(new Event('input', {bubbles: true}));"
-               " f.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
+        self.set_lines(b, "app:README.md", "1-3")
         shot("brain-seed-planned-day")
         b.click('#bshell [data-sact="inspect"]')
         if not b.wait("!!document.querySelector('#bshell #sd-result')", 15):
             raise bv.CheckFailed("no inspection result: " + self.text(b)[:1500])
         result = self.text(b, "#bshell #sd-result")
         for words in ("Inspection complete is not a draft", "lines 1–3", "plans/roadmap.md",
-                      "Coverage gaps", "Operations", "authorizes nothing"):
+                      "lines 1–200", "Coverage gaps", "Operations", "authorizes nothing"):
             self.assertIn(words, result)
         self.assertEqual(b.eval("document.activeElement?.id"), "sd-result",
                          "focus moves to the result")
@@ -222,6 +257,41 @@ class Seed(unittest.TestCase):
         self.theme(b, False)
         self.no_overflow(b, "the seed page at 390px, day")
         shot("brain-seed-narrow-day")
+        # the result, at 390px: the suggested sources inspected
+        b.click('#bshell [data-sact="inspect"]')
+        if not b.wait("!!document.querySelector('#bshell #sd-result')", 15):
+            raise bv.CheckFailed("no inspection result at 390px: " + self.text(b)[:1500])
+        for dark in (False, True):
+            self.theme(b, dark)
+            self.no_overflow(b, f"the result at 390px, {'night' if dark else 'day'}")
+            self.table_fits(b, f"the result at 390px, {'night' if dark else 'day'}")
+            shot(f"brain-seed-result-narrow-{'night' if dark else 'day'}")
+
+    def test_4a_a_refused_mapping_is_said_at_both_widths(self):
+        b = S["browser"]
+        b.origin = self.backend.url
+        work = self.backend.work
+        outside = self.backend.base / "brain-elsewhere"
+        outside.mkdir(exist_ok=True)
+        (work / "brain").symlink_to(outside)
+        try:
+            for width, height in ((1280, 900), (390, 844)):
+                b.viewport(width, height)
+                b.goto("/brain/seed")
+                self.seed_page(b)
+                self.wait_text(b, ["Seeding cannot use these repositories", "destination-refused",
+                                   "Remedy"])
+                self.assertFalse(b.eval("!!document.querySelector('#bshell [data-spick]')"),
+                                 "a refused mapping still offered sources")
+                self.assertFalse(b.eval("!!document.querySelector('#bshell [data-sact=\"inspect\"]')"))
+                self.assertTrue(b.eval("!!document.querySelector('#bshell [role=\"alert\"]')"))
+                for dark in (True, False):
+                    self.theme(b, dark)
+                    self.no_overflow(b, f"the refused mapping at {width}px")
+                    shot(f"brain-seed-refused-{width}-{'night' if dark else 'day'}")
+        finally:
+            (work / "brain").unlink()
+            shutil.rmtree(outside, ignore_errors=True)
 
     def test_5_nothing_was_written_or_launched(self):
         app, work = self.backend.app, self.backend.work

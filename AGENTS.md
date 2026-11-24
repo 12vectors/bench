@@ -2349,14 +2349,20 @@ documentation, non-secret configuration, source code, cards, plans, …).
 **Nothing is opened to list it.** Project instructions and top-level
 documentation are suggested; everything else is a person's choice. Always
 left out, listed with why and not choosable: credential-shaped names
-(`.env*`, keys, `*secret*`, `*token*`, …), private transcripts, raw logs
-and dumps (`.git/`, `.claude/`, `logs/`, `*.log`, `*.jsonl`), dependency
-and build trees (`node_modules/`, `vendor/`, `.venv/`, `dist/`, …),
-binaries, links, files over 512 KiB (a slice of one may be chosen),
-bench's own installation and `manager/local/`, and the work state's
-directories inside the application (listed once, as the work root's). At
-most 4,000 candidates are listed per root, and a truncated listing says
-so.
+(`.env*`, `.envrc`, `.netrc`, keys, and names with `secret`, `token`,
+`password`, `credential` or `api-key` as a separate word —
+`secrets.yaml`, `api_token.json`, not `tokenizer.py`), private
+transcripts, raw logs and dumps (`.git/`, `.claude/`, `logs/`, `*.log`,
+`*.jsonl`), dependency and build trees (`node_modules/`, `vendor/`,
+`.venv/`, `dist/`, …), binaries, links, files over 8 MiB, bench's own
+installation and `manager/local/`, and the work state's directories
+inside the application (listed once, as the work root's). A file over
+512 KiB and up to 8 MiB is choosable **only as a slice of its lines**:
+the page asks for one before it offers Inspect. At most 4,000 candidates
+are listed per root, and a truncated listing says so. **Inspect reads
+only what this listing would offer**: a path written into a request by
+hand that git ignores, that sits inside another checkout, or that is not
+a listed work-state file is excluded, whatever its name.
 
 **3 · Exactly what Inspect would read.** The chosen sources, each with a
 **treatment** — `cite` (facts cited in place, never copied wholesale),
@@ -2366,14 +2372,14 @@ so.
 handbook **sections** in scope (the five of "The project handbook");
 and **your exclusions**, one glob per line, which narrow and never
 un-exclude. The total on disk is shown against the bounds: 200 sources,
-512 KiB a file, 4 MiB in all.
+512 KiB a file or a slice, 4 MiB in all.
 
 **4 · Inspect.** `POST /api/brain/seed/inspect` reads exactly that
 selection and answers the **seed manifest, version 1**. Each item is:
 
 | state | means |
 | --- | --- |
-| `read` | its `bytes` and `sha256` (a slice's own, beside the whole file's `fileBytes` and `fileSha256`), its git `blob`, and whether that is the committed version, `modified` or `untracked` |
+| `read` | its `bytes` and `sha256` (a slice's own, beside the whole file's `fileBytes` and `fileSha256`), its git `blob`, and whether that is the committed version, `modified`, `untracked`, or `unknown` when git could not be asked |
 | `absent` | nothing is there (or a slice starts past the end): a gap, never inferred contents |
 | `inaccessible` | it is there and could not be read — kept apart from absent |
 | `excluded` | always left out, your exclusion matched, a link on its path, outside its root, binary, not UTF-8, over a bound, or its **content** looks like a credential (its digest withheld) |
