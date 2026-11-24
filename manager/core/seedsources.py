@@ -112,7 +112,7 @@ SECRET_NAME = re.compile(
     re.IGNORECASE)
 DEPENDENCY_DIRS = {"node_modules", "bower_components", "jspm_packages", "vendor", ".venv",
                    "venv", "virtualenv", "site-packages", "__pycache__", ".tox", ".nox",
-                   ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle", "Pods",
+                   ".mypy_cache", ".ruff_cache", ".gradle", "Pods",
                    ".bundle", ".cargo", "target", "dist", "build", ".next", ".nuxt",
                    ".svelte-kit", ".parcel-cache", ".cache", "coverage", ".terraform"}
 PRIVATE_DIRS = {".git", ".claude", ".codex", ".opencode", ".cursor", ".aider", ".idea",

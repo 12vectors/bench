@@ -2135,9 +2135,13 @@
   .sd-sections li{display:block;padding:3px 0}
   .sd-problems{margin:6px 0;padding-left:18px;display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere}
   .sd-acts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
-  .sd-table{overflow-x:auto;max-width:100%}
-  .sd-table table{border-collapse:collapse;font-size:12.5px;width:100%}
-  .sd-table th,.sd-table td{text-align:left;padding:4px 8px;border-top:1px solid var(--border-soft);vertical-align:top}
+  /* the result table wraps rather than scrolling sideways: a path or a
+     digest breaks anywhere, so 390px reads it without a second scroller */
+  .sd-table{max-width:100%}
+  .sd-table table{border-collapse:collapse;font-size:12.5px;width:100%;table-layout:fixed}
+  .sd-table th,.sd-table td{text-align:left;padding:4px 8px;border-top:1px solid var(--border-soft);vertical-align:top;
+    overflow-wrap:anywhere;word-break:break-word}
+  .sd-table th:first-child,.sd-table td:first-child{width:38%}
   .sd-pre{max-height:360px;overflow:auto;background:var(--sunken);padding:8px;border-radius:6px;
     font:12px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
   @media (max-width:760px){
