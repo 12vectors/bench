@@ -1565,21 +1565,49 @@ def _seed_scratch() -> Path:
     state is beside it) and with no instruction file at or above it.
     Refused, with nothing left behind, when the system's temporary
     directory cannot give one."""
-    scratch =Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
     roots = [Path(r).resolve() for r in (config.REPO, config.WORK, config.TM_ROOT,
                                           config.LOCAL) if r]
-    inside = [str(r) for r in roots if _within(r, scratch)]
-    found = memory_files_at_or_above(scratch)
-    if inside or found:
-        shutil.rmtree(scratch, ignore_errors=True)
-        why = (f"inside {inside[0]}" if inside else
-               f"below the instruction file {found[0]}, which the harness would read "
-               f"though it is not an approved source")
-        raise Refused(f"the seed round's starting directory {scratch} is {why} — set "
-                      f"TMPDIR for the board to a directory outside every repository "
-                      f"with no CLAUDE.md or AGENTS.md above it; nothing was launched",
-                      409, code="memory-files")
-    return scratch
+    why = "no temporary directory could be made"
+    for base in _scratch_bases():
+        if not base.is_dir():
+            continue
+        holder = next((r for r in roots if _within(r, base)), None)
+        if holder is not None:
+            why = f"{base} is inside {holder}"
+            continue
+        found = memory_files_at_or_above(base)
+        if found:
+            why = (f"{base} is below the instruction file {found[0]}, which the harness "
+                   f"would read though it is not an approved source")
+            continue
+        try:
+            scratch = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=base)).resolve()
+        except OSError as exc:
+            why = f"{base} could not be written ({exc.strerror or exc})"
+            continue
+        if memory_files_at_or_above(scratch):    # appeared meanwhile
+            shutil.rmtree(scratch, ignore_errors=True)
+            continue
+        return scratch
+    raise Refused(f"the seed round has nowhere safe to start: {why} — give the board a "
+                  f"TMPDIR outside every repository with no CLAUDE.md or AGENTS.md "
+                  f"above it; nothing was launched", 409, code="memory-files")
+
+
+def _scratch_bases() -> list[Path]:
+    """Where a seed round's scratch directory may go, in order: the board's
+    temporary directory, then the system's own. TMPDIR is often pointed into
+    a checkout (a check's directed environment does exactly that), so it is
+    the first choice, not the only one."""
+    out: list[Path] = []
+    for base in (tempfile.gettempdir(), "/tmp", "/var/tmp", "/dev/shm"):
+        try:
+            p = Path(base).resolve()
+        except OSError:
+            continue
+        if p not in out:
+            out.append(p)
+    return out
 
 
 TOKEN_BUDGET = {

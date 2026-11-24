@@ -396,6 +396,18 @@ class Generate(_Seeding):
         self.assertEqual(rnd["cwd"], "seed-scratch")
         self.assertEqual(rnd["approval"], draft["seed"]["frozen"]["approval"])
 
+    def test_a_tmpdir_under_an_instruction_file_falls_back_to_the_system_one(self):
+        tmp = self.dir / "tmp-under-memory"
+        tmp.mkdir()
+        (self.dir / "CLAUDE.md").write_text("unapproved instructions\n")
+        with mock.patch.object(braindraft.tempfile, "tempdir", str(tmp)):
+            draft = self.generate()
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        seen = self.seen()
+        self.assertEqual(seen["memory"], [])
+        self.assertFalse(Path(seen["cwd"]).is_relative_to(tmp.resolve()))
+        self.assertEqual(list(tmp.iterdir()), [])
+
     def test_an_instruction_file_above_the_start_refuses_the_launch(self):
         # A temporary directory under a CLAUDE.md would hand the harness an
         # instruction file nobody approved: refused, nothing launched or left.
@@ -404,7 +416,7 @@ class Generate(_Seeding):
         (self.dir / "CLAUDE.md").write_text("unapproved instructions\n")
         pre = braindraft.seed_preflight({"manifest": self.manifest})
         self.scenario("seed")
-        with mock.patch.object(braindraft.tempfile, "tempdir", str(tmp)):
+        with mock.patch.object(braindraft, "_scratch_bases", lambda: [tmp]):
             with self.assertRaises(braindraft.Refused) as caught:
                 braindraft.start_seed({"request": "seed-memory-0001",
                                        "manifest": self.manifest,
