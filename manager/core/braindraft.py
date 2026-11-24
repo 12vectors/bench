@@ -56,6 +56,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import threading
 import time
@@ -66,9 +67,11 @@ import brain
 import brainwrite
 import config
 import gitrepo
+import handbook
 import profiles
 import records
 import redact
+import seedsources
 import state
 import taskfiles
 import templates
@@ -82,11 +85,11 @@ TEMPLATE = "brain.md"
 # questions | proposed | failed | ready → running (an explicit Continue)
 # proposed → applying → applied;  any open state → discarded
 STATUSES = ("running", "questions", "ready", "proposed", "applying",
-            "applied", "failed", "cancelled", "discarded")
+            "applied", "failed", "cancelled", "discarded", "expired")
 ACTIVE = {"running"}
 WAITING = {"questions", "ready"}
 CONTINUABLE = {"questions", "ready", "proposed", "failed"}
-CLOSED = {"applied", "cancelled", "discarded"}
+CLOSED = {"applied", "cancelled", "discarded", "expired"}
 
 MAX_REQUEST = 2000
 MAX_ANSWER = 2000
@@ -192,6 +195,11 @@ def recover() -> int:
     with LOCK:
         _load()
         for draft in DRAFTS.values():
+            if draft.get("launching"):
+                _reconcile_launch(draft)
+            if _expired(draft):
+                _expire(draft)
+                continue
             if draft.get("status") in ACTIVE:
                 _fail(draft, "restart", "the board restarted while this round ran, so "
                       "its answer was lost. Nothing was written and nothing is "
@@ -200,6 +208,34 @@ def recover() -> int:
             elif draft.get("status") == "applying":
                 _reconcile_apply(draft)
     return closed
+
+
+def _reconcile_launch(draft: dict) -> None:
+    """A launch intent with no round behind it: the board stopped between
+    recording the intent and recording the process. If the run's log
+    exists the process may have started and spent its budget, so the round
+    is counted as `unknown` and is never launched again by itself; if not,
+    nothing ran and nothing is counted. Either way a person's explicit
+    Continue is the only way on."""
+    intent = draft.pop("launching")
+    if any(r.get("agent") == intent.get("agent") for r in draft.get("rounds") or []):
+        _save(draft)
+        return
+    if _log_path(str(intent.get("agent"))).exists():
+        draft.setdefault("rounds", []).append({
+            "n": intent.get("round") or len(draft.get("rounds") or []) + 1,
+            "request": intent.get("request"), "agent": intent.get("agent"),
+            "name": None, "model": None, "started": intent.get("at"),
+            "ended": time.time(), "outcome": "unknown"})
+        _round_failed(draft, {"code": "launch-unknown", "why": (
+            "the board stopped while this round was being launched, so whether the "
+            "run started is not known; it is counted as a round and is not "
+            "relaunched. Continue to ask again when you are ready")})
+    else:
+        _round_failed(draft, {"code": "not-launched", "why": (
+            "the board stopped before the run was launched; nothing ran and nothing "
+            "was counted. Continue to launch it")})
+    _save(draft)
 
 
 def _fail(draft: dict, code: str, why: str) -> None:
@@ -217,7 +253,7 @@ def _round_failed(draft: dict, error: dict) -> None:
     applicable — and the failure is said beside it: a failed revision
     never strands what the person already had. Otherwise the request
     reads failed."""
-    if draft.get("proposal") and draft.get("proposalRound"):
+    if (draft.get("proposal") or draft.get("seedDraft")) and draft.get("proposalRound"):
         kept = dict(error)
         kept["why"] = (f"{error['why']} — the draft from round "
                        f"{draft['proposalRound']} is unchanged and can still be "
@@ -670,7 +706,8 @@ def continue_(payload: dict) -> dict:
     key = _request_key(payload)
     with LOCK:
         draft = _get(payload.get("id"))
-        if any(r.get("request") == key for r in draft.get("rounds") or []):
+        if any(r.get("request") == key for r in draft.get("rounds") or []) \
+                or (draft.get("launching") or {}).get("request") == key:
             return {"draft": public(draft), "duplicate": True}
         if draft["status"] not in CONTINUABLE:
             raise Refused(f"this request is {draft['status']} — there is nothing to "
@@ -793,6 +830,9 @@ def _launch(draft: dict, *, continue_request: str) -> None:
     """One round: resolve, pin, render, launch. Everything that can refuse
     does so before the round is recorded or a process exists; a refusal
     leaves the draft as it was (a new request is then not saved at all)."""
+    if draft["mode"] == SEED_MODE:
+        _launch_seed(draft, continue_request=continue_request)
+        return
     round_no = len(draft["rounds"]) + 1
     entry = _target_now(draft["target"]) if draft["mode"] == "update" else None
     found = profiles.resolve(INTENT)
@@ -865,14 +905,53 @@ def _launch(draft: dict, *, continue_request: str) -> None:
                                    "open, rather than ask more questions.")
     prompt = templates.render(TEMPLATE, loaded["text"], fields)
     found["template"] = templates.identity(loaded)
+    _start_round(draft, round_no, continue_request, agent_id, found, prompt,
+                 Path(app["root"]), {
+                     "targetRevision": entry["revision"] if entry else None,
+                     "app": {"root": app["root"], "commit": app["commit"]},
+                     "sources": [{"ref": s["ref"], "sha256": s["sha256"],
+                                  **({"entry": s["entry"]} if s.get("entry") else {})}
+                                 for s in sel["sources"]],
+                     "excluded": len(sel["excluded"]),
+                     "template": templates.identity(loaded)},
+                 f"drafting a Brain entry ({draft['mode']}"
+                 + (f" of {draft['target']}" if draft.get("target") else "")
+                 + f", round {round_no})")
+
+
+def _log_path(agent_id: str) -> Path:
+    return config.AGENT_DIR / "logs" / f"{agent_id}.log"
+
+
+def _start_round(draft: dict, round_no: int, continue_request: str, agent_id: str,
+                 found: dict, prompt: str, cwd: Path, facts: dict, what: str) -> None:
+    """The one place a drafting round's process starts, for an entry and a
+    seed alike. A launch intent is recorded durably before the process
+    exists, so a board that dies between the two can tell, at its next
+    start, a launch that may have happened (`launch-unknown`, counted as a
+    round and never repeated) from one that provably did not."""
     manifest = profiles.record(agent_id, found)
-    log_path = config.AGENT_DIR / "logs" / f"{agent_id}.log"
+    log_path = _log_path(agent_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    draft["launching"] = {"agent": agent_id, "round": round_no,
+                          "request": continue_request, "at": time.time()}
+    fresh = draft["id"] not in DRAFTS
+    DRAFTS[draft["id"]] = draft
+    _save(draft)
     try:
-        proc, log_file, model = agents.launch(INTENT, prompt, Path(app["root"]),
+        proc, log_file, model = agents.launch(INTENT, prompt, cwd,
                                               agent_id, f"brain:{draft['id']}",
                                               log_path, manifest)
     except ValueError as exc:
+        draft.pop("launching", None)
+        if fresh:
+            DRAFTS.pop(draft["id"], None)
+            try:
+                _path(draft["id"]).unlink()
+            except OSError:
+                pass
+        else:
+            _save(draft)
         raise Refused(f"the Brain Agent could not be launched: {exc}", 409)
     name = agents.pick_name(draft["id"])
     with state.LOCK:
@@ -885,24 +964,15 @@ def _launch(draft: dict, *, continue_request: str) -> None:
             "brainDraft": draft["id"]}
     rnd = {"n": round_no, "request": continue_request, "agent": agent_id,
            "name": name, "model": model or None, "started": time.time(),
-           "ended": None, "outcome": "running",
-           "targetRevision": entry["revision"] if entry else None,
-           "app": {"root": app["root"], "commit": app["commit"]},
-           "sources": [{"ref": s["ref"], "sha256": s["sha256"],
-                        **({"entry": s["entry"]} if s.get("entry") else {})}
-                       for s in sel["sources"]],
-           "excluded": len(sel["excluded"]),
-           "template": templates.identity(loaded),
+           "ended": None, "outcome": "running", **facts,
            "deadline": time.time() + config.BRAIN_DRAFT_TIMEOUT}
     draft["rounds"].append(rnd)
     draft["status"] = "running"
-    DRAFTS[draft["id"]] = draft
+    draft.pop("launching", None)
     _save(draft)
     state.record_board_event({
         "kind": "agent", "actor": "agent", "file": f"brain:{draft['id']}",
-        "summary": (f"{name} is drafting a Brain entry ({draft['mode']}"
-                    + (f" of {draft['target']}" if draft.get("target") else "")
-                    + f", round {round_no}) — it proposes; nothing is written "
+        "summary": (f"{name} is {what} — it proposes; nothing is written "
                     f"until you apply it")})
     threading.Thread(target=_reap, args=(draft["id"], agent_id, proc, log_file),
                      daemon=True).start()
@@ -1344,7 +1414,8 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                 log = Path(record["log"]).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 log = ""
-            settled = validate(draft, rnd, parse(log))
+            seeding = draft["mode"] == SEED_MODE
+            settled = (validate_seed if seeding else validate)(draft, rnd, parse(log))
             rnd["outcome"] = settled["status"]
             if settled["status"] != "failed":
                 draft["status"] = settled["status"]
@@ -1357,6 +1428,15 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                      settled.get("summary") or f"asked {len(settled['questions'])} "
                      f"question(s)",
                      questions=[q["question"] for q in settled["questions"]])
+            elif settled["status"] == "proposed" and seeding:
+                rnd["seedDraft"] = settled["seedDraft"]
+                draft["seedDraft"] = settled["seedDraft"]
+                draft["proposalRound"] = rnd["n"]
+                sd = settled["seedDraft"]
+                _say(draft, "agent", "proposal",
+                     (settled.get("summary") or "proposed a private seed draft")
+                     + (f" — {len(sd['sections'])} of {len(sd['expected'])} sections "
+                        f"passed validation" if sd.get("partial") else ""))
             elif settled["status"] == "proposed":
                 rnd["proposal"] = settled["proposal"]
                 rnd["bindings"] = settled["bindings"]
@@ -1382,6 +1462,700 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                                          f"{summary}"[:300]})
     state.broadcast({"type": "brain"})
     state.broadcast({"type": "agents"})
+
+
+# ── seeding the Brain: a private, evidence-linked five-section draft ───
+#
+# Task 193, the second of seeding's three acts: #192's manifest says what a
+# person approved and what bench found when it read exactly that; this
+# drafts the project handbook's sections from exactly those bytes; #194
+# is a person's review and Apply. A seed request is a drafting request of
+# its own mode in the same store, with the same rounds, questions,
+# cancellation, time limit, restart handling and launch accounting — not a
+# second operation store and not a second agent stack.
+#
+# What it holds to, and why:
+#
+# - **Frozen identity.** The preflight names the manifest digest, the
+#   harness, model, policy and template, and the budget, and digests them
+#   into an `approval`. Generate must name that approval; every later round
+#   computes it again and is refused (`approval-stale`) when sources, model,
+#   policy or template moved. Changing what was approved is a new approval.
+# - **Frozen inputs.** Every item the manifest read is re-read, held to its
+#   recorded sha256 (`seedsources.item_bytes`), pinned as a read-only copy
+#   granted by one exact read, and the round starts in that bundle — not
+#   in the application checkout. A source that moved refuses the round.
+# - **Evidence or nothing.** A claim cites manifest items by id; a citation
+#   of anything else — a neighbouring file, a background-only item — is
+#   refused. Implemented and deployed claims must cite; deployment cannot
+#   be claimed when the selection held no operations source; a section the
+#   manifest found no source for must say what is missing. Documented
+#   policy must cite a source approved as policy; an inferred convention
+#   and a proposed agreement are said as what they are.
+
+SEED_MODE = "seed"
+SEED_KIND = "bench-brain-seed-draft"
+SEED_TEMPLATE = "brain-seed.md"
+SEED_TOP_KEYS = {"v", "kind", "draft", "round", "outcome", "summary", "questions",
+                 "sections"}
+SECTION_KEYS = {"section", "title", "summary", "body", "claims", "contradictions",
+                "gaps", "uncertainty"}
+AUTHORITIES = ("documented-policy", "inferred-convention", "proposed-agreement")
+MAX_SEED_BLOCK = 640 * 1024
+MAX_SECTION_BODY = 48 * 1024
+MAX_SECTION_CLAIMS = 30
+MAX_SECTION_LIST = 10
+SEED_RETENTION = 14 * 24 * 3600
+REQUIRED_ENFORCEMENT = (("read-only-tools", "enforced"), ("shell-withheld", "enforced"))
+TOKEN_BUDGET = {
+    "limit": None, "enforced": False,
+    "why": ("the harness reports no token usage to bench and accepts no token cap, so "
+            "bench bounds rounds, time, files and bytes instead. Nothing here is a "
+            "billing cap: what a round costs is uncertain until the vendor bills it")}
+
+
+def _expired(draft: dict) -> bool:
+    return (draft.get("mode") == SEED_MODE and draft.get("status") not in CLOSED
+            and draft.get("status") != "running"
+            and (draft.get("expires") or 0) < time.time())
+
+
+def _expire(draft: dict) -> None:
+    """A private seed draft past its retention: its drafted text and the
+    manifest it was held to are dropped; the record of what happened stays."""
+    draft.pop("seedDraft", None)
+    for rnd in draft.get("rounds") or []:
+        rnd.pop("seedDraft", None)
+        rnd.pop("raw", None)
+    if isinstance(draft.get("manifest"), dict):
+        draft["manifest"] = {"digest": draft["manifest"].get("digest")}
+    draft["status"] = "expired"
+    _say(draft, "board", "expired", "this private draft passed its retention and its text "
+         "was removed; nothing was written to the Brain")
+    _save(draft)
+
+
+def _seed_items(manifest: dict) -> list[dict]:
+    return [i for i in manifest.get("items") or [] if i.get("state") == "read"]
+
+
+def _seed_budget(manifest: dict) -> dict:
+    items = _seed_items(manifest)
+    return {"files": len(items), "bytes": sum(i.get("bytes") or 0 for i in items),
+            "rounds": config.BRAIN_DRAFT_ROUNDS,
+            "secondsPerRound": int(config.BRAIN_DRAFT_TIMEOUT),
+            "attempts": ("each Generate or Continue is one round; a failed, cancelled or "
+                         "unknown round counts, and nothing is relaunched by itself"),
+            "tokens": dict(TOKEN_BUDGET)}
+
+
+def _seed_capabilities(found: dict) -> tuple[list[dict], list[str]]:
+    """What the harness that would run declares it enforces, against what a
+    seed round requires. A requirement it does not declare blocks the
+    launch rather than running under a restriction the prompt alone holds."""
+    adapter = found.get("adapter") or {}
+    caps = adapter.get("capabilities") or {}
+    rows, blockers = [], []
+    for name, want in REQUIRED_ENFORCEMENT:
+        have = caps.get(name)
+        ok = have == want
+        rows.append({"name": name, "required": want, "declared": have or "not declared",
+                     "ok": ok})
+        if not ok:
+            blockers.append(f"the harness '{adapter.get('name')}' does not declare "
+                            f"{name} as {want}, which a seed round requires — refused "
+                            f"rather than run with broader access")
+    delivery = (adapter.get("inputs") or {}).get("delivery") or "none"
+    rows.append({"name": "inputs.delivery", "required": "exact-read",
+                 "declared": delivery, "ok": delivery == "exact-read"})
+    if delivery != "exact-read":
+        blockers.append(f"the harness '{adapter.get('name')}' cannot deliver approved "
+                        f"inputs by exact reads (it declares '{delivery}'), so the frozen "
+                        f"sources could not be the run's only reading — refused")
+    rows.append({"name": "filesystem-sandbox", "required": None,
+                 "declared": caps.get("filesystem-sandbox") or "not enforced", "ok": None,
+                 "note": "bench does not claim an operating-system sandbox: the boundary "
+                         "is the vendor's permission rules and tool roster"})
+    return rows, blockers
+
+
+def _seed_resolve(manifest: dict) -> dict:
+    """Everything a seed round rides, resolved without pinning, launching
+    or writing: the profile, the template, the capabilities, the budget
+    and the approval digest over all of it."""
+    found = profiles.resolve(INTENT)
+    blockers = list(found["blockers"])
+    loaded = None
+    try:
+        loaded = templates.require(SEED_TEMPLATE)
+    except ValueError as exc:
+        blockers.append(str(exc))
+    caps, refused = _seed_capabilities(found)
+    blockers += refused
+    selection = found.get("selection") or profiles.agent_selection(
+        config.agent_choice(INTENT))
+    harness = (selection.get("harness") or {}).get("name")
+    model = selection.get("model") or {}
+    budget = _seed_budget(manifest)
+    frozen = {"manifest": manifest.get("digest"), "harness": harness,
+              "model": model.get("value") or None, "modelSetting": model.get("setting"),
+              "policyId": found.get("policyId"),
+              "template": loaded["sha256"] if loaded else None,
+              "budget": {k: v for k, v in budget.items() if k != "attempts"}}
+    frozen["approval"] = hashlib.sha256(json.dumps(
+        frozen, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+    return {"found": found, "loaded": loaded, "blockers": blockers,
+            "capabilities": caps, "budget": budget, "frozen": frozen,
+            "selection": selection}
+
+
+def _manifest_or_refuse(manifest) -> dict:
+    try:
+        return seedsources.check(manifest)
+    except seedsources.Refused as exc:
+        raise Refused(f"the seed manifest cannot be used: {exc}", 400, code=exc.code)
+
+
+def _seed_drift(manifest: dict) -> list[dict]:
+    try:
+        return seedsources.drift(manifest)
+    except seedsources.Refused as exc:
+        raise Refused(str(exc), exc.status if exc.status != 400 else 409, code=exc.code)
+
+
+def seed_preflight(payload) -> dict:
+    """What Generate draft would launch, read and spend for this manifest,
+    before anything is launched: the effective harness, model and profile,
+    the exact reads, the policy and template, the destinations, what the
+    harness enforces, the budget and what cost stays uncertain — and the
+    approval Generate must name. A read: it re-inspects the manifest's
+    selection and resolves the profile; it pins, launches and writes
+    nothing."""
+    manifest = _manifest_or_refuse((payload or {}).get("manifest")
+                                   if isinstance(payload, dict) else None)
+    r = _seed_resolve(manifest)
+    moved = _seed_drift(manifest)
+    blockers = list(r["blockers"])
+    if moved:
+        blockers.append(f"{len(moved)} thing(s) moved since the manifest was made "
+                        f"({moved[0]['what']} first) — inspect again and approve the new "
+                        f"manifest")
+    items = _seed_items(manifest)
+    if not items:
+        blockers.append("the manifest read no source, so there is nothing to draft from")
+    unsafe = deny_problems()
+    if unsafe:
+        blockers.append(_deny_refusal(unsafe))
+    found = r["found"]
+    gaps = (manifest.get("coverage") or {}).get("gaps") or []
+    return {
+        "v": VERSION, "intent": INTENT, "ready": not blockers, "blockers": blockers,
+        "codes": [d["code"] for d in found.get("diagnostics") or []],
+        "approval": r["frozen"]["approval"], "frozen": r["frozen"],
+        "selection": r["selection"], "adapter": (found.get("adapter") or {}).get("name"),
+        "profile": profiles.summary(found), "policyId": found.get("policyId"),
+        "template": templates.identity(r["loaded"]) if r["loaded"] else None,
+        "manifest": {"digest": manifest["digest"], "made": manifest.get("made"),
+                     "layout": manifest.get("layout"),
+                     "separation": manifest.get("separation"),
+                     "commits": {k: (manifest["repositories"].get(k) or {}).get("commit")
+                                 for k in ("app", "work")},
+                     "sections": [s["id"] for s in (manifest.get("destination") or {})
+                                  .get("sections") or []],
+                     "gaps": gaps, "drift": moved},
+        "reads": [{"ref": i["id"], "treatment": i["treatment"], "bytes": i["bytes"],
+                   "sha256": i["sha256"][:12], "git": i.get("git")} for i in items],
+        "notRead": len(manifest.get("items") or []) - len(items),
+        "launch": {
+            "cwd": "the round's own pinned bundle — not the application checkout",
+            "how": "each approved item re-read, held to its recorded sha256, and pinned "
+                   "as a read-only copy granted by one exact read",
+            "denied": "credential-shaped paths, the tool's manager/local/.env and "
+                      "preview secrets, and every directory of manager/local/state/ but "
+                      "this round's own pinned copies",
+            "context": "the five section names, the manifest's coverage gaps, your note, "
+                       "and any earlier question and answer in this request"},
+        "destinations": {
+            **(manifest.get("destination") or {}),
+            "writes": "nothing — a seed draft is private to this board; only the next "
+                      "step's separate Apply (#194) may write brain/"},
+        "capabilities": r["capabilities"], "budget": r["budget"],
+        "cost": "uncertain: the harness reports no usage to bench, and a token budget "
+                "would not be a billing cap",
+        "authority": ("Generate draft authorizes read-only synthesis from these frozen "
+                      "inputs: no edit, command, check, web fetch or write to the Brain, "
+                      "the application, the cards or the configuration"),
+        "enforcement": ("the vendor's permission rules and tool roster, not an "
+                        "operating-system sandbox"),
+        "retention": f"the private draft is kept on this board for "
+                     f"{SEED_RETENTION // 86400} days, then its text is removed",
+    }
+
+
+def start_seed(payload: dict) -> dict:
+    """Generate draft: a seed request bound to the manifest and the approval
+    its preflight showed, and its first round launched. The same request
+    identity again answers with the request it already made. Refused, with
+    nothing written or launched, when the approval is stale, a source moved
+    or the harness cannot enforce what a seed round requires."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    key = _request_key(payload)
+    with LOCK:
+        _load()
+        seen = next((d for d in DRAFTS.values() if d.get("request") == key), None)
+        if seen is not None:
+            return {"draft": public(seen), "duplicate": True}
+        manifest = _manifest_or_refuse(payload.get("manifest"))
+        if not _seed_items(manifest):
+            raise Refused("the manifest read no source, so there is nothing to draft from",
+                          409)
+        note = _text(payload.get("text"), "your note", MAX_REQUEST, required=False)
+        r = _seed_resolve(manifest)
+        if payload.get("approval") != r["frozen"]["approval"]:
+            raise Refused("what Generate would use changed since you reviewed it (the "
+                          "sources, model, policy, template or budget) — review it again "
+                          "and approve the new reading; nothing was launched", 409,
+                          stale=True, code="approval-stale")
+        draft = {
+            "v": VERSION, "kind": KIND, "id": f"bd-{secrets.token_hex(5)}",
+            "request": key,
+            "text": note or "Seed the project handbook from the approved sources",
+            "mode": SEED_MODE, "target": None, "targetTitle": None,
+            "status": "running", "created": time.time(),
+            "expires": time.time() + SEED_RETENTION, "rounds": [],
+            "conversation": [], "manifest": manifest, "frozen": r["frozen"],
+        }
+        _say(draft, "you", "request", f"Generate a seed draft from manifest "
+             f"{manifest['digest'][:12]} ({len(_seed_items(manifest))} approved sources)"
+             + (f": {note}" if note else ""))
+        _launch(draft, continue_request=key)
+        return {"draft": public(draft), "duplicate": False}
+
+
+def _seed_sources_text(items: list[dict], pinned: dict[str, str]) -> str:
+    lines = []
+    for i in items:
+        lines.append(f"- `{i['id']}` — treatment **{i['treatment']}**, "
+                     f"{i['bytes']} bytes, sha256 {i['sha256'][:12]}: "
+                     f"`{pinned.get(i['id'], '(not pinned)')}`")
+    return "\n".join(lines)
+
+
+def _seed_sections_text(manifest: dict) -> str:
+    about = {s[0]: (s[1], s[2]) for s in handbook.SECTIONS}
+    gaps = {g["section"]: g["why"] for g in (manifest.get("coverage") or {}).get("gaps") or []}
+    out = []
+    for s in (manifest.get("destination") or {}).get("sections") or []:
+        title, what = about.get(s["id"], (s.get("title"), ""))
+        line = f"- `{s['id']}` — **{title}**: {what}"
+        if s["id"] in gaps:
+            line += (f". Bench found no source for it ({gaps[s['id']]}): say what is "
+                     f"missing in `gaps`, never fill it in")
+        out.append(line)
+    return "\n".join(out)
+
+
+def seed_contract_text(draft: dict, round_no: int) -> str:
+    sections = [s["id"] for s in (draft["manifest"].get("destination") or {})
+                .get("sections") or []]
+    example = {
+        "v": VERSION, "kind": SEED_KIND, "draft": draft["id"], "round": round_no,
+        "outcome": "proposal",
+        "summary": "one or two public sentences about the draft",
+        "questions": [{"id": "q1", "question": "only if outcome is questions",
+                       "why": "what the answer changes"}],
+        "sections": [{
+            "section": sid, "title": "plain text", "summary": "one line",
+            "body": "Markdown — the section's explanation",
+            "claims": [{"statement": "one claim",
+                        "status": " | ".join(CLAIM_STATUSES),
+                        "authority": "documented-policy | inferred-convention | "
+                                     "proposed-agreement | null",
+                        "sources": ["<an approved source id, e.g. app:README.md>"]}],
+            "contradictions": [{"statement": "where two sources disagree",
+                                "sources": ["<id>", "<another id>"]}],
+            "gaps": [{"what": "what is not known", "why": "why no source says it"}],
+            "uncertainty": "what stays unverified"} for sid in sections],
+    }
+    return json.dumps(example, indent=2, ensure_ascii=False)
+
+
+def _launch_seed(draft: dict, *, continue_request: str) -> None:
+    """One seed round: the approval checked again, every source re-read and
+    held to the manifest, pinned, and the run started in its own bundle.
+    Everything that can refuse does so before a process exists."""
+    manifest = draft["manifest"]
+    round_no = len(draft["rounds"]) + 1
+    r = _seed_resolve(manifest)
+    if r["blockers"]:
+        raise Refused(r["blockers"][0], 409)
+    if r["frozen"]["approval"] != (draft.get("frozen") or {}).get("approval"):
+        changed = [k for k in ("manifest", "harness", "model", "policyId", "template",
+                               "budget")
+                   if r["frozen"].get(k) != (draft.get("frozen") or {}).get(k)]
+        raise Refused(f"what this request was approved with changed ({', '.join(changed)})"
+                      f" — a changed source, model, policy or template needs a new "
+                      f"approval: start a new seed request; nothing was launched", 409,
+                      stale=True, code="approval-stale")
+    moved = _seed_drift(manifest)
+    if moved:
+        raise Refused(f"{len(moved)} thing(s) moved since the manifest was made "
+                      f"({moved[0]['what']} first) — inspect again and approve a new "
+                      f"seed request; nothing was launched", 409, code="source-drift",
+                      drift=moved[:20])
+    unsafe = deny_problems()
+    if unsafe:
+        raise Refused(_deny_refusal(unsafe), 409)
+    found, loaded = r["found"], r["loaded"]
+    items = _seed_items(manifest)
+    found.update({"task": f"brain:{draft['id']}", "stage": None,
+                  "requestId": profiles.request_id(INTENT, draft["id"]),
+                  "resolved": time.time()})
+    staging = config.STATE / "brain" / "seed-staging" / f"{draft['id']}-{round_no}"
+    context = found.setdefault("context", [])
+    named: dict[str, str] = {}
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        for n, item in enumerate(items, 1):
+            try:
+                data = seedsources.item_bytes(item)
+            except seedsources.Refused as exc:
+                raise Refused(f"{exc} — nothing was launched; inspect again", 409,
+                              code=exc.code)
+            name = f"seed-src-{n}"
+            suffix = Path(item["path"]).suffix[:12]
+            staged = staging / f"{name}{suffix}"
+            staged.write_bytes(data)
+            named[name] = item["id"]
+            context.append({
+                "name": name, "source": f"{item['root']}:{item['path']}",
+                "root": item["root"], "required": True, "readable": True,
+                "status": "resolved", "sha256": item["sha256"], "bytes": item["bytes"],
+                "revision": f"sha:{item['sha256'][:12]}",
+                "contextId": profiles.context_id(name, item["sha256"]),
+                "pinned": None, "path": str(staged), "why": None, "remedy": None,
+                "access": "read-only", "kind": "seed-input", "seedItem": item["id"]})
+        profiles.pin(found, base=pin_dir())
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    pinned: dict[str, str] = {}
+    want = {i["id"]: i["sha256"] for i in items}
+    for c in context:
+        if c.get("kind") != "seed-input":
+            continue
+        if c.get("status") != "pinned" or c.get("pinnedSha256") != want.get(c["seedItem"]):
+            raise Refused(f"the source {c['seedItem']} changed or could not be pinned while "
+                          f"the round was being prepared — nothing was launched", 409,
+                          code="source-drift")
+        pinned[c["seedItem"]] = c["pinned"]
+    if not found.get("bundle"):
+        raise Refused("no approved source could be pinned; nothing was launched", 409)
+    bundle = Path(found["bundle"]["path"])
+    found["cwd"] = {"policy": "pinned-bundle", "path": str(bundle)}
+    found["readDeny"] = read_deny(bundle.name)
+    unsafe = deny_problems(found["readDeny"])
+    if unsafe:
+        raise Refused(_deny_refusal(unsafe), 409)
+    note = draft["text"]
+    conversation = _conversation_text(draft)
+    if round_no >= config.BRAIN_DRAFT_ROUNDS:
+        conversation += ("\n\nThis is the LAST round: you must answer with a proposal "
+                         "now, saying in `gaps` and `uncertainty` what stays open, rather "
+                         "than ask more questions.")
+    fields = {
+        "draft": draft["id"], "round": str(round_no),
+        "rounds": str(config.BRAIN_DRAFT_ROUNDS), "request": note,
+        "conversation": conversation,
+        "sources": _seed_sources_text(items, pinned),
+        "sections": _seed_sections_text(manifest),
+        "coverage": (manifest.get("coverage") or {}).get("note") or "",
+        "contract": seed_contract_text(draft, round_no),
+        "guidance_read_only": config.prompt_guidance(checks=False),
+        "context": "",
+    }
+    prompt = templates.render(SEED_TEMPLATE, loaded["text"], fields)
+    found["template"] = templates.identity(loaded)
+    agent_id = f"brain-{draft['id']}-{round_no}-{secrets.token_hex(2)}"
+    _start_round(draft, round_no, continue_request, agent_id, found, prompt, bundle, {
+        "manifest": manifest["digest"], "approval": draft["frozen"]["approval"],
+        "app": {"root": None,
+                "commit": (manifest["repositories"].get("app") or {}).get("commit")},
+        "work": {"commit": (manifest["repositories"].get("work") or {}).get("commit")},
+        "sources": [{"ref": i["id"], "sha256": i["sha256"], "treatment": i["treatment"],
+                     "root": i["root"], "path": i["path"],
+                     **({"lines": i["lines"]} if i.get("lines") else {})} for i in items],
+        "excluded": len(manifest.get("items") or []) - len(items),
+        "template": templates.identity(loaded), "cwd": "pinned-bundle"},
+        f"drafting a private Brain seed (round {round_no}, {len(items)} approved sources)")
+
+
+def _seed_refs(value, where: str, given: dict, problems: list,
+               allow_background: bool = False) -> list[str] | None:
+    """Citations of approved, read manifest items, or the problem."""
+    if value is None:
+        value = []
+    if not isinstance(value, list) or len(value) > MAX_SOURCES:
+        problems.append(f"{where} must be a list of at most {MAX_SOURCES} source ids")
+        return None
+    out: list[str] = []
+    for ref in value:
+        if not isinstance(ref, str) or ref not in given:
+            problems.append(f"{where} cites {str(ref)[:80]!r}, which is not one of the "
+                            f"approved sources this round was given")
+            return None
+        if given[ref]["treatment"] == "background" and not allow_background:
+            problems.append(f"{where} cites {ref!r}, which was approved as background "
+                            f"only — it may inform the draft and is never cited")
+            return None
+        if ref not in out:
+            out.append(ref)
+    return out
+
+
+def _seed_section(item, sid_expected: set, seen: set, given: dict, gaps_needed: set,
+                  ops_evidence: bool) -> tuple[dict | None, str | None, list[str]]:
+    """One section, validated whole: (kept, its id, problems)."""
+    problems: list[str] = []
+    if not isinstance(item, dict):
+        return None, None, ["a section is not an object"]
+    sid = item.get("section")
+    if sid not in sid_expected:
+        return None, None, [f"{str(sid)[:40]!r} is not one of the approved sections"]
+    if sid in seen:
+        return None, sid, [f"{sid} is drafted twice"]
+    seen.add(sid)
+    extra = sorted(set(item) - SECTION_KEYS)
+    if extra:
+        problems.append(f"unknown field(s) {', '.join(extra[:6])}")
+    title = _clean(item.get("title"), "title", problems, cap=160)
+    summary = _clean(item.get("summary"), "summary", problems, cap=400, required=False)
+    uncertainty = _clean(item.get("uncertainty"), "uncertainty", problems, cap=2000,
+                         required=False)
+    body = item.get("body")
+    if isinstance(body, str) and len(body.encode("utf-8")) > MAX_SECTION_BODY:
+        problems.append(f"the body is over {MAX_SECTION_BODY // 1024} KiB")
+    elif title:
+        try:
+            fields = brainwrite.check_fields({"title": title, "kind": "Guide",
+                                              "summary": summary, "sources": [],
+                                              "related": [], "body": body})
+            body = fields["body"]
+            if "<!--" in body:
+                problems.append("the body carries an HTML comment, which the board "
+                                "reserves for its own records")
+        except brainwrite.Refused as exc:
+            problems.append(f"the section as an entry: {exc}")
+    claims: list[dict] = []
+    raw = item.get("claims") or []
+    if not isinstance(raw, list) or len(raw) > MAX_SECTION_CLAIMS:
+        problems.append(f"claims must be a list of at most {MAX_SECTION_CLAIMS}")
+        raw = []
+    for n, c in enumerate(raw):
+        where = f"claims[{n}]"
+        if not isinstance(c, dict) or set(c) - {"statement", "status", "authority",
+                                                "sources"}:
+            problems.append(f"{where} is not a statement, status, authority and sources")
+            continue
+        statement = _clean(c.get("statement"), f"{where}.statement", problems)
+        status = c.get("status")
+        if status not in CLAIM_STATUSES:
+            problems.append(f"{where}.status is one of {', '.join(CLAIM_STATUSES)}")
+            continue
+        authority = c.get("authority")
+        if authority not in (None, *AUTHORITIES):
+            problems.append(f"{where}.authority is one of {', '.join(AUTHORITIES)}, or null")
+            continue
+        refs = _seed_refs(c.get("sources"), where, given, problems)
+        if refs is None or statement is None:
+            continue
+        if status in ("implemented", "deployed") and not refs:
+            problems.append(f"{where} says {status} and cites nothing")
+            continue
+        if status == "deployed" and not ops_evidence:
+            problems.append(f"{where} says deployed, but the approved selection holds no "
+                            f"source about deploying or operating the project — "
+                            f"deployment stays unknown")
+            continue
+        if sid == "ways-of-working" and authority is None:
+            problems.append(f"{where} is a way of working: say whether it is "
+                            f"documented-policy, an inferred-convention or a "
+                            f"proposed-agreement")
+            continue
+        if authority == "documented-policy" and not any(
+                given[ref]["treatment"] == "policy" for ref in refs):
+            problems.append(f"{where} is documented policy, and cites no source approved "
+                            f"as policy — call it an inferred convention instead")
+            continue
+        if authority == "proposed-agreement" and status in ("implemented", "deployed"):
+            problems.append(f"{where} is a proposed agreement, so it is not {status}")
+            continue
+        if authority == "inferred-convention" and not refs:
+            problems.append(f"{where} is an inferred convention and cites nothing it was "
+                            f"inferred from")
+            continue
+        claims.append({"statement": statement, "status": status, "authority": authority,
+                       "sources": refs})
+    contradictions: list[dict] = []
+    raw = item.get("contradictions") or []
+    if not isinstance(raw, list) or len(raw) > MAX_SECTION_LIST:
+        problems.append(f"contradictions must be a list of at most {MAX_SECTION_LIST}")
+        raw = []
+    for n, c in enumerate(raw):
+        where = f"contradictions[{n}]"
+        if not isinstance(c, dict) or set(c) - {"statement", "sources"}:
+            problems.append(f"{where} is not a statement and sources")
+            continue
+        statement = _clean(c.get("statement"), f"{where}.statement", problems)
+        refs = _seed_refs(c.get("sources"), where, given, problems)
+        if refs is None or statement is None:
+            continue
+        if len(refs) < 2:
+            problems.append(f"{where} names fewer than two sources that disagree")
+            continue
+        contradictions.append({"statement": statement, "sources": refs})
+    gaps: list[dict] = []
+    raw = item.get("gaps") or []
+    if not isinstance(raw, list) or len(raw) > MAX_SECTION_LIST:
+        problems.append(f"gaps must be a list of at most {MAX_SECTION_LIST}")
+        raw = []
+    for n, g in enumerate(raw):
+        if not isinstance(g, dict) or set(g) - {"what", "why"}:
+            problems.append(f"gaps[{n}] is not a what and a why")
+            continue
+        what = _clean(g.get("what"), f"gaps[{n}].what", problems)
+        why = _clean(g.get("why"), f"gaps[{n}].why", problems, required=False)
+        if what:
+            gaps.append({"what": what, "why": why})
+    if sid in gaps_needed and not gaps:
+        problems.append("bench found no approved source for this section; it must say "
+                        "what is missing in gaps rather than fill it in")
+    if problems:
+        return None, sid, problems
+    bindings = []
+    for ref in dict.fromkeys([r for c in claims for r in c["sources"]]
+                             + [r for c in contradictions for r in c["sources"]]):
+        g = given[ref]
+        bindings.append({"ref": ref, "sha256": g["sha256"], "treatment": g["treatment"],
+                         **({"lines": g["lines"]} if g.get("lines") else {})})
+    return {"section": sid, "title": title, "summary": summary, "body": body,
+            "claims": claims, "contradictions": contradictions, "gaps": gaps,
+            "uncertainty": uncertainty, "bindings": bindings}, sid, []
+
+
+def validate_seed(draft: dict, rnd: dict, answer: dict) -> dict:
+    """Server-side: what a seed round's answer may become — `questions`,
+    `proposed` (every section, or the sections that passed: `partial`) or
+    `failed`, with each refusal said. Nothing in it is executed or
+    written, and nothing is ever filled in by bench."""
+    if answer["kind"] == "declined":
+        return {"status": "failed", "error": {
+            "code": "declined", "why": f"the Brain Agent declined: {answer['reason']}"}}
+    if answer["kind"] != "response":
+        return {"status": "failed", "error": {
+            "code": "no-response", "why": "the run ended without an answer in the "
+                                          "required shape; nothing was drafted"}}
+    raw = answer["raw"]
+    if len(raw.encode("utf-8")) > MAX_SEED_BLOCK:
+        return {"status": "failed", "error": {
+            "code": "oversized", "why": f"the answer is over {MAX_SEED_BLOCK // 1024} KiB"}}
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        return {"status": "failed", "error": {
+            "code": "malformed", "why": f"the answer is not JSON ({exc})"},
+            "raw": redact.scrub(raw[:MAX_RAW], "«redacted»")}
+    if not isinstance(doc, dict):
+        return {"status": "failed", "error": {"code": "malformed",
+                                              "why": "the answer is not a JSON object"}}
+    problems: list[str] = []
+    unknown = sorted(set(doc) - SEED_TOP_KEYS)
+    if unknown:
+        problems.append(f"unknown field(s) {', '.join(unknown[:6])}")
+    if doc.get("v") != VERSION or doc.get("kind") != SEED_KIND:
+        problems.append(f"the answer must say v {VERSION}, kind {SEED_KIND}")
+    if doc.get("draft") != draft["id"] or doc.get("round") != rnd["n"]:
+        problems.append("the answer names another request or round than the one "
+                        "this run was launched for")
+    summary = _clean(doc.get("summary"), "summary", problems, required=False)
+
+    def refused(codes: list[str]) -> dict:
+        return {"status": "failed", "error": {
+            "code": "invalid", "why": f"the answer was refused: {codes[0]}",
+            "problems": codes[:12]}}
+
+    if doc.get("outcome") == "questions":
+        if rnd["n"] >= config.BRAIN_DRAFT_ROUNDS:
+            problems.append("the last round must propose, and the run asked questions")
+        if doc.get("sections") is not None:
+            problems.append("an answer asking questions carries no sections")
+        kept = _questions(doc.get("questions"), problems)
+        if problems:
+            return refused(problems)
+        return {"status": "questions", "questions": kept, "summary": summary}
+    if doc.get("outcome") != "proposal":
+        problems.append("outcome must be questions or proposal")
+    if problems:
+        return refused(problems)
+    manifest = draft["manifest"]
+    expected = [s["id"] for s in (manifest.get("destination") or {}).get("sections") or []]
+    given = {s["ref"]: s for s in rnd.get("sources") or []}
+    gaps = {g["section"] for g in (manifest.get("coverage") or {}).get("gaps") or []}
+    ops_evidence = "operations" not in gaps
+    raw_sections = doc.get("sections")
+    if not isinstance(raw_sections, list) or not raw_sections \
+            or len(raw_sections) > len(expected) + 2:
+        return refused([f"sections must be a list of the {len(expected)} approved sections"])
+    kept: dict[str, dict] = {}
+    refusals: list[dict] = []
+    seen: set = set()
+    for n, item in enumerate(raw_sections):
+        section, sid, why = _seed_section(item, set(expected), seen, given, gaps,
+                                          ops_evidence)
+        if section is not None:
+            kept[sid] = section
+        else:
+            refusals.append({"section": sid or f"sections[{n}]", "problems": why[:8]})
+    for sid in expected:
+        if sid not in kept and not any(r["section"] == sid for r in refusals):
+            refusals.append({"section": sid, "problems": ["not drafted"]})
+    if not kept:
+        return refused([f"{r['section']}: {r['problems'][0]}" for r in refusals])
+    ordered = [kept[s] for s in expected if s in kept]
+    counts: dict[str, int] = {}
+    for s in ordered:
+        for c in s["claims"]:
+            counts[c["status"]] = counts.get(c["status"], 0) + 1
+    return {"status": "proposed", "summary": summary, "seedDraft": {
+        "expected": expected, "sections": ordered, "partial": bool(refusals),
+        "refused": refusals, "manifest": manifest["digest"],
+        "coverage": sorted(gaps), "claims": counts,
+        "contradictions": sum(len(s["contradictions"]) for s in ordered),
+        "round": rnd["n"]}}
+
+
+def _questions(items, problems: list) -> list[dict]:
+    kept: list[dict] = []
+    if not isinstance(items, list) or not items or len(items) > MAX_QUESTIONS:
+        problems.append(f"questions must be a list of 1–{MAX_QUESTIONS}")
+        return kept
+    ids = set()
+    for n, item in enumerate(items):
+        if not isinstance(item, dict) or set(item) - {"id", "question", "why"}:
+            problems.append(f"questions[{n}] is not an id, question and why")
+            continue
+        qid = item.get("id")
+        if not isinstance(qid, str) or not ITEM_ID.match(qid) or qid in ids:
+            problems.append(f"questions[{n}] has no usable id")
+            continue
+        ids.add(qid)
+        q = _clean(item.get("question"), f"questions[{n}].question", problems,
+                   MAX_QUESTION)
+        why = _clean(item.get("why"), f"questions[{n}].why", problems,
+                     MAX_QUESTION, required=False)
+        if q:
+            kept.append({"id": qid, "question": q, "why": why})
+    return kept
 
 
 # ── the person's other decisions ───────────────────────────────────────
@@ -1532,6 +2306,10 @@ def apply(payload: dict) -> dict:
     key = _request_key(payload)
     with LOCK:
         draft = _get(payload.get("id"))
+        if draft["mode"] == SEED_MODE:
+            raise Refused("a seed draft is private: reviewing and applying it is the next "
+                          "step (#194), which this board does not offer yet — nothing was "
+                          "written", 409, code="seed-apply-unavailable")
         if draft["status"] == "applied":
             return {"draft": public(draft), "already": True,
                     "operation": brainwrite.operation(draft["applied"]["request"])
@@ -1619,6 +2397,8 @@ def _progress(draft: dict) -> dict:
     rnd = _current(draft) or {}
     status = draft["status"]
     done = ["Request saved"]
+    if draft.get("mode") == SEED_MODE:
+        return _seed_progress(draft, rnd, status)
     if rnd:
         done.append(f"Round {rnd['n']}: {len(rnd.get('sources') or [])} work-root "
                     f"sources pinned, application at "
@@ -1668,6 +2448,89 @@ def _progress(draft: dict) -> dict:
             "deadline": rnd.get("deadline") if status == "running" else None}
 
 
+def _tool_activity(rnd: dict) -> dict | None:
+    if not rnd.get("agent"):
+        return None
+    with state.LOCK:
+        record = dict(state.AGENTS.get(rnd["agent"]) or {})
+        session = dict(state.SESSIONS.get(record.get("session") or "", {}))
+    return {"last": session.get("last"),
+            "inFlight": (session.get("inFlight") or {}).get("summary")}
+
+
+def _seed_progress(draft: dict, rnd: dict, status: str) -> dict:
+    """A seed request's progress: what bench observed — accomplished, now,
+    remaining and what blocks it — kept apart from the run's process and
+    tool activity, which say it is busy and nothing more."""
+    done = [f"Approved manifest {(draft.get('frozen') or {}).get('manifest', '')[:12]} "
+            f"and its reading frozen (approval "
+            f"{(draft.get('frozen') or {}).get('approval', '')[:12]})"]
+    if rnd:
+        done.append(f"Round {rnd['n']}: {len(rnd.get('sources') or [])} approved sources "
+                    f"re-read, held to their hashes and pinned")
+        if rnd.get("outcome") != "unknown":
+            done.append(f"{rnd.get('name') or 'The Brain Agent'} launched"
+                        + (f" on {rnd['model']}" if rnd.get("model") else
+                           " on the harness default model"))
+    sd = draft.get("seedDraft") or {}
+    doing, remaining, blocked = None, [], None
+    if status == "running":
+        doing = "Reading the approved sources and drafting each section"
+        remaining = ["A validated draft of each section", "Your review and Apply (#194)"]
+    elif status == "questions":
+        done.append(f"Asked {len(rnd.get('questions') or [])} question(s)")
+        doing = "Waiting for your answers"
+        remaining = ["Answer and Continue", "A validated draft", "Your review (#194)"]
+        blocked = "needs your answers"
+    elif status == "proposed":
+        done.append(f"Private draft: {len(sd.get('sections') or [])} of "
+                    f"{len(sd.get('expected') or [])} sections validated "
+                    f"(round {draft.get('proposalRound')})")
+        doing = "Waiting for your review"
+        remaining = (["Continue to redraft the sections that were refused"]
+                     if sd.get("partial") else []) + ["Review and Apply (#194, not on "
+                                                      "this board yet)"]
+        if draft.get("error"):
+            blocked = (f"the last round failed; the round {draft.get('proposalRound')} "
+                       f"draft still stands")
+    elif status == "failed":
+        blocked = (draft.get("error") or {}).get("why")
+        remaining = ["Continue to try again (one more round), or Discard"]
+    elif status == "expired":
+        done.append("Retention passed: the draft text was removed")
+    tool = None
+    proc = None
+    if status == "running":
+        tool = _tool_activity(rnd)
+        with state.LOCK:
+            record = state.AGENTS.get(rnd.get("agent") or "") or {}
+            proc = {"status": record.get("status"), "started": rnd.get("started")}
+    last = (draft.get("conversation") or [{}])[-1]
+    return {"done": done, "doing": doing, "remaining": remaining, "blocked": blocked,
+            "lastUpdate": {"at": last.get("at"), "text": last.get("text")},
+            "toolActivity": tool, "process": proc,
+            "deadline": rnd.get("deadline") if status == "running" else None}
+
+
+def _seed_public(draft: dict) -> dict:
+    manifest = draft.get("manifest") or {}
+    sd = draft.get("seedDraft")
+    rounds = draft.get("rounds") or []
+    return {
+        "manifest": {"digest": manifest.get("digest"), "made": manifest.get("made"),
+                     "sources": len(_seed_items(manifest)) if manifest.get("items")
+                     else None,
+                     "gaps": (manifest.get("coverage") or {}).get("gaps") or []},
+        "frozen": draft.get("frozen"),
+        "draft": sd,
+        "expires": draft.get("expires"),
+        "roundsUsed": len(rounds),
+        "unknownRounds": sum(1 for r in rounds if r.get("outcome") == "unknown"),
+        "applies": "not here — reviewing and applying a seed draft is the next step "
+                   "(#194); nothing on this board writes it",
+    }
+
+
 PUBLIC = ("v", "kind", "id", "request", "text", "mode", "target", "targetTitle",
           "status", "created", "updated", "conversation", "proposal", "bindings",
           "proposalRound", "error", "conflict", "applied")
@@ -1697,6 +2560,10 @@ def public(draft: dict) -> dict:
     out["progress"] = _progress(draft)
     out["canContinue"] = (draft["status"] in CONTINUABLE
                           and out["round"] < config.BRAIN_DRAFT_ROUNDS)
+    if draft.get("mode") == SEED_MODE:
+        out["seed"] = _seed_public(draft)
+        out.pop("proposal", None)
+        out.pop("bindings", None)
     out["local"] = ("drafts are private to this board until applied; the applied "
                     "entry is the shared record")
     return out
@@ -1707,8 +2574,12 @@ def listing() -> dict:
     with LOCK:
         _load()
         found = sorted(DRAFTS.values(), key=lambda d: d.get("created") or 0, reverse=True)
-        return {"drafts": [public(d) for d in found[:50]],
-                "open": sum(1 for d in found if d.get("status") not in CLOSED)}
+        entries = [d for d in found if d.get("mode") != SEED_MODE]
+        seeds = [d for d in found if d.get("mode") == SEED_MODE]
+        return {"drafts": [public(d) for d in entries[:50]],
+                "open": sum(1 for d in entries if d.get("status") not in CLOSED),
+                "seeds": [public(d) for d in seeds[:20]],
+                "seedsOpen": sum(1 for d in seeds if d.get("status") not in CLOSED)}
 
 
 def get(draft_id) -> dict:
