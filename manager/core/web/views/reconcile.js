@@ -85,6 +85,17 @@ async function action(name, entries) {
   if (res.status !== 0) rc.actKey = null;
   if (!res.ok) rc.actError = res.error;
   await read();
+  await rereadHealth(res);
+}
+
+/* An action taken from the health panel (Retry, Push now) changes what the
+   health reading says, so an open health panel is read again with it and
+   says a refusal in its own place. */
+async function rereadHealth(res) {
+  if (!hl.open || !hl.data) return;
+  hl.actError = res && !res.ok ? res.error : null;
+  hl.done = null;
+  await readHealth();
 }
 
 function armed(name) { return rc.armed === name; }
@@ -194,6 +205,141 @@ function bodyHtml() {
     `${d.rules.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>`;
 }
 
+/* Maintenance health (task 200): `GET /api/brain/health`, a read asked only
+   when a person opens it or reads it again — it runs local git reads, so it
+   is not polled. It says the assessed scope and what was not inspected,
+   every finding with its next action, coverage, the transition history,
+   proposals apart from what was applied, and the Repair preview. Repair is
+   `POST /api/brain/reconcile/action` with action `repair`, the preview's
+   entries and digest: armed, then fired; it queues and launches nothing in
+   its click. */
+const hl = { open: false, data: null, busy: false, error: null, key: null };
+const HL_TONE = { attention: 'rc-bad', incomplete: 'rc-warn', assessed: 'rc-calm', empty: 'b-note' };
+const SEV = { problem: 'rc-bad', gap: 'rc-warn', coverage: 'b-note' };
+
+async function readHealth() {
+  hl.busy = true;
+  repaint(true);
+  try {
+    const res = await fetch('/api/brain/health');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { hl.data = data.health; hl.error = null; } else hl.error = data.error || `the board answered ${res.status}`;
+  } catch (e) { hl.error = 'the board could not be asked'; }
+  hl.busy = false;
+  repaint(true);
+}
+
+async function repair() {
+  const p = hl.data.repair;
+  rc.acting = true;
+  rc.actError = null;
+  repaint(true);
+  hl.key = hl.key || key('reconcile-repair');
+  const res = await post('/api/brain/reconcile/action',
+    { action: 'repair', request: hl.key, entries: p.entries, preview: p.digest });
+  rc.acting = false;
+  if (res.status !== 0) hl.key = null;
+  hl.actError = res.ok ? null : res.error;
+  hl.done = res.ok ? `Queued ${(res.data && res.data.entries ? res.data.entries.length : p.count)} ` +
+    'for evaluation; the queue launches them on its next passes, within the budget.' : null;
+  await read();
+  await readHealth();
+}
+
+function nextHtml(f) {
+  const n = f.next || {};
+  const who = n.owner ? ` <span class="b-note">(${esc(n.owner)})</span>` : '';
+  if (n.action === 'open-entry' || n.action === 'ask-agent') {
+    return f.entry ? `<a href="/brain/e/${encodeURIComponent(f.entry)}" data-route>${esc(n.label)}</a>${who}` : esc(n.label);
+  }
+  if (n.action === 'review' && n.draft) return `<button type="button" class="b-btn" data-rcact="open" data-rcarg="${esc(n.draft)}">${esc(n.label)}</button>`;
+  if (n.action === 'retry' && f.entry) return `<button type="button" class="b-btn" data-rcact="retry" data-rcarg="${esc(f.entry)}">${esc(n.label)}</button>`;
+  if (n.action === 'push' && n.request) return `<button type="button" class="b-btn" data-rcact="push" data-rcarg="${esc(n.request)}">${esc(n.label)}</button>`;
+  return `${esc(n.label || '')}${who}`;
+}
+
+function findingHtml(f) {
+  const what = f.entry ? `<a href="/brain/e/${encodeURIComponent(f.entry)}" data-route>${esc(f.title || f.entry)}</a>`
+    : f.file ? `<code>${esc(f.file)}</code>` : esc(f.section || 'the Brain');
+  return `<li class="rc-row"><p><span class="${SEV[f.severity] || 'b-note'}">${esc(f.label)}</span> — ${what}</p>` +
+    `<p class="b-note">${esc(f.message)}</p><p>Next: ${nextHtml(f)}</p></li>`;
+}
+
+function repairHtml(p) {
+  if (!p.count) return '<p class="b-note">Repair: nothing needs repair that a refresh could reach.</p>';
+  const a = p.authority;
+  const word = (b) => b ? 'granted' : 'not granted';
+  const access = p.access ? `<dt>What an evaluation may do</dt><dd>${esc(p.access.authority || '')}` +
+    `${p.access.adapter ? ` <span class="b-note">harness ${esc(p.access.adapter)}` +
+      `${p.access.model && p.access.model.model ? `, model ${esc(p.access.model.model.value || 'harness default')}` : ''}</span>` : ''}` +
+    `${p.access.sources !== undefined ? ` · ${p.access.sources} work-root sources pinned` : ''}` +
+    `${(p.access.blockers || []).length ? ` <span class="b-missing">${p.access.blockers.map(esc).join('; ')}</span>` : ''}</dd>` : '';
+  const btn = p.available
+    ? `<button type="button" class="b-btn b-primary${armed('repair') ? ' armed' : ''}" data-rcact="repair"${rc.acting ? ' disabled' : ''}>` +
+      `${armed('repair') ? `Confirm: queue ${p.count}` : `Repair: queue ${p.count} affected ${p.count === 1 ? 'entry' : 'entries'}`}</button>`
+    : `<p class="b-note">Repair is not available: ${esc(p.refused || '')}</p>`;
+  return '<h4>Repair</h4><dl class="sd-facts">' +
+    `<dt>Would</dt><dd>${esc(p.would || '')}</dd>` +
+    `<dt>Entries</dt><dd>${p.entries.map(e => `<a href="/brain/e/${encodeURIComponent(e)}" data-route>${esc(e)}</a>`).join(', ')}` +
+    `${p.more ? ` <span class="b-note">— and ${p.more} more, for a later Repair once these are queued</span>` : ''}</dd>` +
+    `<dt>Authority now</dt><dd>evaluate ${word(a.evaluate)} · apply ${word(a.apply)} · explanation update ${word(a.maintain)} · ` +
+    `executes here ${a.executes ? 'yes' : 'no'}</dd>` +
+    `<dt>Budget</dt><dd>${p.batches} ${p.batches === 1 ? 'evaluation' : 'evaluations'}; ${p.launchesLeft} launches left today` +
+    `${p.fitsToday ? '' : ' <span class="b-warn">— not all fit today</span>'}</dd>` + access +
+    `</dl><p class="b-note">${esc(p.never)}</p><div class="sd-acts">${btn}</div>`;
+}
+
+function healthBody() {
+  const d = hl.data;
+  if (!d) return `<p class="b-note" aria-busy="${hl.busy}">${hl.error ? esc(hl.error) : 'Reading…'}</p>`;
+  const s = d.scope;
+  const shown = d.findings.slice(0, 40);
+  const rest = d.findings.slice(40);
+  const trans = (t) => `<li>${esc(t.at)} · <a href="/brain/e/${encodeURIComponent(t.entry)}" data-route>${esc(t.title || t.entry)}</a> → ` +
+    `<b>${esc(t.classification)}</b> by ${esc(t.actor)} <span class="b-note">(${esc(t.by)})</span> — ${esc(t.reason)}</li>`;
+  return `<p role="status"><b class="${HL_TONE[d.state] || 'b-note'}">${esc(d.label)}</b></p>` +
+    (hl.actError ? `<p class="b-missing" role="alert">${esc(hl.actError)}</p>` : '') +
+    (hl.done ? `<p class="rc-calm">${esc(hl.done)}</p>` : '') +
+    '<dl class="sd-facts">' +
+    `<dt>Assessed scope</dt><dd>${s.assessed} of ${s.entries} live entries reconciled against their current inputs; ` +
+    `${s.neverAssessed} never reconciled; ${s.inputsChanged} with changed inputs; ${s.inProgress} queued or being evaluated; ` +
+    `${s.unresolved} whose last round ended without an assessment; ${s.held} held by an override ` +
+    `<span class="b-note">(these add up to ${s.entries})</span>; ${s.retired} retired</dd>` +
+    `<dt>Bindings</dt><dd>${s.bindings.checked} checked, ${s.bindings.notChecked} not checked ` +
+    `<span class="b-note">(at most ${s.bindings.gitBudget} git reads)</span></dd>` +
+    `<dt>Files</dt><dd>${s.files.unreadable} not readable as entries${s.files.truncated ? '; the listing was truncated' : ''}</dd>` +
+    `<dt>Last assessed</dt><dd>${s.lastAssessed ? `${esc(s.lastAssessed)}${s.oldestAssessed !== s.lastAssessed ? ` (oldest ${esc(s.oldestAssessed)})` : ''}` : 'never'}</dd>` +
+    `<dt>Excluded</dt><dd>${s.excluded.length ? s.excluded.map(x => `${esc(x.entry)} — ${esc(x.why)}`).join('; ') : 'none'}</dd></dl>` +
+    `<details class="sd-excl"><summary>What this reading does not inspect</summary><ul class="sd-list">` +
+    `${s.notInspected.map(x => `<li>${esc(x)}</li>`).join('')}<li>${esc(d.reads)}</li></ul></details>` +
+    repairHtml(d.repair) +
+    `<h4>Findings</h4>${shown.length ? `<ul class="rc-list">${shown.map(findingHtml).join('')}</ul>` : '<p class="b-note">None in what was inspected.</p>'}` +
+    (rest.length || d.findingsOmitted ? `<details class="sd-excl"><summary>${rest.length + d.findingsOmitted} more findings</summary>` +
+      `<ul class="rc-list">${rest.map(findingHtml).join('')}</ul></details>` : '') +
+    `<h4>Handbook coverage</h4><ul class="sd-list">${d.coverage.map(c => `<li>${esc(c.title)}: <b>${esc(c.state)}</b> — ${esc(c.message)}</li>`).join('')}</ul>` +
+    `<p class="b-note">Coverage is shown, never required: no merge or launch waits for it.</p>` +
+    `<h4>Proposals and what was applied</h4><p>${d.proposals.length} waiting for a person` +
+    `${d.proposals.length ? `: ${d.proposals.map(p => esc(p.title || p.entry)).join(', ')}` : ''}; ${d.applied.length} applied` +
+    `${d.applied.length ? `: ${d.applied.map(p => esc(p.title || p.entry)).join(', ')}` : ''}.</p>` +
+    (d.overrides.length ? `<p>Manual overrides: ${d.overrides.map(o => `<a href="/brain/e/${encodeURIComponent(o.entry)}" data-route>${esc(o.title || o.entry)}</a> — ${esc(o.override)}`).join('; ')}</p>` : '') +
+    `<details class="sd-excl"><summary>Transition history (${d.transitions.length}${d.transitionsOmitted ? ` of ${d.transitions.length + d.transitionsOmitted}` : ''})</summary>` +
+    `<ul class="sd-list">${d.transitions.map(trans).join('')}</ul></details>` +
+    `<div class="sd-acts"><button type="button" class="b-btn" data-rcact="health-read"${hl.busy ? ' disabled' : ''}>Read health again</button></div>`;
+}
+
+function healthHtml() {
+  const head = '<section class="b-panel" aria-labelledby="hl-h">' +
+    '<h2 id="hl-h" tabindex="-1">Maintenance health</h2>' +
+    '<p class="b-note">What the work has affected across the whole Brain: explanations whose cards, code or bindings ' +
+    'moved, broken Historical and Current links, open outcomes and handbook coverage — and what was not inspected. ' +
+    'Reading it changes nothing.</p>';
+  if (!hl.open) {
+    return head + '<div class="sd-acts"><button type="button" class="b-btn" data-rcact="health-show">' +
+      'Read maintenance health</button></div></section>';
+  }
+  return head + healthBody() + '</section>';
+}
+
 function recHtml() {
   const head = '<section class="b-panel" aria-labelledby="rc-h">' +
     '<h2 id="rc-h" tabindex="-1">Automatic classification</h2>' +
@@ -202,13 +348,21 @@ function recHtml() {
     'applying are separate authorities, and a manual override is never reclassified.</p>';
   if (!rc.open) {
     return head + '<div class="sd-acts"><button type="button" class="b-btn" data-rcact="show">' +
-      'Show automatic classification</button></div></section>';
+      'Show automatic classification</button></div></section>' + healthHtml();
   }
   if (!asked) { asked = true; read(); }
-  return head + bodyHtml() + '</section>';
+  return head + bodyHtml() + '</section>' + healthHtml();
 }
 
 function act(name, arg) {
+  if (name === 'health-show') { hl.open = true; readHealth(); return; }
+  if (name === 'health-read') { readHealth(); return; }
+  if (name === 'repair') {
+    if (!armed('repair')) { rc.armed = 'repair'; repaint(true); return; }
+    rc.armed = null;
+    repair();
+    return;
+  }
   if (name === 'show') { rc.open = true; asked = false; repaint(true); return; }
   if (name === 'read') { read(); return; }
   if (name === 'disarm') { rc.armed = null; repaint(true); return; }
@@ -228,9 +382,10 @@ function act(name, arg) {
   if (name === 'refresh-all') { action('refresh'); return; }
   if (['retry', 'cancel', 'refresh'].includes(name)) { action(name, [arg]); return; }
   if (name === 'push') {
-    post('/api/brain/retry', { request: arg, action: 'push' }).then(res => {
+    post('/api/brain/retry', { request: arg, action: 'push' }).then(async res => {
       if (!res.ok) rc.actError = res.error;
-      read();
+      await read();
+      await rereadHealth(res);
     });
   }
 }

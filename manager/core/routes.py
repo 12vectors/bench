@@ -1454,6 +1454,13 @@ def get_brain_reconcile(req) -> None:
     req.reply(200, {"reconcile": brainreconcile.reading()})
 
 
+def get_brain_health(req) -> None:
+    # The Brain's maintenance health (task 200): assessed scope and what was
+    # not inspected, findings with their next action, coverage, transition
+    # history and the repair preview. A read: nothing is queued or launched.
+    req.reply(200, {"health": brainreconcile.health()})
+
+
 def post_brain_reconcile_policy(req) -> None:
     # A person's explicit change of the reconciliation policy — the only
     # way it is turned on or given the evaluate or apply authority. Bound to
@@ -2770,6 +2777,7 @@ ROUTES = (
     Route("POST", "/api/brain/evaluate/apply", "browser-mutation",
           post_brain_evaluate_apply),
     Route("GET", "/api/brain/reconcile", "read", get_brain_reconcile),
+    Route("GET", "/api/brain/health", "read", get_brain_health),
     Route("POST", "/api/brain/reconcile/policy", "policy-mutation",
           post_brain_reconcile_policy),
     Route("POST", "/api/brain/reconcile/action", "browser-mutation",
