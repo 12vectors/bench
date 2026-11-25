@@ -825,6 +825,12 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/seed/review": "browser-mutation",
     "POST /api/brain/seed/apply": "browser-mutation",
     "GET /api/brain/seed/compare": "read",
+    # evaluating classifications (task 196): a preflight read with a body,
+    # one explicit launch, a review read and an all-or-none Apply
+    "POST /api/brain/evaluate/preflight": "browser-mutation",
+    "POST /api/brain/evaluate/start": "browser-mutation",
+    "POST /api/brain/evaluate/review": "browser-mutation",
+    "POST /api/brain/evaluate/apply": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

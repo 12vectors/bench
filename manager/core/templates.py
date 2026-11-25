@@ -189,6 +189,29 @@ SPECS["brain-seed.md"] = {
     "scopes": "Seed Brain's Generate draft, from an inspected seed manifest",
 }
 
+# What a Brain evaluation run is told (task 196): the selected entries with
+# their classifications, revisions and any manual override, the pinned
+# work-root sources and the application checkout. The response contract
+# (one proposal per entry, the rule each classification is held to, every
+# citation bound) and every authority check stay in `braindraft`.
+SPECS["brain-evaluate.md"] = {
+    "group": "brain",
+    "label": "Brain classification evaluation",
+    "purpose": "brain",
+    "intent": "brain",
+    "fields": ("draft", "round", "rounds", "request", "conversation", "entries",
+               "sources", "app", "exclusions", "contract", "guidance_read_only",
+               "context"),
+    "required": ("draft", "round", "conversation", "entries", "sources", "app",
+                 "contract"),
+    "markers": ("<<<BRAIN", "BRAIN>>>", "BRAIN DECLINED:"),
+    "stance": "brain: read-only, proposes a classification per selected entry with "
+              "its evidence; bench validates it and only a person's Apply writes it",
+    "usedBy": "every Evaluate Brain round — the explicit Evaluate and each answer, "
+              "revision or retry",
+    "scopes": "the Brain view's Evaluate classifications, over selected entries",
+}
+
 # One guidance template per reasoning need: the question it asks, in the
 # operator's words. Short prose, inserted into `reason.md` as data.
 _NEED_USE = {

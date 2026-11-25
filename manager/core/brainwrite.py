@@ -1336,7 +1336,11 @@ BACKUP_PREFIX = ".bench-was-"
 HANDBOOK_FILE = f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}"
 BATCH_FIELDS = {"request", "label", "entries", "handbook"}
 BATCH_ENTRY_FIELDS = {"id", "expected", "title", "kind", "summary", "sources", "related",
-                      "body", "bindings", "classification", "reason"}
+                      "body", "bindings", "classification", "reason", "classify"}
+# A classification-only batch item (task 196): an existing entry's
+# classification, its reason and its supersession link — nothing else of
+# the entry is written. Brain evaluation's Apply rides it.
+BATCH_CLASSIFY_FIELDS = {"classification", "reason", "supersededBy", "invalidation"}
 _FAULT = None   # tests only: called with a phase name; what it raises is what a crash there does
 
 
@@ -1373,6 +1377,8 @@ def _plan_batch_entry(item: dict, reading: dict, actor: str, created: set[str]) 
     entry_id = item.get("id")
     if not isinstance(entry_id, str) or not brain.ID_RE.match(entry_id):
         raise Refused(f"{str(entry_id)[:70]!r} is not a Brain entry id", field="id")
+    if "classify" in item:
+        return _plan_batch_classify(item, reading, actor)
     title = _title(item.get("title"))
     kind = _kind(item.get("kind"))
     summary = _line(item.get("summary"), "summary", cap=brain.MAX_FIELD_CHARS)
@@ -1432,6 +1438,56 @@ def _plan_batch_entry(item: dict, reading: dict, actor: str, created: set[str]) 
                       field="entries", id=entry_id)
     return {"id": entry_id, "file": found["file"], "expected": found["revision"],
             "text": text, "what": "edited"}
+
+
+def _plan_batch_classify(item: dict, reading: dict, actor: str) -> dict:
+    """One existing entry's classification, in a batch: the same plan a
+    person's Classify makes (revision guard, reason, Superseded's
+    replacement or invalidation, no supersession loop), and nothing else
+    of the entry. An entry carrying a person's manual override is refused:
+    a batch is how an evaluation is applied, and evaluation never reverses
+    an override — clear it on the entry's own page first."""
+    extra = set(item) - {"id", "expected", "classify"}
+    if extra:
+        raise Refused("a classification in a batch changes the classification and its "
+                      f"reason only; {sorted(extra)[0]!r} is not part of it",
+                      field=sorted(extra)[0])
+    change = item.get("classify")
+    if not isinstance(change, dict) or set(change) - BATCH_CLASSIFY_FIELDS:
+        raise Refused("classify names a classification, its reason and, for Superseded, "
+                      "the replacing entry or an invalidation — nothing else",
+                      field="classify")
+    found = _found(reading, item["id"])
+    if found.get("override"):
+        raise Refused(f"{found['id']} carries a manual override ({found['override'][:120]}); "
+                      "an evaluation does not reverse a person's decision. Clear the "
+                      "override on the entry's own page first; nothing was written", 409,
+                      code="override", id=found["id"])
+    plan = _plan_classify({"id": found["id"], "expected": item.get("expected"), **change},
+                          reading, actor)
+    plan["superseded"] = (change.get("supersededBy")
+                          if change.get("classification") == "Superseded" else None)
+    return plan
+
+
+def _batch_cycles(reading: dict, files: list[dict]) -> None:
+    """Supersession loops the batch as a whole would make: each entry's
+    link as it would read after the batch — a classified entry's new link,
+    or none — followed until it ends or comes back."""
+    links = {e["id"]: (e["supersededBy"][0] if e["supersededBy"] else None)
+             for e in reading["entries"]}
+    for f in files:
+        if "superseded" in f:
+            links[f["id"]] = f.pop("superseded")
+    for start in links:
+        seen, at = {start}, links.get(start)
+        while at is not None:
+            if at in seen:
+                raise Refused(f"this batch would make a supersession loop through "
+                              f"{', '.join(sorted(seen))}; name the entry that is current "
+                              "now. Nothing was written", field="supersededBy")
+            seen.add(at)
+            at = links.get(at)
 
 
 def _plan_batch_handbook(change: dict, reading: dict, actor: str,
@@ -1513,6 +1569,7 @@ def plan_batch(payload: dict, reading: dict | None = None,
     created = {e.get("id") for e in entries
                if isinstance(e, dict) and e.get("expected") in (None, "", "none")}
     files = [_plan_batch_entry(e, reading, actor, created) for e in entries]
+    _batch_cycles(reading, files)
     if payload.get("handbook") is not None:
         hb = _plan_batch_handbook(payload["handbook"], reading, actor, created)
         if hb is not None:

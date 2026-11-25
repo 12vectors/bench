@@ -1402,6 +1402,50 @@ def post_brain_seed_apply(req) -> None:
     req.reply(200, result)
 
 
+def post_brain_evaluate_preflight(req) -> None:
+    # What Evaluate classifications would read and ride for the selected
+    # entries (task 196): each entry's classification, revision and
+    # override, related cards, the harness, model, profile, sources, budget
+    # and the approval Evaluate must name. A read with a body.
+    try:
+        req.reply(200, {"preflight": braindraft.evaluate_preflight(req.body)})
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_evaluate_start(req) -> None:
+    # Evaluate (task 196): one read-only round through the Brain drafting
+    # machinery, bound to the approval its preflight showed. Continue,
+    # Cancel and Discard are the drafting routes; nothing here writes.
+    try:
+        result = braindraft.start_evaluate(req.body)
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    state.broadcast({"type": "brain"})
+    req.reply(200, result)
+
+
+def post_brain_evaluate_review(req) -> None:
+    # The review of an evaluation for the person's choices and corrections,
+    # with the preview digest Apply must name. A read with a body.
+    try:
+        req.reply(200, {"review": braindraft.evaluate_review(req.body)})
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_evaluate_apply(req) -> None:
+    # Apply the reviewed classifications (task 196): one all-or-none Brain
+    # batch of classification-only items, held to the review the page showed.
+    try:
+        result = braindraft.evaluate_apply(req.body)
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
+    req.reply(200, result)
+
+
 def get_brain_seed_compare(req) -> None:
     # A seed batch's remote conflict, side by side (task 194): this board's
     # text and the remote's, from the last fetch. Nothing is fetched,
@@ -2690,6 +2734,14 @@ ROUTES = (
     Route("GET", "/api/brain/handbook", "read", get_brain_handbook),
     Route("GET", "/api/brain/seed", "read", get_brain_seed),
     Route("GET", "/api/brain/seed/compare", "read", get_brain_seed_compare),
+    Route("POST", "/api/brain/evaluate/preflight", "browser-mutation",
+          post_brain_evaluate_preflight),
+    Route("POST", "/api/brain/evaluate/start", "browser-mutation",
+          post_brain_evaluate_start),
+    Route("POST", "/api/brain/evaluate/review", "browser-mutation",
+          post_brain_evaluate_review),
+    Route("POST", "/api/brain/evaluate/apply", "browser-mutation",
+          post_brain_evaluate_apply),
     Route("GET", "/api/brain/adoption", "read", get_brain_adoption),
     Route("GET", "/api/brain/adoption/preview", "read", get_brain_adoption_preview),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
