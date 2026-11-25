@@ -616,10 +616,13 @@ function listHtml(slot) {
   // reviews filed on cards are listed in the library and are not entries
   // a section can link
   const linkable = slot.data.entries.some(e => !e.tombstone);
-  return head + stale + requestsHtml() + handbookHtml(linkable) + evalHtml(slot.data.entries) +
+  // evaluating classifications (task 196) follows the library, so the
+  // reading and Tab order from New entry to the library's search is kept
+  return head + stale + requestsHtml() + handbookHtml(linkable) +
     adoptHtml() + '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
-    `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
+    `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>` +
+    evalHtml(slot.data.entries);
 }
 
 function linkList(label, items) {
