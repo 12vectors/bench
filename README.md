@@ -361,6 +361,19 @@ outside a card is shown as changed, never as fresh, until you press
 evaluation at a time keep it from calling the model on unchanged inputs.
 See "Reconciling classifications from work events" in `AGENTS.md`.
 
+**Maintenance health**, below it, reads the whole Brain at once: which
+explanations the work has affected (a card, code outside any card, a
+moved binding), which Historical entries have no Current explanation,
+which supersession or related links are broken, which outcomes are still
+open, what the handbook does not cover — and, as plainly, what it did not
+inspect. Entries written before reconciliation was turned on read *never
+reconciled*, so an unassessed Brain never reads as complete; there is no
+"healthy". **Repair** queues exactly the affected entries its preview
+names, on the authority and budget it shows, through the same queue;
+reading launches nothing, and a Repair's click creates no page and
+widens no source. See "Maintenance health: whole-Brain reconciliation"
+in `AGENTS.md`.
+
 ## Update
 
 ```bash
