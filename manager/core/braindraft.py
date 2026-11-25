@@ -3322,10 +3322,14 @@ def evaluate_preflight(payload) -> dict:
     }
 
 
-def start_evaluate(payload: dict) -> dict:
+def start_evaluate(payload: dict, *, origin: str | None = None) -> dict:
     """Evaluate: a new evaluation request bound to the entries and the
     approval its preflight showed, and its first read-only round launched.
-    The same request identity again answers with the request it made."""
+    The same request identity again answers with the request it made.
+
+    `origin` is the caller's, never the request body's: `reconcile` marks
+    an evaluation the Brain's reconciliation queue launched (task 197), so
+    a person reading it knows nobody clicked Evaluate for it."""
     if not isinstance(payload, dict):
         raise Refused("the request body must be a JSON object")
     key = _request_key(payload)
@@ -3357,7 +3361,9 @@ def start_evaluate(payload: dict) -> dict:
             "status": "running", "created": time.time(), "rounds": [],
             "conversation": [],
         }
-        _say(draft, "you", "request", text)
+        if origin == "reconcile":
+            draft["origin"] = "reconcile"
+        _say(draft, "board" if origin else "you", "request", text)
         _launch(draft, continue_request=key)
         return {"draft": public(draft), "duplicate": False}
 
@@ -3753,9 +3759,10 @@ def _eval_history_line(draft: dict, ev: dict, reason: str, corrected: bool,
     reason, the attribution and the explanation are always whole — None
     when they cannot fit — and then as many whole evidence references as
     there is room for, with how many were left out."""
+    by = ("applied under the Brain reconciliation policy"
+          if draft.get("applyBy") == "policy" else "applied by a person")
     said = (f"{reason} — evaluated by the Brain Agent ({draft['id']}, round "
-            f"{ev.get('round')})" + (", corrected and applied by a person"
-                                    if corrected else ", applied by a person"))
+            f"{ev.get('round')})" + (f", corrected and {by}" if corrected else f", {by}"))
     if explanation and explanation.get("state") == "linked":
         said += f"; explained now by {explanation['entry']}"
     elif explanation:
@@ -3940,6 +3947,7 @@ def _reconcile_eval_apply(draft: dict) -> None:
     draft["status"] = "proposed"
     draft.pop("applyRequest", None)
     draft.pop("applyBatch", None)
+    draft.pop("applyBy", None)
     if op is not None and op.get("refused"):
         draft["conflict"] = {"code": op.get("refused"), "why": op.get("why"), "at": _now()}
     _save(draft)
@@ -3956,7 +3964,10 @@ def _eval_applied(draft: dict, op: dict) -> None:
         "entries": [f["id"] for f in files], "files": [f["file"] for f in files],
         "classifications": changes})
     draft.pop("applyBatch", None)
-    _say(draft, "you", "applied", f"applied {len(files)} classification(s) as one batch: "
+    policy = draft.get("applyBy") == "policy"
+    _say(draft, "board" if policy else "you", "applied",
+         f"applied {len(files)} classification(s) as one batch"
+         + (" under the reconciliation policy" if policy else "") + ": "
          + ", ".join(f"{k} → {v}" for k, v in changes.items()))
     _save(draft)
 
@@ -4006,6 +4017,9 @@ def evaluate_apply(payload: dict) -> dict:
             raise Refused("the page shows an older evaluation than the newest one — "
                           "refresh it; nothing was written", 409, stale=True,
                           code="round-stale")
+        # a person's Apply is attributed to a person, whatever an earlier
+        # automatic attempt on this evaluation left behind
+        draft.pop("applyBy", None)
         plan = _eval_plan(draft, payload.get("choices"))
         if plan["preview"] != payload.get("preview"):
             raise Refused("what Apply would write is not what this page reviewed (an "
@@ -4041,6 +4055,93 @@ def evaluate_apply(payload: dict) -> dict:
             raise
         _eval_applied(draft, op)
         out = {"draft": public(draft), "operation": op}
+    state.broadcast({"type": "brain"})
+    return out
+
+
+def find_request(key: str) -> dict | None:
+    """The request this board holds under one request identity, as the page
+    reads it — or None. What lets a caller that recorded an intent before
+    `start_evaluate` tell, after a restart, whether the launch happened."""
+    with LOCK:
+        _load()
+        seen = next((d for d in DRAFTS.values() if d.get("request") == key), None)
+        return public(seen) if seen is not None else None
+
+
+def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict:
+    """Apply an evaluation under the Brain reconciliation policy (task 197):
+    the proposals bench selects by default — bound evidence, a changed
+    classification, nothing blocking — for the named entries only, never a
+    correction, through the same all-or-none batch a person's Apply takes.
+    Its history line says it was applied under the policy rather than by a
+    person. The caller authorized it immediately before; this refuses what
+    a person's Apply refuses (an override, a changed entry or source, a
+    policy change) with nothing written, and `nothing-selected` when no
+    named proposal is one bench would select by default."""
+    key = _request_key({"request": request})
+    with LOCK:
+        draft = _get(draft_id)
+        if draft.get("mode") != EVAL_MODE or draft.get("origin") != "reconcile":
+            raise Refused("only an evaluation the reconciliation queue launched is "
+                          "applied under its policy", 409, code="not-reconcile")
+        if draft["status"] == "applied":
+            if (draft.get("applied") or {}).get("request") == key:
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+            raise Refused("this evaluation was already applied", 409, code="applied")
+        if draft["status"] == "applying":
+            if draft.get("applyRequest") != key:
+                raise Refused("this evaluation is being applied by another request", 409,
+                              code="applying")
+            _reconcile_eval_apply(draft)
+            if draft["status"] == "applied":
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+        if draft["status"] != "proposed" or not draft.get("evaluation"):
+            raise Refused(f"there is no evaluation to apply — the request is "
+                          f"{draft['status']}", 409, code="not-proposed")
+        wanted = set(entries)
+        rows = (draft.get("evaluation") or {}).get("items") or []
+        draft["applyBy"] = "policy"
+        try:
+            plan = _eval_plan(draft, [{"entry": r["entry"], "selected": False}
+                                      for r in rows if r["entry"] not in wanted])
+            if plan["blockers"]:
+                first = plan["blockers"][0]
+                raise Refused(f"{first['why']} — nothing was written", 409,
+                              code=first["code"], blockers=plan["blockers"])
+            if not plan["batch"]:
+                raise Refused("no proposal here is one bench selects by default; it "
+                              "waits for a person's review", 409, code="nothing-selected",
+                              items=[{"entry": r["entry"], "blocked": r["blocked"]}
+                                     for r in plan["items"]])
+        except Refused:
+            draft.pop("applyBy", None)
+            raise
+        draft["applyRequest"] = key
+        draft["applyBatch"] = plan["batch"]
+        draft["status"] = "applying"
+        _save(draft)
+        try:
+            op = brainwrite.write_batch(dict(plan["batch"], request=key))
+        except brainwrite.Refused as exc:
+            draft["status"] = "proposed"
+            for k in ("applyRequest", "applyBatch", "applyBy"):
+                draft.pop(k, None)
+            draft["conflict"] = {"code": exc.extra.get("code") or "destination-changed",
+                                 "why": str(exc), "at": _now()}
+            _save(draft)
+            raise Refused(str(exc), exc.status, **{k: v for k, v in exc.extra.items()
+                                                    if k != "current"})
+        except Exception:
+            _reconcile_eval_apply(draft)
+            raise
+        _eval_applied(draft, op)
+        out = {"draft": public(draft), "operation": op,
+               "items": [{k: r.get(k) for k in ("entry", "classification", "selected",
+                                                 "blocked", "explanation")}
+                         for r in plan["items"]]}
     state.broadcast({"type": "brain"})
     return out
 
@@ -4252,7 +4353,7 @@ def _seed_public(draft: dict) -> dict:
 
 PUBLIC = ("v", "kind", "id", "request", "text", "mode", "target", "targetTitle",
           "status", "created", "updated", "conversation", "proposal", "bindings",
-          "proposalRound", "error", "conflict", "applied")
+          "proposalRound", "error", "conflict", "applied", "origin", "applyBy")
 
 
 def public(draft: dict) -> dict:

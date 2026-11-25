@@ -23,7 +23,8 @@ import { md } from '../lib/md.js';
 import { syncRoute } from '../lib/nav.js';
 import { pressHold } from '../lib/press.js';
 import { toast } from '../lib/toast.js';
-import { evalField, evalHtml, setEvalRepaint, wireEvaluate } from './evaluate.js';
+import { evalField, evalHtml, openEvaluation, setEvalRepaint, wireEvaluate } from './evaluate.js';
+import { recHtml, setRecHooks, wireReconcile } from './reconcile.js';
 import { seedField, seedHtml, setSeedRepaint, wireSeed } from './seed.js';
 
 const CLASSES = ['Current', 'Historical', 'Superseded', 'Unclassified'];
@@ -622,7 +623,7 @@ function listHtml(slot) {
     adoptHtml() + '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>` +
-    evalHtml(slot.data.entries);
+    evalHtml(slot.data.entries) + recHtml();
 }
 
 function linkList(label, items) {
@@ -2483,6 +2484,8 @@ function wire(el) {
   wireSeed(el);
   setEvalRepaint((force) => renderBrain(force));
   wireEvaluate(el);
+  setRecHooks((force) => renderBrain(force), openEvaluation);
+  wireReconcile(el);
   el.addEventListener('click', (ev) => {
     const k = ev.target.closest && ev.target.closest('[data-bkind]');
     if (k && el.contains(k)) {

@@ -63,7 +63,10 @@ async function resume() {
   try {
     const res = await fetch('/api/brain/drafts');
     const list = await res.json().catch(() => ({}));
-    const open = (list.evaluations || []).find(x => !['discarded', 'cancelled', 'applied'].includes(x.status));
+    // an evaluation the reconciliation queue launched (task 197) is opened
+    // from its row in Automatic classification, never adopted silently
+    const open = (list.evaluations || []).find(x => x.origin !== 'reconcile' &&
+      !['discarded', 'cancelled', 'applied'].includes(x.status));
     if (open && !ev.draft) { adopt(open); ev.open = true; repaint(true); watch(); }
   } catch (e) { /* the list is a convenience; the panel works without it */ }
 }
@@ -519,6 +522,20 @@ function evalField(f, e) {
   return false;
 }
 
+// Open one evaluation by id in this panel — the way a row of Automatic
+// classification (task 197) hands a proposal to a person's review. A read.
+async function openEvaluation(id) {
+  ev.adopted = true;
+  try {
+    const res = await fetch(`/api/brain/drafts?id=${encodeURIComponent(id)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.draft) { adopt(data.draft); ev.open = true; }
+  } catch (e) { /* the panel says nothing changed */ }
+  repaint(true);
+  watch();
+  document.getElementById('ev-draft')?.focus();
+}
+
 function wireEvaluate(el) {
   if (wired) return;
   wired = true;
@@ -529,4 +546,4 @@ function wireEvaluate(el) {
   });
 }
 
-export { evalField, evalHtml, setEvalRepaint, wireEvaluate };
+export { evalField, evalHtml, openEvaluation, setEvalRepaint, wireEvaluate };

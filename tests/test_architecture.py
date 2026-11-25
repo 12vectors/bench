@@ -831,6 +831,9 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/evaluate/start": "browser-mutation",
     "POST /api/brain/evaluate/review": "browser-mutation",
     "POST /api/brain/evaluate/apply": "browser-mutation",
+    "GET /api/brain/reconcile": "read",
+    "POST /api/brain/reconcile/policy": "policy-mutation",
+    "POST /api/brain/reconcile/action": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",

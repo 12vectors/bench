@@ -62,6 +62,7 @@ import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
 import braindraft
+import brainreconcile
 import brainreviews  # noqa: F401
 import brainwrite  # noqa: F401
 import handbook  # noqa: F401
@@ -311,6 +312,10 @@ def main() -> None:
     # nothing. Its first pass waits one interval, so a restart never
     # launches anything in the moment it comes up.
     threading.Thread(target=scheduler.beat, daemon=True).start()
+    # Brain classification reconciliation (task 197): with no policy in
+    # manager/local/brain-reconcile.json, each tick reads that one path and
+    # does nothing. Only the designated execution installation launches.
+    threading.Thread(target=brainreconcile.beat, daemon=True).start()
     if config.SYNC:
         # Team mode: board commits publish themselves and a beat pulls what
         # the other boards published. Off, neither thread nor hook exists.

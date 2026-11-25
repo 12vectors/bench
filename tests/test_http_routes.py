@@ -282,9 +282,11 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # a seed draft's review (a read with a body) and its Apply as one
         # Brain batch, browser-mutation; task 196 four, an evaluation's
         # preflight and review (reads with a body), Evaluate and its Apply
-        # as one batch of classifications, browser-mutation
-        self.assertEqual(114, len(self.routes))
-        self.assertEqual(36, sum(1 for k in self.routes.values()
+        # as one batch of classifications, browser-mutation; task 197 two,
+        # the Brain reconciliation policy, policy-mutation, and an action
+        # on its queue, browser-mutation
+        self.assertEqual(116, len(self.routes))
+        self.assertEqual(37, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 
     def test_a_cross_origin_form_is_refused(self):

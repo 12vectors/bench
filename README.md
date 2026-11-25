@@ -336,6 +336,17 @@ explanation is linked or said to be pending. You correct and choose, and
 a manual override is never changed by it. See "Evaluating
 classifications with evidence" in `AGENTS.md`.
 
+To keep that up without asking each time, **Automatic classification**
+on the Brain re-evaluates an entry when a card it cites changes. It is
+off until you turn it on, and it has two separate authorities: *evaluate*
+queues bounded, read-only evaluations whose proposals wait for your
+review, and *apply* (granted separately) applies only the proposals bench
+selects by default, saying so in each entry's history. Code that changed
+outside a card is shown as changed, never as fresh, until you press
+**Refresh sources**; a daily launch budget, bounded retries and one
+evaluation at a time keep it from calling the model on unchanged inputs.
+See "Reconciling classifications from work events" in `AGENTS.md`.
+
 ## Update
 
 ```bash

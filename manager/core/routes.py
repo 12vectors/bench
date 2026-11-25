@@ -35,6 +35,7 @@ import agentsettings
 import adoption
 import brain
 import braindraft
+import brainreconcile
 import brainreviews
 import brainwrite
 import handbook
@@ -1446,6 +1447,32 @@ def post_brain_evaluate_apply(req) -> None:
     req.reply(200, result)
 
 
+def get_brain_reconcile(req) -> None:
+    # The Brain reconciliation queue (task 197): the policy and what it
+    # grants, the execution owner, the budget, and every entry's state with
+    # its bound inputs and receipts. A read: nothing is queued or launched.
+    req.reply(200, {"reconcile": brainreconcile.reading()})
+
+
+def post_brain_reconcile_policy(req) -> None:
+    # A person's explicit change of the reconciliation policy — the only
+    # way it is turned on or given the evaluate or apply authority. Bound to
+    # the revision the page read; launches nothing.
+    try:
+        req.reply(200, brainreconcile.set_policy(req.body))
+    except brainreconcile.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_reconcile_action(req) -> None:
+    # Rebuild, Refresh sources, Retry or Cancel on the queue: one request
+    # identity each; none launches anything itself.
+    try:
+        req.reply(200, brainreconcile.act(req.body))
+    except brainreconcile.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
 def get_brain_seed_compare(req) -> None:
     # A seed batch's remote conflict, side by side (task 194): this board's
     # text and the remote's, from the last fetch. Nothing is fetched,
@@ -2742,6 +2769,11 @@ ROUTES = (
           post_brain_evaluate_review),
     Route("POST", "/api/brain/evaluate/apply", "browser-mutation",
           post_brain_evaluate_apply),
+    Route("GET", "/api/brain/reconcile", "read", get_brain_reconcile),
+    Route("POST", "/api/brain/reconcile/policy", "policy-mutation",
+          post_brain_reconcile_policy),
+    Route("POST", "/api/brain/reconcile/action", "browser-mutation",
+          post_brain_reconcile_action),
     Route("GET", "/api/brain/adoption", "read", get_brain_adoption),
     Route("GET", "/api/brain/adoption/preview", "read", get_brain_adoption_preview),
     Route("GET", "/api/reports/filing", "read", get_report_filing),
