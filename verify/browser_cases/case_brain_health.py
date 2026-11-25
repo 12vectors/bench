@@ -345,8 +345,10 @@ class Journey(Health):
         self.assertEqual(sorted(self.files()), names, "a new page was written")
         self.assertEqual(card.read_bytes(), card_bytes, "the review on the card changed")
         self.open_health(b)
-        self.wait_text(b, ["Transition history", "(policy)", "explained now by e-exports"],
-                       timeout=30)
+        self.wait_text(b, ["Transition history", "1 applied"], timeout=30)
+        # the trail sits in a fold; a person opens it with its summary
+        b.click('#bshell #hl-h ~ details:last-of-type > summary')
+        self.wait_text(b, ["(policy)", "explained now by e-exports"], timeout=10)
         self.assertNotIn("Historical with no Current explanation", self.text(b))
         shot("brain-journey-health-day")
         self.theme(b, True)
