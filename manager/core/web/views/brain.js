@@ -23,6 +23,7 @@ import { md } from '../lib/md.js';
 import { syncRoute } from '../lib/nav.js';
 import { pressHold } from '../lib/press.js';
 import { toast } from '../lib/toast.js';
+import { evalField, evalHtml, setEvalRepaint, wireEvaluate } from './evaluate.js';
 import { seedField, seedHtml, setSeedRepaint, wireSeed } from './seed.js';
 
 const CLASSES = ['Current', 'Historical', 'Superseded', 'Unclassified'];
@@ -615,8 +616,8 @@ function listHtml(slot) {
   // reviews filed on cards are listed in the library and are not entries
   // a section can link
   const linkable = slot.data.entries.some(e => !e.tombstone);
-  return head + stale + requestsHtml() + handbookHtml(linkable) + adoptHtml() +
-    '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
+  return head + stale + requestsHtml() + handbookHtml(linkable) + evalHtml(slot.data.entries) +
+    adoptHtml() + '<h2 class="b-libh">All entries</h2>' + `<div class="b-lib">` + navHtml(index, t) +
     `<div class="b-results">${status}${filingHtml()}${results}${diagnosticsBlock(index)}${reviewsNote()}` +
     `<p class="b-note mono">brain/ revision ${esc(index.revision)} · ${entries(total)}</p></div></div>`;
 }
@@ -2477,6 +2478,8 @@ function wire(el) {
   wired = true;
   setSeedRepaint((force) => renderBrain(force));
   wireSeed(el);
+  setEvalRepaint((force) => renderBrain(force));
+  wireEvaluate(el);
   el.addEventListener('click', (ev) => {
     const k = ev.target.closest && ev.target.closest('[data-bkind]');
     if (k && el.contains(k)) {
@@ -2492,6 +2495,7 @@ function wire(el) {
   const onField = (ev) => {
     const f = ev.target;
     if (S.brainSeed && seedField(f, ev)) return;
+    if (!S.brainSeed && evalField(f, ev)) return;
     if (f.dataset && f.dataset.bfind) {
       // the list follows the search as it is typed: a person's own act,
       // painted at once with the caret kept where it was

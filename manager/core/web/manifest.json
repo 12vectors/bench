@@ -276,8 +276,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 159251,
-   "sha256": "07fc0d15b930eadbe299f2bf822fbd8adfcec7418140211bc9d0c119dc6d1d67",
+   "bytes": 159483,
+   "sha256": "efcf6bfd8f93e073542d2f06d49c3b620e1e102b3a1efd35f3233358e0d3bfc9",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -308,6 +308,11 @@
   "views/doctor.js": {
    "bytes": 19892,
    "sha256": "c5360c84471f0700c549dca9bc141da2cce253040ba4c96937518b4b8b2e7688",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/evaluate.js": {
+   "bytes": 28605,
+   "sha256": "9cd0564f6f11c3551450d059e6a8f5d3c9a9bb274bc6692de6fdd3cc36053dbc",
    "type": "text/javascript; charset=utf-8"
   },
   "views/extras.js": {
