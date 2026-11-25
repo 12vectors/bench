@@ -96,6 +96,9 @@ const CHANGES = {
   disable: { enabled: false },
   'grant-apply': { apply: true },
   'revoke-apply': { apply: false },
+  // task 199: factual explanation updates ride with an applied classification
+  'grant-maintain': { maintain: true },
+  'revoke-maintain': { maintain: false },
 };
 
 function policyBtn(name, label, primary = false) {
@@ -118,12 +121,16 @@ function headHtml(d) {
     (p.enabled && p.evaluate && !p.apply
       ? policyBtn('grant-apply', 'Grant the apply authority') : '') +
     (p.apply ? policyBtn('revoke-apply', 'Revoke the apply authority') : '') +
+    (p.apply && !p.maintain ? policyBtn('grant-maintain', 'Grant the explanation-update authority') : '') +
+    (p.maintain ? policyBtn('revoke-maintain', 'Revoke the explanation-update authority') : '') +
     (rc.armed ? '<button type="button" class="b-btn" data-rcact="disarm">Not now</button>' : '') + '</div>';
   const b = d.budget;
   return '<dl class="sd-facts">' +
     `<dt>Reconciliation</dt><dd><b>${esc(state)}</b> — ${esc(e.why)}</dd>` +
     `<dt>Evaluate authority</dt><dd>${word(e.evaluate)} <span class="b-note">${esc(d.authorities.evaluate)}</span></dd>` +
     `<dt>Apply authority</dt><dd>${word(e.apply)} <span class="b-note">${esc(d.authorities.apply)}</span></dd>` +
+    (d.authorities.maintain ? `<dt>Explanation-update authority</dt><dd>${word(e.maintain)} ` +
+      `<span class="b-note">${esc(d.authorities.maintain)}</span></dd>` : '') +
     `<dt>Executes here</dt><dd>${e.executes ? 'yes' : `no — ${esc(e.ownerReason || '')}`}</dd>` +
     `<dt>Budget</dt><dd>${b.used} of ${b.dailyLaunches} launches in the last 24 hours; ` +
     `${b.batch} entries an evaluation; ${b.retries} retries; inputs settle ${b.settleSeconds}s first</dd>` +
