@@ -461,8 +461,12 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   (evaluate, apply), the durable queue an entry joins when a card it cites
   changes, on enablement, a Rebuild or a Refresh sources, and the bounded
   launch of `braindraft`'s own evaluation and its policy-attributed Apply.
-  Only the designated execution installation runs it. Beside `recovery`,
-  above `braindraft` (see "Reconciling classifications from work events")
+  Only the designated execution installation runs it. Its `health` reads
+  the whole Brain's maintenance health — affected explanations, broken
+  transition links, coverage and what was not inspected — and its preview
+  bounds a Repair (task 200). Beside `recovery`, above `braindraft` (see
+  "Reconciling classifications from work events" and "Maintenance health:
+  whole-Brain reconciliation")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -1902,9 +1906,11 @@ evaluation proposes an update of the existing explanation it concerns —
 one section, applied with the classification in one batch, a person's
 section and a working agreement each needing that person's explicit
 decision (task 199, "Maintaining the existing explanation from
-evidence"). What it does not do yet, said so nobody looks for it: find
-the explanations and coverage gaps a change affects across the whole
-project (#200). A run is given no
+evidence"). **Maintenance health** reads, across the whole Brain, the
+explanations a change has affected, the coverage gaps and broken
+Historical/Current links, what was not inspected, and offers a
+preview-bound **Repair** through the same queue (task 200, "Maintenance
+health: whole-Brain reconciliation"). A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -3081,7 +3087,106 @@ restart mid-Apply and the policy path with and without `maintain`.
 keyboard deselect, an edit and Apply at 1280 and 390 pixels in both
 themes. Whether a real model writes a good section is a separately
 approved, billable run nothing starts by itself. Finding every
-explanation and coverage gap a change affects across the project is #200.
+explanation and coverage gap a change affects across the project is the
+next section's.
+
+### Maintenance health: whole-Brain reconciliation
+
+The queue above answers *is this entry still classified right?* one entry
+at a time. **Maintenance health** (task 200, `brainreconcile.health`), a
+panel on the Brain's list below Automatic classification, answers the
+whole-Brain question a maintainer asks: *what has the work affected, what
+is broken, what is not covered — and what did nobody look at?* It is a
+reading over records bench already keeps — the queue's own reading, the
+Brain's index, the handbook's source authority — and adds no crawler,
+scheduler, agent or writer. Opening it is **Read maintenance health**;
+it is not polled, because it runs local git reads.
+
+**What it finds**, each with the entry, why and one concrete next action
+and who holds it:
+
+| finding | when | next |
+| --- | --- | --- |
+| Never reconciled | an entry the queue has never evaluated against its inputs — every entry written before reconciliation was turned on, until a Rebuild or Repair | Repair, or turn reconciliation on |
+| A card it cites changed | the inputs moved since it was evaluated | the queue's next pass |
+| Code changed since it was evaluated | the checkout moved on past the commit it was evaluated at (code outside card events) | Repair (a refresh) |
+| A bound source has moved | an `app:` or `work:` binding is stale, gone, off the branch or names an unknown commit | Repair, or fix the binding |
+| It cites a card not on this board | a `#n` source no card here carries | edit its sources |
+| Historical with no Current explanation | no live Current entry is linked (by **Related** or its history's *explained now by*) | ask the Brain Agent for one, or link one |
+| Its recorded explanation is no live Current entry | the history names one that was retired, removed or reclassified | link a live one |
+| Superseded with no live successor | no successor and no invalidation, or a chain ending at an entry that is not live and Current | point it at the live successor |
+| It links an entry that is not here | a related or supersession id no entry carries | edit the link |
+| Unclassified; an outcome unresolved; applied and not yet shared | the classification, the queue (failed, blocked, waiting for review) or the push is open | Classify, Retry, Review in Evaluate, Push now |
+| The handbook does not cover this yet | a section is empty, not covered or partial | Organize the section — **shown, never required**: no merge or launch waits for it |
+| A file could not be read as an entry; a binding was not checked | its content, or the binding, was not inspected | fix the file; open the entry |
+
+**Unknown is never complete.** The reading is one of *Needs attention*
+(a problem above), *Incomplete — part of the Brain was not inspected*
+(only never-reconciled entries, unchecked bindings, unreadable files or
+coverage gaps), *Assessed — no gap found in what was inspected*, or *No
+maintained entries yet*. There is no "healthy": the assessed scope says
+how many live entries were reconciled against their current inputs, how
+many never were, how many changed since, which are excluded (a manual
+override, retired), how many bindings were checked and how many not (one
+shared budget of 80 git reads), and the newest and oldest assessment.
+What it never inspects is listed in the panel: claims inside an entry's
+body, code no entry binds and cards no entry cites, plans/ and
+reference/ files named as plain sources, and an entry under an override.
+
+**Repair, previewed and bound.** The preview says exactly which entries a
+Repair would queue (never reconciled, code changed, a binding moved),
+the effective authority now (evaluate, apply, explanation update,
+whether this installation executes), how many evaluations that is
+against the launches left today, and what an evaluation may read and do
+(the evaluation's own preflight: harness, model, pinned work-root
+sources, read-only). **Repair** is armed, then fired:
+`POST /api/brain/reconcile/action` `{action: "repair", request, entries,
+preview}` — a Refresh of exactly those entries at the application's
+current commit, queued with reason `repair`. A preview that no longer
+matches (an entry, the authority or the budget moved) is refused
+(`preview-stale`) with the current preview; an entry it did not name is
+refused (`not-affected`); the same request again answers once; and with
+reconciliation off, or on a replica, it is refused as every queue action
+is. Its click launches nothing, creates no entry, widens no source
+selection and changes no gate; the queue launches within its budget,
+one evaluation at a time, and a repeated or replayed card event still
+coalesces into one place in the queue.
+
+**History and receipts.** The panel lists every classification
+transition across the Brain (newest 40), each with who and how — *a
+person*, *an evaluation, applied by a person*, or *the policy* — and its
+reason, including *explained now by* links; the proposals waiting for a
+person apart from what was applied (with its sync state); and every
+manual override.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/health` | the scope, findings, coverage, history, overrides and the repair preview; a read |
+
+**Operating it.** Turn reconciliation on in Automatic classification
+(evaluate only, at first); read Maintenance health; Repair what it names,
+or Rebuild to reconcile every entry; review the proposals in Evaluate
+and correct what is wrong (a correction is a person's, and a manual
+override keeps an entry out of automation until cleared); grant apply,
+and then the explanation-update authority, only once the proposals have
+earned it. Recovery is the queue's: a failed or cancelled round is a
+**Retry**, a restart closes a running round as failed and nothing reruns
+by itself, a lost Apply reply is answered from the Brain's journal, and
+a failed push is **Push now**.
+
+**What is proved, and what is not.** `tests/test_brainhealth.py` holds,
+on #175's split fixture with a stub vendor through the Claude adapter's
+real `run`: a passive reading, pre-enable entries never reconciled,
+coverage as a gap and never a gate, every broken-link kind, a moved and
+an unchecked binding, Repair refused while off, preview-bound and
+answered once, coalesced duplicate events, and the combined journey —
+baseline, a disposable code change and its card's review, a policy
+Apply that makes the investigation Historical and updates the same
+explanation, no new page, the trail attributed to the policy, and a
+reversion read as affected work. `verify/browser_cases/case_brain_health.py`
+drives the panel. Whether a real model evaluates well is a separately
+approved, billable run nothing starts by itself; and a fixture is not
+the operator's installed board.
 
 ### Drafting with the Brain Agent
 
