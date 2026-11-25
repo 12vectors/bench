@@ -336,12 +336,26 @@ explanation is linked or said to be pending. You correct and choose, and
 a manual override is never changed by it. See "Evaluating
 classifications with evidence" in `AGENTS.md`.
 
+The same evaluation keeps the explanation current rather than adding a
+page per card: beside an implemented investigation's Historical, it may
+propose one section for the **existing** explanation — each claim marked
+implemented (cited in the code), agreed, unresolved or not known, what
+the evidence does not support listed, and deployment never claimed. The
+review shows the section before and after; you can edit it. A section a
+person wrote is replaced only if you choose to, and a change to a
+working agreement only with your stated authorization; neither ever
+writes **Policy:**. Both halves land in one batch, and when you leave one
+out the other says it is pending. See "Maintaining the existing
+explanation from evidence" in `AGENTS.md`.
+
 To keep that up without asking each time, **Automatic classification**
 on the Brain re-evaluates an entry when a card it cites changes. It is
 off until you turn it on, and it has two separate authorities: *evaluate*
 queues bounded, read-only evaluations whose proposals wait for your
 review, and *apply* (granted separately) applies only the proposals bench
-selects by default, saying so in each entry's history. Code that changed
+selects by default, saying so in each entry's history — and a third,
+*explanation updates*, lets it apply a factual update of a section bench
+maintains along with its classification. Code that changed
 outside a card is shown as changed, never as fresh, until you press
 **Refresh sources**; a daily launch budget, bounded retries and one
 evaluation at a time keep it from calling the model on unchanged inputs.

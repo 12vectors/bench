@@ -1895,9 +1895,14 @@ with evidence, and a person's reviewed Apply writes only classification
 metadata (task 196, "Evaluating classifications with evidence"), and —
 only once a person turns it on — the same evaluation is queued when a
 card an entry cites changes, with applying a separate authority (task
-197, "Reconciling classifications from work events"). What it does not do
-yet, said so nobody looks for it: write or maintain an entry's prose
-(phase 6). A run is given no
+197, "Reconciling classifications from work events"), and the same
+evaluation proposes an update of the existing explanation it concerns —
+one section, applied with the classification in one batch, a person's
+section and a working agreement each needing that person's explicit
+decision (task 199, "Maintaining the existing explanation from
+evidence"). What it does not do yet, said so nobody looks for it: find
+the explanations and coverage gaps a change affects across the whole
+project (#200). A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2834,10 +2839,12 @@ Apply and at start-up. **Saved**, **Committed** and **Shared** are said
 apart afterwards, with **Retry commit** and **Push now** / **Retry
 push**, exactly as for a person's own write.
 
-**Not in this version:** writing or repairing handbook prose, and
-classifying review projections (a review's classification record stays a
-person's, under `brain/reviews/`). Classifying on a card's update and
-rebuilding every entry's classification are the next section's.
+**Not in this version:** handbook membership, and classifying review
+projections (a review's classification record stays a person's, under
+`brain/reviews/`). Classifying on a card's update and rebuilding every
+entry's classification are the next section's; updating the explanation
+an evaluation concerns is "Maintaining the existing explanation from
+evidence".
 
 **What is proved, and what is not.** `tests/test_brainevaluate.py` drives
 the lifecycle through the Claude adapter's real `run` against a stub
@@ -2879,6 +2886,10 @@ things, shown apart:
 | --- | --- | --- |
 | **evaluate** | launch read-only evaluations of entries whose inputs moved | waits for a person's review in Evaluate (**Review in Evaluate**) |
 | **apply** (needs evaluate) | apply the proposals bench selects by default — bound evidence, a changed classification, nothing blocking | is written under the policy; each history line says *applied under the Brain reconciliation policy*. Never a correction, never Unclassified, never an entry with a manual override |
+| **maintain** (needs apply; task 199) | apply, with such a classification, its factual update of a new section or one bench maintains in the existing explanation | written in the same batch, its provenance line saying *applied under the Brain reconciliation policy*. Never a person's section, a working-agreement change or an edit; without this authority every update is left for a person and the classification's history line says it is pending |
+
+A policy written before task 199 has no `maintain` key and reads exactly
+as it did, granting none. Revoking apply revokes maintain with it.
 
 Both are read from disk again immediately before every launch and every
 apply. Turning reconciliation off, or revoking apply, while a round runs
@@ -2963,6 +2974,108 @@ before and after the launch. `verify/browser_cases/case_brain_reconcile.py`
 drives the panel by pointer and keyboard at 1280 and 390 pixels in both
 themes. Turning it on for a real project, and whether a real model
 evaluates well, are separate, authorized acts.
+
+### Maintaining the existing explanation from evidence
+
+A classification says an investigation is now history. The explanation
+of what was built has to say so too, and it must not become one new
+article per card (task 199). So an evaluation's proposal for an entry may
+carry, beside its classification, an optional **update of the existing
+explanation** — `maintain` in the answer — and Apply writes both halves
+in the same all-or-none batch. It is the evaluation of "Evaluating
+classifications with evidence" throughout: the same preview, approval,
+read-only round, validation, review, request identity, writer, journal,
+commit and sync. No new route, agent or store.
+
+**What can be updated.** One `##` section of one entry that exists, is
+live and Current, is a Guide, Decision or Investigation, was pinned in
+the round, still holds the bytes the round read, and that the evaluated
+entry evidently concerns: it is the entry's linked Current explanation,
+the two are related, they cite the same card, or it is the evaluated
+entry itself while it stays Current. Anything else is refused — bench
+does not guess which explanation to update, and never creates one. When
+no explanation exists, the classification says *Current explanation
+pending* and nothing is invented. The update **appends** a new section
+(before a draft's own `## Sources and claims`, which stays last) or
+**replaces** an existing one.
+
+**What a section says.** Its heading; a provenance line bench writes —
+`_Maintained from evidence — Brain Agent evaluation bd-…, round n, date;
+a factual update applied by a person._`; the explanation; and every claim
+with what the evidence supports it as:
+
+| status | needs | shown as |
+| --- | --- | --- |
+| `implemented` | evidence in the code (`app:`); a card's stage, a plan or a PR is refused | Implemented in the source |
+| `agreed-future` | the card, plan or entry where it was agreed | Agreed, not built |
+| `unresolved`, `unknown` | nothing | Unresolved, Not known |
+| `deployed` | — always refused: bench binds no deployment evidence. A person records a `deploy:` binding on the entry | — |
+
+What the evidence does not support is listed under *Not supported by the
+evidence yet*, and the item's uncertainty under *Uncertain*, so a partial
+implementation updates only what is supported and says the rest. A claim
+may say its authority: `inferred-convention` is shown as *observed
+convention, not an approved agreement*; `documented-policy` needs scope
+policy and the card, plan or entry that documents it. The section's text
+holds `###` and below only — no `#`/`##` heading, no HTML comment, no
+unclosed fence, no provenance line of its own, nothing credential-shaped.
+The explanation also gains the evaluated entry in **Related**, what the
+update cites in **Source**, and an `app:<path>@<commit>` **Binding** for
+each cited file, so its source authority can say whether the code moved
+since. Its classification, history, title, kind and every other section
+are kept.
+
+**Who owns the text.** A `##` section whose first line is that provenance
+line is bench-maintained; the opening, every other section and a draft's
+`## Sources and claims` are a person's. Removing the provenance line hands
+a section back to people.
+
+| the update | selected by default | to apply it |
+| --- | --- | --- |
+| a new section, or one bench maintains, factual, unedited | yes | Apply |
+| your edit of its text | — | your edit is what is written; select it |
+| a person's section (`human-owned`) | no | choose **Replace this person's section**, or leave it out |
+| a working agreement (`policy-authorization`) — the agent says scope policy, the entry records **Policy:**, or the handbook links it under Ways of working | no | say why you authorize it: your name and reason go into the provenance line. **Policy:** is never written, so an inferred convention never becomes an approved agreement |
+
+**Both halves, never one passed off as the whole.** The review says, per
+entry, *The classification and the explanation update apply together*,
+*Explanation update pending — the classification applies without it*, or
+*Classification pending — only the explanation update applies*. The
+classification's history line says *its explanation was updated in the
+same batch* or *its explanation update is pending*, and the request's
+record keeps the pairs left pending. An explanation reclassified in the
+same batch is not maintained in it (`reclassified`).
+
+**Guards, read again at Apply.** The update is held to the revision of
+the explanation the round read (`destination-changed`), the bytes of what
+it cites (`source-drift`), and the section it replaces (`section-missing`);
+each refuses that half with nothing written, and the person's edits stay
+on the page. A reverted or reopened implementation is a new evaluation:
+the investigation may go back to Current, and the bench-maintained
+section is replaced — git keeps every earlier version, and the classification
+history keeps every line.
+
+**The receipt.** After Apply, the request records each update — the
+explanation and section, the text before and after, who applied it
+(*a person* or *the reconciliation policy*) and any authorization — with
+the writer's request identity, so a restart mid-Apply settles to the same
+receipt, and **Saved**, **Committed** and **Shared** are said apart as for
+any batch. Automatic classification applies an update only under its own
+`maintain` authority (see "Reconciling classifications from work events").
+
+**What is proved, and what is not.** `tests/test_brainmaintain.py` drives
+it through the Claude adapter's real `run` against a stub vendor on #175's
+split fixture: an append and a later replace, no new entry, the code
+bound, implemented, deployed and agreed claims held, a forged provenance
+line and a second heading refused, an unrelated explanation not guessed
+at, a person's section and a working agreement each held for their
+decision, an edit, destination and source drift, a deselected half, a
+restart mid-Apply and the policy path with and without `maintain`.
+`verify/browser_cases/case_brain_maintain.py` drives the review, a
+keyboard deselect, an edit and Apply at 1280 and 390 pixels in both
+themes. Whether a real model writes a good section is a separately
+approved, billable run nothing starts by itself. Finding every
+explanation and coverage gap a change affects across the project is #200.
 
 ### Drafting with the Brain Agent
 
