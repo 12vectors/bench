@@ -85,8 +85,11 @@ class Reconcile(unittest.TestCase):
         shared = S["backend"]
         base = shared.base.parent / "brain-reconcile-fixture"
         shutil.rmtree(base, ignore_errors=True)
-        env = dict(shared.env, BOARD_ORCHESTRATE_INTERVAL="1")
-        cls.backend = bv.Backend(shared.tool, base, env, shared.python)
+        cls.backend = bv.Backend(shared.tool, base, dict(shared.env), shared.python)
+        # the fixture holds every beat off for an hour; this case needs the
+        # reconciliation tick. No operating agreement is put in force, so the
+        # scheduler's pass on the same beat stays off
+        cls.backend.env["BOARD_ORCHESTRATE_INTERVAL"] = "1"
         app, work = cls.backend.app, cls.backend.work
         (app / "src").mkdir(exist_ok=True)
         (app / "src" / "export.py").write_text('DELIMITER = ";"\n')
@@ -182,8 +185,9 @@ class Reconcile(unittest.TestCase):
         doc = json.loads(self.policy_file().read_text())
         self.assertTrue(doc["evaluate"])
         self.assertFalse(doc["apply"])
-        b.click('#bshell [data-rcact="read"]')
-        self.wait_text(b, ["Queued", "in the queue", "#12"], timeout=20)
+        # the beat takes the execution lock and queues every entry once; the
+        # open panel reads again on its own while reconciliation is on
+        self.wait_text(b, ["Queued", "in the queue", "#12"], timeout=90)
         shot("brain-reconcile-queued-day")
         b.click('#bshell [data-rcact="refresh-all"]')
         self.wait_text(b, ["Waiting for your review", "Up to date"], timeout=60)

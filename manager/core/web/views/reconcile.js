@@ -50,8 +50,10 @@ async function read() {
 
 function watch() {
   if (rc.poll) { clearTimeout(rc.poll); rc.poll = null; }
-  const busy = rc.data && rc.data.entries.some(r => ['queued', 'running'].includes(r.stored));
-  if (rc.open && busy) rc.poll = setTimeout(read, 5000);
+  // while reconciliation is on the beat may move things at any time, so an
+  // open panel reads again every few seconds; off, it reads once
+  const on = rc.data && rc.data.effective && rc.data.effective.on;
+  if (rc.open && on) rc.poll = setTimeout(read, 4000);
 }
 
 async function setPolicy(change) {
