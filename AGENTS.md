@@ -3124,11 +3124,18 @@ and who holds it:
 (a problem above), *Incomplete — part of the Brain was not inspected*
 (only never-reconciled entries, unchecked bindings, unreadable files or
 coverage gaps), *Assessed — no gap found in what was inspected*, or *No
-maintained entries yet*. There is no "healthy": the assessed scope says
-how many live entries were reconciled against their current inputs, how
-many never were, how many changed since, which are excluded (a manual
-override, retired), how many bindings were checked and how many not (one
-shared budget of 80 git reads), and the newest and oldest assessment.
+maintained entries yet*. There is no "healthy": the assessed scope puts
+every live entry in exactly one bucket — reconciled against its current
+inputs, never reconciled, inputs changed since, queued or being
+evaluated, *last round ended without an assessment*, or held by an
+override — so the counts add up to the live entries; it also says which
+are excluded (a manual override, retired), how many bindings were checked
+and how many not (one shared budget of 80 git reads), and the newest and
+oldest assessment. **Only a round that assessed counts:** a proposal
+(applied, waiting, or unchanged) is an assessment; a failed, refused,
+cancelled or not-evaluated round is an ending, never counted as assessed
+and never moving the last-assessed time — the queue keeps the last real
+assessment apart from the newest ending.
 What it never inspects is listed in the panel: claims inside an entry's
 body, code no entry binds and cards no entry cites, plans/ and
 reference/ files named as plain sources, and an entry under an override.
@@ -3145,9 +3152,12 @@ preview}` — a Refresh of exactly those entries at the application's
 current commit, queued with reason `repair`. A preview that no longer
 matches (an entry, the authority or the budget moved) is refused
 (`preview-stale`) with the current preview; an entry it did not name is
-refused (`not-affected`); the same request again answers once; and with
+refused (`not-affected`); the same request again answers once; with
 reconciliation off, or on a replica, it is refused as every queue action
-is. Its click launches nothing, creates no entry, widens no source
+is, and without the evaluate authority it is refused (`not-available`)
+exactly as the preview says. An entry already queued or being evaluated
+is not offered, and one Repair names at most 200 entries — the rest are
+counted as *more*, offered by the next Repair once these are queued. Its click launches nothing, creates no entry, widens no source
 selection and changes no gate; the queue launches within its budget,
 one evaluation at a time, and a repeated or replayed card event still
 coalesces into one place in the queue.
@@ -3178,13 +3188,22 @@ a failed push is **Push now**.
 on #175's split fixture with a stub vendor through the Claude adapter's
 real `run`: a passive reading, pre-enable entries never reconciled,
 coverage as a gap and never a gate, every broken-link kind, a moved and
-an unchecked binding, Repair refused while off, preview-bound and
-answered once, coalesced duplicate events, and the combined journey —
-baseline, a disposable code change and its card's review, a policy
-Apply that makes the investigation Historical and updates the same
-explanation, no new page, the trail attributed to the policy, and a
-reversion read as affected work. `verify/browser_cases/case_brain_health.py`
-drives the panel. Whether a real model evaluates well is a separately
+an unchecked binding, Repair refused while off or without the evaluate
+authority, preview-bound, bounded and answered once, a failed, refused
+and cancelled round never counted as assessed (and a later failure
+keeping when the entry was really assessed), coalesced duplicate events,
+and the combined journey — baseline, a disposable code change and its
+card's review, a policy Apply that makes the investigation Historical and
+updates the same explanation, no new page, the trail attributed to the
+policy, and a reversion read as affected work.
+`verify/browser_cases/case_brain_health.py` drives the panel and the
+same combined journey through the page: the baseline read as never
+reconciled, the review opened at its Brain address, the policy's Apply
+seen in the health panel's trail and on both entry pages with the
+review's card unchanged, and the reversion said as affected work at 390
+pixels in both themes. Restart, upgrade and commit or push failure are
+the queue's and the writer's, held by #197's and #199's tests, not
+repeated against the health reading. Whether a real model evaluates well is a separately
 approved, billable run nothing starts by itself; and a fixture is not
 the operator's installed board.
 

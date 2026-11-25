@@ -38,6 +38,7 @@ from tests.test_brainreconcile import (EVERYTHING, EXPORTS_CURRENT, JSON_CURRENT
 
 import brain  # noqa: E402
 import braindraft  # noqa: E402
+import brainwrite  # noqa: E402
 import brainreconcile  # noqa: E402
 import handbook  # noqa: E402
 
@@ -292,6 +293,21 @@ class Endings(_Health):
         self.assertEqual(read["scope"]["assessed"], 0)
         self.assertEqual(read["scope"]["lastAssessed"], first)
         self.scope_adds_up(read)
+
+
+class Sync(_Health):
+
+    def test_an_applied_classification_not_yet_pushed_is_said_with_push_now(self):
+        self.enable(apply=True)
+        self.drain()
+        with mock.patch.object(brainwrite, "operation", lambda r: {
+                "commit": {"state": "committed"}, "push": {"state": "failed"}}):
+            read = self.health()
+        pending = [f for f in read["findings"]
+                   if f["entry"] == "e-csv-study" and f["code"] == "sync-pending"]
+        self.assertTrue(pending, read["findings"])
+        self.assertEqual(pending[0]["next"]["action"], "push")
+        self.assertNotEqual(read["state"], "assessed")
 
 
 class RepairBounds(_Health):
