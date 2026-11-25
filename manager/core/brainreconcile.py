@@ -363,6 +363,11 @@ def tick(now: float | None = None) -> dict:
         policy = read_policy()
         if policy["state"] == "unconfigured":
             return {"ran": False, "code": "unconfigured"}
+        # the designated installation takes its own lock, exactly as the
+        # scheduler's pass does — never another installation's
+        read = execowner.reading()
+        if read["role"] == "designated-here" and not read["lockHeld"]:
+            execowner.acquire_lock()
         owner = execowner.authorizes()
         if not owner["allowed"]:
             return {"ran": False, "code": owner["code"]}
@@ -830,18 +835,20 @@ def act(payload: dict) -> dict:
             rec = st["entries"].get(eid) or {}
             e = by_id.get(eid)
             if action in ("rebuild", "refresh"):
-                if e is None or rec.get("state") in ("running", "queued") \
-                        and action == "rebuild":
+                if e is None:
                     continue
                 inputs = _inputs(e, cards, st["refresh"])
                 key = _key(inputs)
-                if action == "refresh" and rec.get("state") == "queued":
-                    _queue(st, eid, key, inputs, "source-refresh", [], now, e["revision"])
-                elif rec.get("state") != "running":
-                    _queue(st, eid, key, inputs, "source-refresh" if action == "refresh"
-                           else "rebuild", [], now, e["revision"])
-                    # rebuild and refresh are a person's ask: no settle delay
-                    st["entries"][eid]["changedAt"] = now - SETTLE
+                if rec.get("state") == "running":
+                    # a refresh makes the round in flight about old inputs:
+                    # its result reads stale and the entry is queued again
+                    if action == "refresh":
+                        touched.append(eid)
+                    continue
+                _queue(st, eid, key, inputs, "source-refresh" if action == "refresh"
+                       else "rebuild", [], now, e["revision"])
+                # rebuild and refresh are a person's ask: no settle delay
+                st["entries"][eid]["changedAt"] = now - SETTLE
                 touched.append(eid)
             elif action == "retry":
                 if e is None or rec.get("state") not in ("failed", "blocked", "cancelled"):
