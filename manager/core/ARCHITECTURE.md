@@ -196,7 +196,11 @@ own off-by-default policy grants the apply authority — applies through
 `braindraft.evaluate_auto_apply`, the same batch a person's Apply takes,
 reading `brainwrite.operation` for the receipt. It has no writer of its
 own: the one writer of an entry stays `brainwrite`. `routes` and `board`
-(its beat) import it.
+(its beat) import it. Since task 200 it also reads the Brain's
+maintenance health (`health`): its own queue reading, the Brain's index
+and the handbook's source authority (`handbook.authority` under one
+shared `handbook.budget`), writing nothing; its preview-bound Repair is
+an action on the same queue.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -805,5 +809,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 192
+routes 193
 ```
