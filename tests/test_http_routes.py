@@ -280,8 +280,10 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # browser-mutation; task 193 two, a seed draft's preflight (a read
         # with a body) and Generate draft, browser-mutation; task 194 two,
         # a seed draft's review (a read with a body) and its Apply as one
-        # Brain batch, browser-mutation
-        self.assertEqual(110, len(self.routes))
+        # Brain batch, browser-mutation; task 196 four, an evaluation's
+        # preflight and review (reads with a body), Evaluate and its Apply
+        # as one batch of classifications, browser-mutation
+        self.assertEqual(114, len(self.routes))
         self.assertEqual(36, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

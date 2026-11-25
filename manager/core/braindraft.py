@@ -216,6 +216,8 @@ def recover() -> int:
             elif draft.get("status") == "applying":
                 if draft.get("mode") == SEED_MODE:
                     _reconcile_seed_apply(draft)
+                elif draft.get("mode") == EVAL_MODE:
+                    _reconcile_eval_apply(draft)
                 else:
                     _reconcile_apply(draft)
     return closed
@@ -264,7 +266,8 @@ def _round_failed(draft: dict, error: dict) -> None:
     applicable — and the failure is said beside it: a failed revision
     never strands what the person already had. Otherwise the request
     reads failed."""
-    if (draft.get("proposal") or draft.get("seedDraft")) and draft.get("proposalRound"):
+    if (draft.get("proposal") or draft.get("seedDraft") or draft.get("evaluation")) \
+            and draft.get("proposalRound"):
         kept = dict(error)
         kept["why"] = (f"{error['why']} — the draft from round "
                        f"{draft['proposalRound']} is unchanged and can still be "
@@ -741,6 +744,10 @@ def continue_(payload: dict) -> dict:
                        "it, or start a new seed request (applying a seed draft is the "
                        "next step, #194)" if draft.get("seedDraft") else
                        "there is no draft yet: Discard it and start a new seed request")
+            elif draft.get("mode") == EVAL_MODE:
+                way = ("review and apply the proposals you have, Discard them, or start a "
+                       "new evaluation" if draft.get("evaluation") else
+                       "there are no proposals: Discard it and start a new evaluation")
             elif draft.get("proposal"):
                 way = "edit the draft and Apply it, Discard it, or start a new request"
             else:
@@ -862,6 +869,9 @@ def _launch(draft: dict, *, continue_request: str) -> None:
     leaves the draft as it was (a new request is then not saved at all)."""
     if draft["mode"] == SEED_MODE:
         _launch_seed(draft, continue_request=continue_request)
+        return
+    if draft["mode"] == EVAL_MODE:
+        _launch_evaluate(draft, continue_request=continue_request)
         return
     round_no = len(draft["rounds"]) + 1
     entry = _target_now(draft["target"]) if draft["mode"] == "update" else None
@@ -1445,7 +1455,10 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
             except OSError:
                 log = ""
             seeding = draft["mode"] == SEED_MODE
-            settled = (validate_seed if seeding else validate)(draft, rnd, parse(log))
+            evaluating = draft["mode"] == EVAL_MODE
+            check = (validate_seed if seeding else
+                     validate_evaluate if evaluating else validate)
+            settled = check(draft, rnd, parse(log))
             rnd["outcome"] = settled["status"]
             if settled["status"] != "failed":
                 draft["status"] = settled["status"]
@@ -1470,6 +1483,17 @@ def _reap(draft_id: str, agent_id: str, proc, log_file) -> None:
                         f"passed validation" if sd.get("partial") else "")
                      + (f"; {kept} section(s) this round did not pass keep their "
                         f"earlier version" if kept else ""))
+            elif settled["status"] == "proposed" and evaluating:
+                rnd["evaluation"] = settled["evaluation"]
+                draft["evaluation"] = settled["evaluation"]
+                draft["bindings"] = settled["bindings"]
+                draft["proposalRound"] = rnd["n"]
+                draft.pop("conflict", None)
+                ev = settled["evaluation"]
+                _say(draft, "agent", "proposal",
+                     (settled.get("summary") or "proposed classifications for your review")
+                     + (f" — {len(ev['items'])} of {len(draft.get('selected') or [])} "
+                        f"entries passed validation" if ev.get("partial") else ""))
             elif settled["status"] == "proposed":
                 rnd["proposal"] = settled["proposal"]
                 rnd["bindings"] = settled["bindings"]
@@ -2474,6 +2498,10 @@ def apply(payload: dict) -> dict:
     key = _request_key(payload)
     with LOCK:
         draft = _get(payload.get("id"))
+        if draft["mode"] == EVAL_MODE:
+            raise Refused("an evaluation is applied through its review, as one batch of "
+                          "classifications — nothing was written", 409,
+                          code="use-evaluate-apply")
         if draft["mode"] == SEED_MODE:
             raise Refused("a seed draft is applied as one reviewed batch (Review and "
                           "apply), not as a single entry — nothing was written", 409,
@@ -3086,6 +3114,994 @@ def seed_apply(payload: dict) -> dict:
     return out
 
 
+# ── evaluating classifications (task 196) ──────────────────────────────
+#
+# Evaluate Brain: a person selects a bounded set of entries, reads what a
+# run would ride (the preflight: harness, model, profile, every source and
+# its revision, the budget, and an `approval` digest over all of it), and
+# explicitly launches one read-only round through the same drafting
+# machinery — the same store, rounds, questions, cancellation, time limit,
+# restart handling and launch accounting. The run proposes, per entry, a
+# classification with its reason and the exact evidence; bench validates
+# each proposal on its own and binds every citation. A person reviews,
+# corrects and selects, and a separate armed Apply writes only the chosen
+# classifications as one all-or-none Brain batch (`brainwrite.write_batch`
+# with classification-only items), held to the entry revisions the round
+# read, every cited source, the policy and the review the page showed.
+#
+# What the rules hold, whatever a run says:
+#
+# - **Current** may stay Current for an accepted investigation that is not
+#   built: Current is never a claim that something shipped.
+# - **Historical** for an implemented investigation needs evidence in the
+#   code (an `app:` citation bench hashes). A card's stage, a card edit or
+#   a pull request is a reassessment signal, never proof of implementation
+#   or deployment. It names the maintained Current explanation, or says
+#   that explanation is pending — bench never invents a page or a link.
+# - **Superseded** names the replacing entry or an explicit invalidation;
+#   age and completion are not reasons.
+# - **Unclassified** says what evidence is missing and how to get it.
+# - An entry carrying a person's manual override is never reclassified by
+#   an evaluation: the proposal is shown, and Apply refuses it until the
+#   override is cleared on the entry's own page.
+# - Apply writes classification metadata only — never an entry's text, a
+#   card, a review report, its verdict or its source binding.
+
+EVAL_MODE = "evaluate"
+EVAL_KIND = "bench-brain-evaluation"
+EVAL_TEMPLATE = "brain-evaluate.md"
+MAX_EVAL_ENTRIES = 8
+MAX_EVIDENCE = 12
+MAX_SIGNALS = 6
+EVAL_TOP_KEYS = {"v", "kind", "draft", "round", "outcome", "summary", "questions",
+                 "evaluations"}
+EVAL_ITEM_KEYS = {"entry", "current", "proposed", "reason", "evidence", "supersededBy",
+                  "invalidation", "explanation", "missing", "uncertainty", "signals"}
+EVAL_CHOICE_KEYS = {"entry", "selected", "classification", "reason", "supersededBy",
+                    "invalidation", "explanation"}
+# The longest a reason may be, the agent's or a person's, so that the one
+# history line Apply writes always keeps its attribution and explanation
+# whole: that line is the only durable record of "Historical, explained now
+# by X". Evidence fills what room is left, whole references only.
+EVAL_REASON_MAX = 300
+_REASON_UNSAFE = re.compile(r"[<>]")
+
+
+def _eval_entries(ids) -> list[dict]:
+    """The entries a person selected, read now — or `Refused`. A bounded,
+    distinct list of live maintained entries; a review projection, a
+    tombstone or a file that is not an entry cannot be evaluated here."""
+    if not isinstance(ids, list) or not ids:
+        raise Refused("select at least one Brain entry to evaluate", field="entries")
+    if len(ids) > MAX_EVAL_ENTRIES:
+        raise Refused(f"an evaluation covers at most {MAX_EVAL_ENTRIES} entries; select "
+                      f"fewer", field="entries")
+    if len(set(map(str, ids))) != len(ids):
+        raise Refused("each entry is selected once", field="entries")
+    out = []
+    listed = {e["id"]: e for e in brain.reading()["entries"]}
+    for entry_id in ids:
+        if not isinstance(entry_id, str) or not brain.ID_RE.match(entry_id):
+            raise Refused(f"{str(entry_id)[:70]!r} is not a Brain entry id", field="entries")
+        found = brain.entry(entry_id)
+        raw = listed.get(entry_id) or {}
+        if found.get("state") == "tombstone":
+            raise Refused(f"{entry_id} is retired; a tombstone is not evaluated", 409)
+        if found.get("state") != "entry":
+            raise Refused(f"{entry_id} is not an entry this board can evaluate "
+                          f"({found.get('state')})",
+                          404 if found.get("state") == "unknown" else 409)
+        out.append({"id": found["id"], "title": found.get("title"),
+                    "kind": found.get("entryKind") or found.get("kind"),
+                    "classification": found.get("classification"),
+                    "revision": found.get("revision"), "file": found.get("file"),
+                    "override": raw.get("override") or None,
+                    "supersededBy": (raw.get("supersededBy") or [None])[0],
+                    "sources": [str(s) for s in raw.get("sources") or []
+                                ][:brain.MAX_LIST_ITEMS],
+                    "related": [str(s) for s in raw.get("related") or []
+                                ][:brain.MAX_LIST_ITEMS]})
+    return out
+
+
+def _eval_cards(chosen: list[dict], sel: dict) -> list[dict]:
+    """The cards the selected entries name in their sources (`#<n>`), and
+    whether the round's bounded selection pins each — said, so a related
+    card outside the bound is a known gap rather than a silent one."""
+    pinned = {}
+    for s in sel["sources"]:
+        m = re.match(r"^work:tasks/([a-z-]+)/(\d+)", s["ref"])
+        if m:
+            pinned[str(int(m.group(2)))] = {"ref": s["ref"], "stage": m.group(1)}
+    out = []
+    for e in chosen:
+        for item in e["sources"]:
+            m = brain.CARD_REF_RE.match(str(item).split("/")[0])
+            if not m:
+                continue
+            number = str(int(m.group(1)))
+            if any(c["card"] == number for c in out):
+                continue
+            hit = pinned.get(number)
+            out.append({"card": number, "for": e["id"], "pinned": bool(hit),
+                        "ref": hit["ref"] if hit else None,
+                        "stage": hit["stage"] if hit else None})
+    return out
+
+
+def _eval_resolve(entries: list[dict]) -> dict:
+    """What an evaluation round rides, resolved without pinning, launching
+    or writing: the profile, the template, the bounded sources, the budget,
+    and the approval digest over all of it."""
+    found = profiles.resolve(INTENT)
+    blockers = list(found["blockers"])
+    loaded = None
+    try:
+        loaded = templates.require(EVAL_TEMPLATE)
+    except ValueError as exc:
+        blockers.append(str(exc))
+    app = app_identity()
+    if app.get("problem"):
+        blockers.append(app["problem"])
+    unsafe = deny_problems()
+    if unsafe:
+        blockers.append(_deny_refusal(unsafe))
+    sel = work_sources()
+    pinned_entries = {s.get("entry"): s for s in sel["sources"] if s.get("entry")}
+    for e in entries:
+        source = pinned_entries.get(e["id"])
+        if source is None:
+            blockers.append(f"{e['id']} is outside the bounded source selection this round "
+                            f"would pin, so it could not be read; evaluate fewer or "
+                            f"other entries")
+    selection = profiles.agent_selection(config.agent_choice(INTENT))
+    budget = {"rounds": config.BRAIN_DRAFT_ROUNDS,
+              "secondsPerRound": int(config.BRAIN_DRAFT_TIMEOUT),
+              "entries": MAX_EVAL_ENTRIES, "evidencePerEntry": MAX_EVIDENCE,
+              "sources": len(sel["sources"]), "bytes": sel["bytes"]}
+    approval = brainwrite.digest({
+        "entries": [{"id": e["id"], "revision": e["revision"]} for e in entries],
+        "policyId": found.get("policyId"),
+        "template": templates.identity(loaded) if loaded else None,
+        "selection": selection, "budget": budget, "app": app.get("commit"),
+        "sources": [[s["ref"], s["sha256"]] for s in sel["sources"]]})
+    return {"found": found, "loaded": loaded, "app": app, "sel": sel,
+            "blockers": blockers, "selection": selection, "budget": budget,
+            "approval": approval}
+
+
+def evaluate_preflight(payload) -> dict:
+    """What Evaluate would launch and read for these entries, before
+    anything is launched: each entry with its classification, revision and
+    any manual override, the related cards and whether they are pinned,
+    the harness, model and profile, every source and its revision, the
+    budget, and the approval digest Evaluate must name. A read."""
+    ids = payload.get("entries") if isinstance(payload, dict) else payload
+    entries = _eval_entries(ids)
+    r = _eval_resolve(entries)
+    return {
+        "v": VERSION, "intent": INTENT, "mode": EVAL_MODE,
+        "ready": not r["blockers"], "blockers": r["blockers"],
+        "codes": [d["code"] for d in r["found"].get("diagnostics") or []],
+        "entries": [{k: e[k] for k in ("id", "title", "kind", "classification",
+                                       "revision", "override", "supersededBy")}
+                    for e in entries],
+        "cards": _eval_cards(entries, r["sel"]),
+        "selection": r["selection"],
+        "adapter": (r["found"].get("adapter") or {}).get("name"),
+        "profile": profiles.summary(r["found"]),
+        "policyId": r["found"].get("policyId"),
+        "template": templates.identity(r["loaded"]) if r["loaded"] else None,
+        "work": {"sources": len(r["sel"]["sources"]), "bytes": r["sel"]["bytes"],
+                 "counts": r["sel"]["counts"],
+                 "list": [{"ref": s["ref"], "sha256": s["sha256"][:12],
+                           **({"entry": s["entry"]} if s.get("entry") else {})}
+                          for s in r["sel"]["sources"]],
+                 "excluded": r["sel"]["excluded"][:200],
+                 "excludedCount": len(r["sel"]["excluded"]),
+                 "how": "a pinned read-only copy of each, granted by one exact read"},
+        "app": {**r["app"], "how": ("the run starts in this checkout and reads it with "
+                                    "the vendor's read-only tools; credential-shaped "
+                                    "paths and bench's private state are denied")},
+        "budget": r["budget"],
+        "approval": r["approval"],
+        "authority": ("the run may read; it cannot edit, run a command, fetch from the "
+                      "web or write the Brain. It proposes classifications only; your "
+                      "separate Apply writes the ones you choose, and only their "
+                      "classification metadata"),
+        "enforcement": ("the vendor's permission rules and tool roster, not an "
+                        "operating-system sandbox"),
+        "rules": [
+            "Current can stay Current for an accepted investigation that is not built",
+            "Historical needs evidence in the code; a card's stage, an edit or a PR is "
+            "a reassessment signal, never proof of implementation or deployment",
+            "Superseded names the replacing entry or an explicit invalidation",
+            "Unclassified says what evidence is missing and how to get it",
+            "an entry with a manual override is never reclassified by an evaluation",
+        ],
+    }
+
+
+def start_evaluate(payload: dict) -> dict:
+    """Evaluate: a new evaluation request bound to the entries and the
+    approval its preflight showed, and its first read-only round launched.
+    The same request identity again answers with the request it made."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    key = _request_key(payload)
+    note = _text(payload.get("text"), "your note", MAX_REQUEST, required=False)
+    with LOCK:
+        _load()
+        seen = next((d for d in DRAFTS.values() if d.get("request") == key), None)
+        if seen is not None:
+            return {"draft": public(seen), "duplicate": True}
+        entries = _eval_entries(payload.get("entries"))
+        r = _eval_resolve(entries)
+        if payload.get("approval") != r["approval"]:
+            raise Refused("what this evaluation would read or ride changed since the "
+                          "preview (an entry, a source, the model, the policy or the "
+                          "template) — review it again; nothing was launched", 409,
+                          stale=True, code="approval-stale", approval=r["approval"])
+        if r["blockers"]:
+            raise Refused(r["blockers"][0], 409, blockers=r["blockers"])
+        text = note or ("Evaluate the classification of " + ", ".join(
+            e["id"] for e in entries))
+        draft = {
+            "v": VERSION, "kind": KIND, "id": f"bd-{secrets.token_hex(5)}",
+            "request": key, "text": text, "mode": EVAL_MODE,
+            "target": None, "targetTitle": None,
+            "selected": [e["id"] for e in entries],
+            "frozen": {"approval": r["approval"],
+                       "policyId": r["found"].get("policyId"),
+                       "selection": r["selection"]},
+            "status": "running", "created": time.time(), "rounds": [],
+            "conversation": [],
+        }
+        _say(draft, "you", "request", text)
+        _launch(draft, continue_request=key)
+        return {"draft": public(draft), "duplicate": False}
+
+
+def _eval_entries_text(entries: list[dict], pinned: dict[str, str]) -> str:
+    lines = []
+    for e in entries:
+        ref = f"work:brain/{e['file']}"
+        lines.append(
+            f"- `{e['id']}` — \"{e['title']}\" ({e['kind']}), classified "
+            f"**{e['classification']}**, revision {e['revision']}"
+            + (f", superseded by `{e['supersededBy']}`" if e.get("supersededBy") else "")
+            + (" — carries a person's MANUAL OVERRIDE: you may still say what the "
+               "evidence shows, but it will not be applied" if e.get("override") else "")
+            + f". Its text: `{pinned.get(ref, '(not pinned)')}` (`{ref}`)."
+            + (f" Its sources: {', '.join(e['sources'])}." if e["sources"] else "")
+            + (f" Related: {', '.join(e['related'])}." if e["related"] else ""))
+    return "\n".join(lines)
+
+
+def eval_contract_text(draft: dict, round_no: int) -> str:
+    example = {
+        "v": VERSION, "kind": EVAL_KIND, "draft": draft["id"], "round": round_no,
+        "outcome": "proposal",
+        "summary": "one or two public sentences: what you found",
+        "questions": [{"id": "q1", "question": "only if outcome is questions",
+                       "why": "what the answer changes"}],
+        "evaluations": [{
+            "entry": "one selected entry id",
+            "current": "its classification as given above",
+            "proposed": " | ".join(brain.CLASSIFICATIONS),
+            "reason": "one plain line of at most 300 characters: why, from the evidence",
+            "evidence": ["app:path/in/checkout.py", "work:tasks/done/12-x.md",
+                         "entry:<id>"],
+            "supersededBy": "only for Superseded: the replacing entry's id",
+            "invalidation": "only for Superseded with no replacement: the decision",
+            "explanation": "only for Historical: {\"entry\": \"<Current entry id>\"} "
+                           "or {\"pending\": true}",
+            "missing": "only for Unclassified: what evidence is missing, and how to "
+                       "get it",
+            "uncertainty": "what stays unknown or conflicting",
+            "signals": ["reassessment signals you saw — a card's stage, a PR — "
+                        "which are not proof"],
+        }],
+    }
+    return json.dumps(example, indent=2, ensure_ascii=False)
+
+
+def _launch_evaluate(draft: dict, *, continue_request: str) -> None:
+    """One evaluation round: the selected entries read again, the frozen
+    policy held, the bounded work-root selection pinned, then the same
+    launch every drafting round takes. Everything that can refuse does so
+    before the round is recorded or a process exists."""
+    round_no = len(draft["rounds"]) + 1
+    entries = _eval_entries(draft["selected"])
+    r = _eval_resolve(entries)
+    if r["blockers"]:
+        raise Refused(r["blockers"][0], 409, blockers=r["blockers"])
+    found, loaded, app, sel = r["found"], r["loaded"], r["app"], r["sel"]
+    if found.get("policyId") != (draft.get("frozen") or {}).get("policyId"):
+        raise Refused("the execution policy changed since this evaluation was approved "
+                      "— start a new evaluation from its preview; nothing was launched",
+                      409, code="policy-drift")
+    if r["approval"] != (draft.get("frozen") or {}).get("approval"):
+        raise Refused("what this evaluation would read or ride changed since it was "
+                      "approved (an entry, a source, the application's commit, the "
+                      "model, the template or the budget) — start a new evaluation from "
+                      "its preview; nothing was launched", 409, stale=True,
+                      code="approval-stale")
+    found.update({"task": f"brain:{draft['id']}", "stage": None,
+                  "requestId": profiles.request_id(INTENT, draft["id"]),
+                  "resolved": time.time()})
+    context = found.setdefault("context", [])
+    for n, s in enumerate(sel["sources"], 1):
+        context.append({
+            "name": f"brain-src-{n}", "source": s["ref"], "root": "work",
+            "required": True, "readable": True, "status": "resolved",
+            "sha256": s["sha256"], "bytes": s["bytes"],
+            "revision": f"sha:{s['sha256'][:12]}",
+            "contextId": profiles.context_id(f"brain-src-{n}", s["sha256"]),
+            "pinned": None, "path": s["path"], "why": None, "remedy": None,
+            "access": "read-only", "kind": "brain-input"})
+    profiles.pin(found, base=pin_dir())
+    pinned: dict[str, str] = {}
+    expected = {s["ref"]: s["sha256"] for s in sel["sources"]}
+    for item in context:
+        if item.get("kind") != "brain-input":
+            continue
+        if item.get("status") != "pinned" or \
+                item.get("pinnedSha256") != expected.get(item["source"]):
+            raise Refused(f"the source {item['source']} changed or could not be pinned "
+                          f"while the round was being prepared — nothing was launched; "
+                          f"try again", 409)
+        pinned[item["source"]] = item["pinned"]
+    bundle = Path(found["bundle"]["path"]).name if found.get("bundle") else None
+    found["readDeny"] = read_deny(bundle)
+    unsafe = deny_problems(found["readDeny"])
+    if unsafe:
+        raise Refused(_deny_refusal(unsafe), 409)
+    agent_id = f"brain-{draft['id']}-{round_no}-{secrets.token_hex(2)}"
+    conversation = _conversation_text(draft)
+    if round_no >= config.BRAIN_DRAFT_ROUNDS:
+        conversation += ("\n\nThis is the LAST round: you must answer with a proposal "
+                         "now, saying in `uncertainty` what stays open.")
+    fields = {
+        "draft": draft["id"], "round": str(round_no),
+        "rounds": str(config.BRAIN_DRAFT_ROUNDS),
+        "request": draft["text"], "conversation": conversation,
+        "entries": _eval_entries_text(entries, pinned),
+        "sources": _sources_text(sel["sources"], pinned),
+        "app": (f"`{app['root']}` at commit {(app['commit'] or 'unknown')[:12]}. Cite "
+                f"a file in it as `app:<path relative to it>`."),
+        "exclusions": ("Left out of the pinned sources: " + "; ".join(
+            f"`{x['ref']}` — {x['why']}" for x in sel["excluded"][:20])
+            + (f"; and {len(sel['excluded']) - 20} more" if len(sel["excluded"]) > 20
+               else "") + ".") if sel["excluded"] else "",
+        "contract": eval_contract_text(draft, round_no),
+        "guidance_read_only": config.prompt_guidance(checks=False),
+        "context": "",
+    }
+    prompt = templates.render(EVAL_TEMPLATE, loaded["text"], fields)
+    found["template"] = templates.identity(loaded)
+    _start_round(draft, round_no, continue_request, agent_id, found, prompt,
+                 Path(app["root"]), {
+                     "app": {"root": app["root"], "commit": app["commit"]},
+                     "entries": [{k: e[k] for k in ("id", "title", "classification",
+                                                    "revision", "override",
+                                                    "supersededBy")}
+                                 for e in entries],
+                     "sources": [{"ref": s["ref"], "sha256": s["sha256"],
+                                  **({"entry": s["entry"]} if s.get("entry") else {})}
+                                 for s in sel["sources"]],
+                     "excluded": len(sel["excluded"]),
+                     "policyId": found.get("policyId"),
+                     "template": templates.identity(loaded)},
+                 f"evaluating the classification of {len(entries)} Brain "
+                 f"entr{'y' if len(entries) == 1 else 'ies'} (round {round_no})")
+
+
+def _one_line(value: str) -> str:
+    """A reason as the Brain's history keeps it: one line, no markup."""
+    return _REASON_UNSAFE.sub("", " ".join(str(value).split()))
+
+
+def _eval_item(item, n: int, rnd: dict, chosen: dict, seen: set, reading: dict
+               ) -> tuple[dict | None, list[str]]:
+    """One entry's proposal, validated on its own: identity, classification,
+    the rule each classification is held to, and every citation bound."""
+    problems: list[str] = []
+    where = f"evaluations[{n}]"
+    if not isinstance(item, dict):
+        return None, [f"{where} is not an object"]
+    extra = sorted(set(item) - EVAL_ITEM_KEYS)
+    if extra:
+        problems.append(f"{where} has unknown field(s) {', '.join(extra[:6])}")
+    entry_id = item.get("entry")
+    if entry_id not in chosen:
+        return None, [f"{where} names {str(entry_id)[:70]!r}, which is not one of the "
+                      f"entries this evaluation was asked about — it cannot change "
+                      f"another entry"]
+    if entry_id in seen:
+        return None, [f"{where} evaluates {entry_id} a second time"]
+    seen.add(entry_id)
+    was = chosen[entry_id]
+    if item.get("current") != was["classification"]:
+        problems.append(f"{where} says {entry_id} is {str(item.get('current'))[:20]!r}; "
+                        f"it was {was['classification']} when this round read it")
+    proposed = item.get("proposed")
+    if proposed not in brain.CLASSIFICATIONS:
+        problems.append(f"{where}.proposed is one of {', '.join(brain.CLASSIFICATIONS)}")
+    reason = _clean(item.get("reason"), f"{where}.reason", problems,
+                    cap=EVAL_REASON_MAX)
+    uncertainty = _clean(item.get("uncertainty"), f"{where}.uncertainty", problems,
+                         cap=1200, required=False)
+    raw = item.get("evidence") or []
+    bindings: list[dict] = []
+    if not isinstance(raw, list) or len(raw) > MAX_EVIDENCE:
+        problems.append(f"{where}.evidence must be a list of at most {MAX_EVIDENCE}")
+        raw = []
+    for m, ref in enumerate(raw):
+        bound, why = _bind(ref, rnd)
+        if bound is None:
+            problems.append(f"{where}.evidence[{m}] {str(ref)[:80]!r}: {why}")
+            continue
+        if all(b["ref"] != bound["ref"] for b in bindings):
+            bindings.append(bound)
+    signals = []
+    raw_signals = item.get("signals") or []
+    if not isinstance(raw_signals, list) or len(raw_signals) > MAX_SIGNALS:
+        problems.append(f"{where}.signals must be a list of at most {MAX_SIGNALS}")
+        raw_signals = []
+    for m, s in enumerate(raw_signals):
+        kept = _clean(s, f"{where}.signals[{m}]", problems, cap=300)
+        if kept:
+            signals.append(kept)
+    by_id = {e["id"]: e for e in reading["entries"]}
+    out = {"entry": entry_id, "title": was.get("title"), "current": was["classification"],
+           "proposed": proposed, "reason": reason, "evidence": bindings,
+           "uncertainty": uncertainty, "signals": signals,
+           "revision": was["revision"], "override": was.get("override"),
+           "supersededBy": None, "invalidation": None, "explanation": None,
+           "missing": None}
+    for key in ("supersededBy", "invalidation", "explanation", "missing"):
+        allowed = {"supersededBy": "Superseded", "invalidation": "Superseded",
+                   "explanation": "Historical", "missing": "Unclassified"}[key]
+        if item.get(key) not in (None, "", {}) and proposed != allowed:
+            problems.append(f"{where}.{key} belongs to a {allowed} proposal only")
+    change = proposed != was["classification"]
+    if change and not bindings:
+        problems.append(f"{where} proposes {proposed} for {entry_id} and cites no "
+                        f"evidence bench could bind")
+    if proposed == "Historical" and change:
+        if not any(b["ref"].startswith("app:") for b in bindings):
+            problems.append(f"{where} proposes Historical without evidence in the code: a "
+                            f"card's stage, a card edit or a pull request is a "
+                            f"reassessment signal, never proof that the work was "
+                            f"implemented")
+        expl = item.get("explanation")
+        if isinstance(expl, dict) and set(expl) <= {"entry"} and expl.get("entry"):
+            target = expl["entry"]
+            other = by_id.get(target) if isinstance(target, str) else None
+            if other is None or other.get("removed") is not None or target == entry_id:
+                problems.append(f"{where}.explanation names {str(target)[:70]!r}, which is "
+                                f"no live entry here; say {{\"pending\": true}} instead — "
+                                f"bench never links a page that does not exist")
+            elif other.get("classification") != "Current":
+                problems.append(f"{where}.explanation names {target}, which is "
+                                f"{other.get('classification')}, not the maintained "
+                                f"Current explanation")
+            else:
+                out["explanation"] = {"state": "linked", "entry": target,
+                                      "title": other.get("title")}
+        elif isinstance(expl, dict) and set(expl) == {"pending"} and expl["pending"] is True:
+            out["explanation"] = {"state": "pending"}
+        else:
+            problems.append(f"{where}.explanation names the maintained Current "
+                            f"explanation ({{\"entry\": id}}) or says it is pending "
+                            f"({{\"pending\": true}})")
+    if proposed == "Superseded" and change:
+        target = item.get("supersededBy")
+        invalidation = item.get("invalidation")
+        if target and invalidation:
+            problems.append(f"{where} names a replacement and an invalidation; one only")
+        elif target:
+            other = by_id.get(target) if isinstance(target, str) else None
+            if other is None or other.get("removed") is not None or target == entry_id:
+                problems.append(f"{where}.supersededBy names {str(target)[:70]!r}, which "
+                                f"is no live entry here")
+            else:
+                out["supersededBy"] = target
+        elif invalidation:
+            out["invalidation"] = _clean(invalidation, f"{where}.invalidation", problems,
+                                         cap=400)
+        else:
+            problems.append(f"{where} proposes Superseded without naming the replacing "
+                            f"entry or an explicit invalidation: age or completion is "
+                            f"not supersession")
+    if proposed == "Unclassified":
+        out["missing"] = _clean(item.get("missing"), f"{where}.missing", problems,
+                                cap=800)
+    if problems:
+        return None, problems
+    return out, []
+
+
+def validate_evaluate(draft: dict, rnd: dict, answer: dict) -> dict:
+    """Server-side: what an evaluation round's answer may become. Each
+    entry's proposal is validated on its own; those that pass are the
+    evaluation and the rest are listed as refused. Nothing is executed or
+    written."""
+    if answer["kind"] == "declined":
+        return {"status": "failed", "error": {
+            "code": "declined", "why": f"the Brain Agent declined: {answer['reason']}"}}
+    if answer["kind"] != "response":
+        return {"status": "failed", "error": {
+            "code": "no-response", "why": "the run ended without an answer in the "
+                                          "required shape; nothing was proposed"}}
+    raw = answer["raw"]
+    if len(raw.encode("utf-8")) > MAX_BLOCK:
+        return {"status": "failed", "error": {
+            "code": "oversized", "why": f"the answer is over {MAX_BLOCK // 1024} KiB"}}
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        return {"status": "failed", "error": {
+            "code": "malformed", "why": f"the answer is not JSON ({exc})"},
+            "raw": redact.scrub(raw[:MAX_RAW], "«redacted»")}
+    if not isinstance(doc, dict):
+        return {"status": "failed", "error": {"code": "malformed",
+                                              "why": "the answer is not a JSON object"}}
+    problems: list[str] = []
+    unknown = sorted(set(doc) - EVAL_TOP_KEYS)
+    if unknown:
+        problems.append(f"unknown field(s) {', '.join(unknown[:6])}")
+    if doc.get("v") != VERSION or doc.get("kind") != EVAL_KIND:
+        problems.append(f"the answer must say v {VERSION}, kind {EVAL_KIND}")
+    if doc.get("draft") != draft["id"] or doc.get("round") != rnd["n"]:
+        problems.append("the answer names another request or round than the one this "
+                        "run was launched for")
+    summary = _clean(doc.get("summary"), "summary", problems, required=False)
+    outcome = doc.get("outcome")
+    if outcome == "questions":
+        if rnd["n"] >= config.BRAIN_DRAFT_ROUNDS:
+            problems.append("the last round must propose, and the run asked questions")
+        kept = _questions(doc.get("questions"), problems)
+        if doc.get("evaluations") is not None:
+            problems.append("an answer asking questions carries no evaluations")
+        if problems:
+            return {"status": "failed", "error": {
+                "code": "invalid", "why": f"the answer was refused: {problems[0]}",
+                "problems": problems[:12]}}
+        return {"status": "questions", "questions": kept, "summary": summary}
+    if outcome != "proposal":
+        problems.append("outcome must be questions or proposal")
+    items = doc.get("evaluations")
+    if not isinstance(items, list) or not items or len(items) > MAX_EVAL_ENTRIES:
+        problems.append(f"evaluations must be a list of 1–{MAX_EVAL_ENTRIES}")
+    if problems:
+        return {"status": "failed", "error": {
+            "code": "invalid", "why": f"the answer was refused: {problems[0]}",
+            "problems": problems[:12]}}
+    chosen = {e["id"]: e for e in rnd.get("entries") or []}
+    reading = brain.reading()
+    seen: set[str] = set()
+    kept_items, refused = [], []
+    for n, item in enumerate(items):
+        good, why = _eval_item(item, n, rnd, chosen, seen, reading)
+        if good is not None:
+            kept_items.append(good)
+        else:
+            who = item.get("entry") if isinstance(item, dict) else None
+            refused.append({"entry": who if who in chosen else None,
+                            "problems": why[:8]})
+    if not kept_items:
+        return {"status": "failed", "error": {
+            "code": "invalid", "why": "no entry's proposal passed validation: "
+                                      f"{refused[0]['problems'][0]}",
+            "problems": [p for r in refused for p in r["problems"]][:12]}}
+    missing = [i for i in chosen if i not in {k["entry"] for k in kept_items}
+               and i not in {r["entry"] for r in refused}]
+    bindings: list[dict] = []
+    for k in kept_items:
+        for b in k["evidence"]:
+            if all(x["ref"] != b["ref"] for x in bindings):
+                bindings.append(b)
+    return {"status": "proposed", "summary": summary, "bindings": bindings,
+            "evaluation": {"items": kept_items, "refused": refused, "missing": missing,
+                           "partial": bool(refused or missing), "round": rnd["n"]}}
+
+
+def _eval_drifted(draft: dict) -> set[str]:
+    """The cited sources that no longer hold the bytes they were bound to."""
+    return {d["ref"] for d in drift(draft)}
+
+
+def _eval_explanation(item: dict, choice: dict, klass: str, by_id: dict
+                      ) -> tuple[dict | None, str | None]:
+    """The explanation the classification being applied carries, read now.
+    Only Historical has one. A person's explicit choice wins; else the
+    agent's, when it proposed Historical; else — a person correcting to
+    Historical without naming one — Current explanation pending. A linked
+    page that has gone or stopped being Current reads pending, never a
+    dangling link. Returns the explanation and, for a person's choice that
+    names no live Current entry, why it cannot be applied."""
+    if klass != "Historical":
+        return None, None
+    given = choice.get("explanation")
+    if given not in (None, "", {}):
+        if isinstance(given, dict) and set(given) == {"pending"} and given["pending"] is True:
+            return {"state": "pending"}, None
+        target = given.get("entry") if isinstance(given, dict) and \
+            set(given) == {"entry"} else None
+        other = by_id.get(target) if isinstance(target, str) else None
+        if other is None or other.get("removed") is not None or \
+                target == item["entry"] or other.get("classification") != "Current":
+            return {"state": "pending"}, (
+                f"the explanation {str(target)[:70]!r} is no live Current entry here; "
+                f"name one, or leave the explanation pending")
+        return {"state": "linked", "entry": target, "title": other.get("title")}, None
+    expl = item.get("explanation") if item.get("proposed") == "Historical" else None
+    if expl and expl.get("state") == "linked":
+        other = by_id.get(expl["entry"])
+        if other is None or other.get("removed") is not None or \
+                other.get("classification") != "Current":
+            return {"state": "pending", "was": expl["entry"]}, None
+        return dict(expl), None
+    return {"state": "pending"}, None
+
+
+def _eval_history_line(draft: dict, ev: dict, reason: str, corrected: bool,
+                       explanation: dict | None, evidence: list[dict]) -> str | None:
+    """The one classification history line Apply writes, budgeted: the
+    reason, the attribution and the explanation are always whole — None
+    when they cannot fit — and then as many whole evidence references as
+    there is room for, with how many were left out."""
+    said = (f"{reason} — evaluated by the Brain Agent ({draft['id']}, round "
+            f"{ev.get('round')})" + (", corrected and applied by a person"
+                                    if corrected else ", applied by a person"))
+    if explanation and explanation.get("state") == "linked":
+        said += f"; explained now by {explanation['entry']}"
+    elif explanation:
+        said += "; Current explanation pending"
+    said = _one_line(said)
+    if len(reason) > EVAL_REASON_MAX or len(said) > brainwrite.MAX_REASON:
+        return None
+    refs: list[str] = []
+    for b in evidence:
+        ref = _one_line(b["ref"])
+        if len(said) + len("; evidence: " + ", ".join(refs + [ref])) > brainwrite.MAX_REASON:
+            break
+        refs.append(ref)
+    if refs:
+        said += "; evidence: " + ", ".join(refs)
+    left = len(evidence) - len(refs)
+    if left and len(said) + len(f" (+{left} more)") <= brainwrite.MAX_REASON:
+        said += f" (+{left} more)"
+    return said
+
+
+def _eval_plan(draft: dict, given=None) -> dict:
+    """Everything Apply would do with these choices, read now: per entry,
+    the classification before and after, the person's corrections, the
+    evidence and its drift, the override and destination checks, the
+    explanation state; the batch Apply would write and the `preview` digest
+    Apply must name. A read."""
+    ev = draft.get("evaluation") or {}
+    if given is None:
+        given = []
+    if not isinstance(given, list):
+        raise Refused("choices are a list, one per entry")
+    choices: dict[str, dict] = {}
+    for c in given:
+        if not isinstance(c, dict) or set(c) - EVAL_CHOICE_KEYS or \
+                not isinstance(c.get("entry"), str):
+            raise Refused("each choice names its entry, whether it is selected and, "
+                          "optionally, a corrected classification, reason, replacement "
+                          "or invalidation — nothing else")
+        choices[c["entry"]] = c
+    reading = brain.reading()
+    by_id = {e["id"]: e for e in reading["entries"]}
+    moved = _eval_drifted(draft)
+    blockers: list[dict] = []
+    frozen = draft.get("frozen") or {}
+    policy = profiles.resolve(INTENT).get("policyId")
+    if policy != frozen.get("policyId"):
+        blockers.append({"code": "policy-drift", "why": (
+            "the execution policy changed since this evaluation ran; evaluate again")})
+    rows, batch = [], []
+    for item in ev.get("items") or []:
+        c = choices.get(item["entry"], {})
+        now = by_id.get(item["entry"])
+        klass = c.get("classification") or item["proposed"]
+        corrected = klass != item["proposed"] or bool(c.get("reason")) or any(
+            c.get(k) for k in ("supersededBy", "invalidation"))
+        reason = _one_line(c.get("reason") or item.get("reason") or "")
+        target = (c.get("supersededBy") if "supersededBy" in c else item.get("supersededBy"))
+        invalidation = (c.get("invalidation") if "invalidation" in c
+                        else item.get("invalidation"))
+        if klass != "Superseded":
+            target = invalidation = None
+        explanation, expl_problem = _eval_explanation(item, c, klass, by_id)
+        row = {"entry": item["entry"], "title": item.get("title"),
+               "current": item["current"], "proposed": item["proposed"],
+               "classification": klass, "reason": reason, "corrected": corrected,
+               "supersededBy": target, "invalidation": invalidation,
+               "explanation": explanation, "missing": item.get("missing"),
+               "uncertainty": item.get("uncertainty"), "signals": item.get("signals"),
+               "evidence": [dict(b, drifted=b["ref"] in moved) for b in item["evidence"]],
+               "override": None, "blocked": None}
+        said = _eval_history_line(draft, ev, reason, corrected, explanation,
+                                  item["evidence"])
+        if klass not in brain.CLASSIFICATIONS:
+            row["blocked"] = {"code": "invalid", "why": "the classification is one of "
+                              + ", ".join(brain.CLASSIFICATIONS)}
+        elif now is None or now.get("removed") is not None:
+            row["blocked"] = {"code": "gone", "why": f"{item['entry']} is no longer a "
+                              f"live entry here"}
+        elif now["revision"] != item["revision"]:
+            row["blocked"] = {"code": "destination-changed", "why": (
+                f"{item['entry']} changed since the evaluation read it (read "
+                f"{item['revision']}, now {now['revision']}); evaluate it again")}
+        elif now.get("override"):
+            row["override"] = now["override"]
+            row["blocked"] = {"code": "override", "why": (
+                f"{item['entry']} carries a manual override; an evaluation never reverses "
+                f"a person's decision — clear it on the entry's page to apply this")}
+        elif any(b["ref"] in moved for b in item["evidence"]):
+            row["blocked"] = {"code": "source-drift", "why": (
+                "a source this proposal cites changed since it was read; evaluate again")}
+        elif klass == now["classification"] and klass != "Superseded":
+            row["blocked"] = {"code": "no-change", "why": (
+                f"{item['entry']} is already {klass}; nothing would change")}
+        elif klass == "Superseded" and not (target or invalidation):
+            row["blocked"] = {"code": "needs-replacement", "why": (
+                "Superseded needs the replacing entry or an explicit invalidation")}
+        elif expl_problem:
+            row["blocked"] = {"code": "invalid-explanation", "why": expl_problem}
+        elif len(reason) < brainwrite.MIN_REASON:
+            row["blocked"] = {"code": "needs-reason", "why": "give the reason"}
+        elif said is None:
+            row["blocked"] = {"code": "reason-too-long", "why": (
+                f"the reason is {len(reason)} characters; keep it to {EVAL_REASON_MAX} "
+                f"so the history line keeps its attribution and explanation whole")}
+        default = (row["blocked"] is None and item["proposed"] != "Unclassified"
+                   and bool(item["evidence"]))
+        row["defaultSelected"] = default
+        row["selected"] = bool(c["selected"]) if "selected" in c else default
+        if row["selected"] and row["blocked"] is not None:
+            blockers.append(dict(row["blocked"], entry=item["entry"]))
+        if row["selected"] and row["blocked"] is None:
+            change = {"classification": klass, "reason": said}
+            if klass == "Superseded":
+                if target:
+                    change["supersededBy"] = target
+                else:
+                    change["invalidation"] = _one_line(invalidation)[:brainwrite.MAX_REASON]
+            batch.append({"id": item["entry"], "expected": item["revision"],
+                          "classify": change})
+        rows.append(row)
+    payload = {"label": f"evaluation {draft['id']}", "entries": batch}
+    if batch and not blockers:
+        try:
+            brainwrite.plan_batch(dict(payload), reading)
+        except brainwrite.Refused as exc:
+            blockers.append({"code": exc.extra.get("code") or "invalid", "why": str(exc),
+                             **({"entry": exc.extra["id"]} if exc.extra.get("id") else {})})
+    preview = brainwrite.digest({"rows": [{k: r[k] for k in (
+        "entry", "classification", "reason", "selected", "supersededBy", "invalidation",
+        "explanation")}
+        for r in rows], "batch": batch, "policy": policy,
+        "revisions": {r["entry"]: (by_id.get(r["entry"]) or {}).get("revision")
+                      for r in rows}})
+    return {"items": rows, "refused": ev.get("refused") or [],
+            "missing": ev.get("missing") or [], "blockers": blockers,
+            "ready": bool(batch) and not blockers,
+            "selected": len(batch), "preview": preview,
+            "batch": payload if batch else None,
+            "publication": {
+                "writes": [f"brain/{(by_id.get(b['id']) or {}).get('file', b['id'] + '.md')}"
+                           for b in batch],
+                "changes": "the Classification field, its supersession link and one "
+                           "attributed classification history line per entry",
+                "commit": ("one board: brain commit in the work state" if config.COMMIT_MOVES
+                           else "saved here; BOARD_COMMIT_MOVES is off, so not committed"),
+                "sync": ("published by sync" if config.SYNC else "not shared: BOARD_SYNC "
+                         "is off"),
+                "never": "no entry text, no card, no review report or verdict, no "
+                         "application file, no handbook prose"}}
+
+
+def evaluate_review(payload) -> dict:
+    """The review of an evaluation for the person's choices. A read with a
+    body: nothing is written."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    with LOCK:
+        draft = _get(payload.get("id"))
+        if draft.get("mode") != EVAL_MODE:
+            raise Refused("only an evaluation request is reviewed here")
+        if not draft.get("evaluation"):
+            raise Refused(f"there is no evaluation to review yet — the request is "
+                          f"{draft['status']}", 409)
+        plan = _eval_plan(draft, payload.get("choices"))
+        return {k: v for k, v in plan.items() if k != "batch"}
+
+
+def _reconcile_eval_apply(draft: dict) -> None:
+    key = draft.get("applyRequest")
+    op = None
+    if key:
+        try:
+            op = brainwrite.operation(key)
+        except brainwrite.Refused:
+            op = None
+    if op and op.get("saved"):
+        _eval_applied(draft, op)
+        return
+    if op is not None and op.get("status") in ("staging", "switching"):
+        return
+    draft["status"] = "proposed"
+    draft.pop("applyRequest", None)
+    draft.pop("applyBatch", None)
+    if op is not None and op.get("refused"):
+        draft["conflict"] = {"code": op.get("refused"), "why": op.get("why"), "at": _now()}
+    _save(draft)
+
+
+def _eval_applied(draft: dict, op: dict) -> None:
+    draft.pop("error", None)
+    draft.pop("conflict", None)
+    files = op.get("files") or []
+    changes = {b["id"]: b["classify"]["classification"]
+               for b in (draft.get("applyBatch") or {}).get("entries") or []}
+    draft.update(status="applied", applied={
+        "request": draft.get("applyRequest"), "at": _now(),
+        "entries": [f["id"] for f in files], "files": [f["file"] for f in files],
+        "classifications": changes})
+    draft.pop("applyBatch", None)
+    _say(draft, "you", "applied", f"applied {len(files)} classification(s) as one batch: "
+         + ", ".join(f"{k} → {v}" for k, v in changes.items()))
+    _save(draft)
+
+
+def evaluate_apply(payload: dict) -> dict:
+    """Apply the person's reviewed classifications: one all-or-none Brain
+    batch of classification-only items. Refused, with nothing written, when
+    the review the page shows is not what Apply would do now
+    (`preview-stale`), an entry changed (`destination-changed`), a cited
+    source moved (`source-drift`), the policy moved, an override holds, or
+    a link would be a loop. The same request identity again answers with
+    the first outcome."""
+    if not isinstance(payload, dict):
+        raise Refused("the request body must be a JSON object")
+    key = _request_key(payload)
+    with LOCK:
+        draft = _get(payload.get("id"))
+        if draft.get("mode") != EVAL_MODE:
+            raise Refused("only an evaluation is applied here")
+        if draft["status"] == "applied":
+            if (draft.get("applied") or {}).get("request") == key:
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+            raise Refused("this evaluation was already applied; evaluate again for new "
+                          "proposals", 409)
+        if draft["status"] == "applying":
+            if draft.get("applyRequest") != key:
+                raise Refused("this evaluation is being applied by another request; wait "
+                              "for its outcome", 409)
+            _reconcile_eval_apply(draft)
+            if draft["status"] == "applied":
+                return {"draft": public(draft), "already": True,
+                        "operation": brainwrite.operation(key)}
+            if draft["status"] == "applying":
+                try:
+                    op = brainwrite.write_batch(dict(draft["applyBatch"], request=key))
+                except brainwrite.Refused as exc:
+                    _reconcile_eval_apply(draft)
+                    raise Refused(str(exc), exc.status, **{
+                        k: v for k, v in exc.extra.items() if k != "current"})
+                _eval_applied(draft, op)
+                return {"draft": public(draft), "operation": op, "resumed": True}
+        if draft["status"] != "proposed" or not draft.get("evaluation"):
+            raise Refused(f"there is no evaluation to apply — the request is "
+                          f"{draft['status']}", 409)
+        if payload.get("round") != draft.get("proposalRound"):
+            raise Refused("the page shows an older evaluation than the newest one — "
+                          "refresh it; nothing was written", 409, stale=True,
+                          code="round-stale")
+        plan = _eval_plan(draft, payload.get("choices"))
+        if plan["preview"] != payload.get("preview"):
+            raise Refused("what Apply would write is not what this page reviewed (an "
+                          "entry, a source or your choices changed) — review it again; "
+                          "nothing was written", 409, stale=True, code="preview-stale",
+                          review={k: v for k, v in plan.items() if k != "batch"})
+        if plan["blockers"]:
+            first = plan["blockers"][0]
+            raise Refused(f"{first['why']} — nothing was written", 409,
+                          code=first["code"], blockers=plan["blockers"],
+                          stale=first["code"] in ("source-drift", "destination-changed",
+                                                  "policy-drift"))
+        if not plan["batch"]:
+            raise Refused("select at least one classification to apply; nothing was "
+                          "written")
+        draft["applyRequest"] = key
+        draft["applyBatch"] = plan["batch"]
+        draft["status"] = "applying"
+        _save(draft)
+        try:
+            op = brainwrite.write_batch(dict(plan["batch"], request=key))
+        except brainwrite.Refused as exc:
+            draft["status"] = "proposed"
+            draft.pop("applyRequest", None)
+            draft.pop("applyBatch", None)
+            draft["conflict"] = {"code": exc.extra.get("code") or "destination-changed",
+                                 "why": str(exc), "at": _now()}
+            _save(draft)
+            raise Refused(str(exc), exc.status, **{k: v for k, v in exc.extra.items()
+                                                    if k != "current"})
+        except Exception:
+            _reconcile_eval_apply(draft)
+            raise
+        _eval_applied(draft, op)
+        out = {"draft": public(draft), "operation": op}
+    state.broadcast({"type": "brain"})
+    return out
+
+
+def _eval_progress(draft: dict, rnd: dict, status: str) -> dict:
+    n = len(draft.get("selected") or [])
+    done = [f"{n} entr{'y' if n == 1 else 'ies'} selected and approved (approval "
+            f"{(draft.get('frozen') or {}).get('approval', '')[:12]})"]
+    if rnd:
+        done.append(f"Round {rnd['n']}: {len(rnd.get('sources') or [])} work-root sources "
+                    f"pinned, application at "
+                    f"{((rnd.get('app') or {}).get('commit') or 'unknown')[:12]}")
+        if rnd.get("outcome") != "unknown":
+            done.append(f"{rnd.get('name') or 'The Brain Agent'} launched"
+                        + (f" on {rnd['model']}" if rnd.get("model") else
+                           " on the harness default model"))
+    ev = draft.get("evaluation") or {}
+    doing, remaining, blocked = None, [], None
+    if status == "running":
+        doing = "Reading the entries and their evidence"
+        remaining = ["A validated proposal per entry", "Your review", "Apply"]
+    elif status == "questions":
+        done.append(f"Asked {len(rnd.get('questions') or [])} question(s)")
+        doing = "Waiting for your answers"
+        remaining = ["Answer and Continue", "Proposals", "Your review", "Apply"]
+        blocked = "needs your answers"
+    elif status == "proposed":
+        done.append(f"{len(ev.get('items') or [])} proposal(s) validated (round "
+                    f"{draft.get('proposalRound')})")
+        doing = "Waiting for your review"
+        remaining = ["Correct and select", "Apply or Discard"]
+        if draft.get("conflict"):
+            blocked = f"Apply was refused: {draft['conflict'].get('code')}"
+        elif draft.get("error"):
+            blocked = (f"the last round failed; the round {draft.get('proposalRound')} "
+                       f"proposals still stand")
+    elif status == "applying":
+        doing = "Writing the classifications"
+    elif status == "applied":
+        done.append("Applied")
+    elif status == "failed":
+        blocked = (draft.get("error") or {}).get("why")
+        remaining = ["Continue to try again, or Discard"]
+    tool = _tool_activity(rnd) if status == "running" else None
+    last = (draft.get("conversation") or [{}])[-1]
+    return {"done": done, "doing": doing, "remaining": remaining, "blocked": blocked,
+            "lastUpdate": {"at": last.get("at"), "text": last.get("text")},
+            "toolActivity": tool,
+            "deadline": rnd.get("deadline") if status == "running" else None}
+
+
+def _eval_public(draft: dict) -> dict:
+    return {"selected": draft.get("selected"), "frozen": draft.get("frozen"),
+            "evaluation": draft.get("evaluation"),
+            "applies": ("only through your review: the classifications you select, "
+                        "corrected as you choose, written as one all-or-none Brain "
+                        "batch that changes classification metadata only"),
+            "applyRequest": draft.get("applyRequest") if draft.get("status") == "applying"
+            else None}
+
+
 # ── reading ────────────────────────────────────────────────────────────
 
 
@@ -3098,6 +4114,8 @@ def _progress(draft: dict) -> dict:
     done = ["Request saved"]
     if draft.get("mode") == SEED_MODE:
         return _seed_progress(draft, rnd, status)
+    if draft.get("mode") == EVAL_MODE:
+        return _eval_progress(draft, rnd, status)
     if rnd:
         done.append(f"Round {rnd['n']}: {len(rnd.get('sources') or [])} work-root "
                     f"sources pinned, application at "
@@ -3265,6 +4283,9 @@ def public(draft: dict) -> dict:
         out["seed"] = _seed_public(draft)
         out.pop("proposal", None)
         out.pop("bindings", None)
+    if draft.get("mode") == EVAL_MODE:
+        out["evaluate"] = _eval_public(draft)
+        out.pop("proposal", None)
     out["local"] = ("drafts are private to this board until applied; the applied "
                     "entry is the shared record")
     return out
@@ -3277,10 +4298,13 @@ def listing() -> dict:
         _load()
         _sweep_expired()
         found =sorted(DRAFTS.values(), key=lambda d: d.get("created") or 0, reverse=True)
-        entries = [d for d in found if d.get("mode") != SEED_MODE]
+        entries = [d for d in found if d.get("mode") not in (SEED_MODE, EVAL_MODE)]
         seeds = [d for d in found if d.get("mode") == SEED_MODE]
+        evals = [d for d in found if d.get("mode") == EVAL_MODE]
         return {"drafts": [public(d) for d in entries[:50]],
                 "open": sum(1 for d in entries if d.get("status") not in CLOSED),
+                "evaluations": [public(d) for d in evals[:20]],
+                "evaluationsOpen": sum(1 for d in evals if d.get("status") not in CLOSED),
                 "seeds": [public(d) for d in seeds[:20]],
                 "seedsOpen": sum(1 for d in seeds if d.get("status") not in CLOSED)}
 
