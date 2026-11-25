@@ -3174,10 +3174,12 @@ def _eval_entries(ids) -> list[dict]:
     if len(set(map(str, ids))) != len(ids):
         raise Refused("each entry is selected once", field="entries")
     out = []
+    listed = {e["id"]: e for e in brain.reading()["entries"]}
     for entry_id in ids:
         if not isinstance(entry_id, str) or not brain.ID_RE.match(entry_id):
             raise Refused(f"{str(entry_id)[:70]!r} is not a Brain entry id", field="entries")
         found = brain.entry(entry_id)
+        raw = listed.get(entry_id) or {}
         if found.get("state") == "tombstone":
             raise Refused(f"{entry_id} is retired; a tombstone is not evaluated", 409)
         if found.get("state") != "entry":
@@ -3188,10 +3190,12 @@ def _eval_entries(ids) -> list[dict]:
                     "kind": found.get("entryKind") or found.get("kind"),
                     "classification": found.get("classification"),
                     "revision": found.get("revision"), "file": found.get("file"),
-                    "override": found.get("override"),
-                    "supersededBy": (found.get("supersededBy") or [None])[0],
-                    "sources": list(found.get("sources") or [])[:brain.MAX_LIST_ITEMS],
-                    "related": list(found.get("related") or [])[:brain.MAX_LIST_ITEMS]})
+                    "override": raw.get("override") or None,
+                    "supersededBy": (raw.get("supersededBy") or [None])[0],
+                    "sources": [str(s) for s in raw.get("sources") or []
+                                ][:brain.MAX_LIST_ITEMS],
+                    "related": [str(s) for s in raw.get("related") or []
+                                ][:brain.MAX_LIST_ITEMS]})
     return out
 
 
