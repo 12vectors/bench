@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -7113,7 +7113,7 @@ so a route cannot skip it by forgetting to ask:
 | --- | --- | --- |
 | `read` | every GET | nothing; reading changes nothing |
 | `browser-mutation` | every person-operated POST | a JSON object body within a size cap; `Sec-Fetch-Site` same-origin or none when sent; an `Origin`, when sent, that is this board on the port it actually serves or exactly one of `BOARD_ALLOWED_ORIGINS`; `Origin: null` refused; and no run named by a request that says it is a browser's |
-| `policy-mutation` | the 36 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
+| `policy-mutation` | the 37 routes that change or exercise policy, or run the project's programs | `browser-mutation` plus `X-Bench-Settings: 1` |
 | `run-authenticated` | `/api/progress`, `/api/verify/details` | the same door, then the run's own token |
 | `event-ingest` | `/api/events` | the same door; a run the event names is proved by that run's token (next section) |
 
