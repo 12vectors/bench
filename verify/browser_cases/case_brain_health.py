@@ -214,3 +214,167 @@ class Health(unittest.TestCase):
             self.assertLessEqual(wide[0], wide[1] + 1, f"the Brain overflows {wide}")
             self.assertLessEqual(wide[2], wide[3] + 1, f"the page overflows {wide}")
             shot(f"brain-health-narrow-{'night' if dark else 'day'}")
+
+
+def journey_reply() -> str:
+    """The evaluation the stub vendor answers once the work has landed: the
+    investigation is Historical, explained by the existing guide, and that
+    same guide gains a section — no new page."""
+    doc = {"v": 1, "kind": "bench-brain-evaluation", "draft": "__DRAFT__", "round": 0,
+           "outcome": "proposal", "summary": "The CSV investigation was implemented.",
+           "evaluations": [
+               {"entry": "e-csv-study", "current": "Current", "proposed": "Historical",
+                "reason": "the semicolon export is implemented in src/export.py",
+                "evidence": ["app:src/export.py"], "explanation": {"entry": "e-exports"},
+                "maintain": {
+                    "entry": "e-exports", "operation": "append", "section": "CSV exports",
+                    "scope": "factual",
+                    "body": "CSV files use a semicolon delimiter.",
+                    "claims": [{"claim": "the export writes semicolons",
+                                "status": "implemented", "evidence": ["app:src/export.py"]},
+                               {"claim": "whether customers have it", "status": "unknown"}],
+                    "uncovered": ["the byte-order mark is not described"]}},
+               {"entry": "e-exports", "current": "Current", "proposed": "Current",
+                "reason": "the export module is where the code says it is",
+                "evidence": ["app:src/export.py"]}]}
+    return ("Working.\n<<<BRAIN\n" + json.dumps(doc, indent=1)
+            .replace('"round": 0', '"round": __ROUND__') + "\nBRAIN>>>\n")
+
+
+REVIEW = ("\n---\n\n## PR review at 0123456789ab — 2026-11-20 10:00 (Hazel)\n\n"
+          "The semicolon export is implemented in src/export.py.\n\nPR REVIEW: APPROVE\n")
+
+
+class Journey(Health):
+    """The combined journey through the page (task 200 review): a baseline
+    Brain written before reconciliation → an authorized disposable code
+    change and its card's review, read in the Brain → reconciliation under
+    the policy reassesses the investigation as Historical and updates the
+    *same* explanation → the page shows the stable ids, the immutable review
+    and the policy-attributed trail → a reversion reads as affected work.
+    The stub vendor answers the evaluation; everything else is the board's
+    own path."""
+
+    @classmethod
+    def setUpClass(cls):
+        shared = S["backend"]
+        base = shared.base.parent / "brain-health-journey"
+        shutil.rmtree(base, ignore_errors=True)
+        cls.backend = bv.Backend(shared.tool, base, dict(shared.env), shared.python)
+        cls.backend.env["BOARD_ORCHESTRATE_INTERVAL"] = "1"
+        app, work = cls.backend.app, cls.backend.work
+        (app / "src").mkdir(exist_ok=True)
+        (app / "src" / "export.py").write_text('DELIMITER = ","\n')
+        git(app, "add", "-A")
+        git(app, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "app")
+        (work / "brain").mkdir(exist_ok=True)
+        for eid, text in ENTRIES.items():
+            (work / "brain" / f"{eid}.md").write_text(text)
+        (work / "tasks" / "done").mkdir(parents=True, exist_ok=True)
+        (work / "tasks" / "done" / "12-export-as-csv.md").write_text(CARD)
+        git(work, "add", "-A")
+        git(work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "brain")
+        cls.backend.brain_reply.write_text(journey_reply(), encoding="utf-8")
+        cls.backend.start()
+        cls.origin = S["browser"].origin
+
+    # the inherited tests run on Health's own backend; this class runs only
+    # the journey
+    test_1_a_passive_read_says_what_is_not_complete = None
+    test_2_repair_is_previewed_armed_and_queues = None
+    test_3_narrow_fits = None
+
+    def commit_app(self, text: str, message: str) -> None:
+        app = self.backend.app
+        (app / "src" / "export.py").write_text(text)
+        git(app, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit",
+            "-qam", message)
+
+    def test_the_combined_journey_through_the_page(self):
+        b = S["browser"]
+        b.origin = self.backend.url
+        b.viewport(1280, 900)
+        names = sorted(self.files())
+        # 1. the baseline: entries written before reconciliation are never
+        #    reconciled, so the Brain is not complete
+        self.open_health(b)
+        self.theme(b, False)
+        self.wait_text(b, ["Investigating CSV exports", "Never reconciled against its inputs"])
+        # 2. the authorized disposable change, and its card's review
+        self.commit_app('DELIMITER = ";"\n', "semicolons")
+        card = self.backend.work / "tasks" / "done" / "12-export-as-csv.md"
+        card.write_text(card.read_text() + REVIEW)
+        card_bytes = card.read_bytes()
+        # 3. the review, read in the Brain at its own address
+        code, raw = self.backend.get("/api/brain/reviews")
+        self.assertEqual(code, 200, raw[:300])
+        listed = json.loads(raw).get("reviews") or {}
+        if isinstance(listed, dict):
+            listed = listed.get("reviews") or []
+        review = next(r for r in listed if str(r.get("card")) == "12")
+        b.goto(review["address"])
+        self.wait_text(b, ["The semicolon export is implemented"], timeout=20)
+        shot("brain-journey-review-day")
+        # 4. reconciliation on, with apply and the explanation update, on this
+        #    installation
+        code, raw = self.backend.get("/api/orchestration")
+        orch = json.loads(raw)
+        orch = orch.get("orchestration", orch)
+        if orch["installation"].get("role") != "designated-here":
+            code, raw = self.backend.post("/api/orchestration/installation", {
+                "action": "designate", "expected": orch["installation"]["revision"]},
+                headers=POLICY)
+            self.assertEqual(code, 200, raw[:400])
+        code, raw = self.backend.get("/api/brain/reconcile")
+        rev = json.loads(raw)["reconcile"]["policy"]["revision"]
+        code, raw = self.backend.post("/api/brain/reconcile/policy", {
+            "expected": rev, "enabled": True, "evaluate": True, "apply": True,
+            "maintain": True, "dailyLaunches": 8}, headers=POLICY)
+        self.assertEqual(code, 200, raw[:400])
+        rows = {}
+        for _ in range(150):
+            rows = {r["entry"]: r for r in json.loads(self.backend.get(
+                "/api/brain/reconcile")[1])["reconcile"]["entries"]}
+            if (rows.get("e-csv-study") or {}).get("stored") == "applied":
+                break
+            b.wait("false", 1)
+        else:
+            raise bv.CheckFailed(f"the policy never applied the evaluation: {rows}")
+        # 5. stable ids, the same explanation updated, the immutable review,
+        #    the policy-attributed trail — read in the page
+        self.assertEqual(sorted(self.files()), names, "a new page was written")
+        self.assertEqual(card.read_bytes(), card_bytes, "the review on the card changed")
+        self.open_health(b)
+        self.wait_text(b, ["Transition history", "(policy)", "explained now by e-exports"],
+                       timeout=30)
+        self.assertNotIn("Historical with no Current explanation", self.text(b))
+        shot("brain-journey-health-day")
+        self.theme(b, True)
+        shot("brain-journey-health-night")
+        self.theme(b, False)
+        b.goto("/brain/e/e-exports")
+        self.wait_text(b, ["How exports are written", "CSV exports",
+                           "CSV files use a semicolon delimiter."], timeout=20)
+        b.goto("/brain/e/e-csv-study")
+        self.wait_text(b, ["Investigating CSV exports", "Historical"], timeout=20)
+        shot("brain-journey-entry-day")
+        brain = self.backend.work / "brain"
+        exports = (brain / "e-exports.md").read_text()
+        self.assertIn("_Maintained from evidence", exports)
+        self.assertIn("**Classification:** Current", exports)
+        csv = (brain / "e-csv-study.md").read_text()
+        self.assertIn("**Id:** e-csv-study", csv)
+        self.assertIn("**Classification:** Historical", csv)
+        self.assertIn("· Current · ronald — written", csv, "the history was rewritten")
+        # 6. a reversion of the code is affected work, said in the page
+        self.commit_app('DELIMITER = ","\n', "revert")
+        self.open_health(b)
+        self.wait_text(b, ["Code changed since it was evaluated", "Repair"], timeout=30)
+        b.viewport(390, 844)
+        for dark in (False, True):
+            self.theme(b, dark)
+            wide = b.eval("(() => { const s = document.querySelector('#bshell');"
+                          " return [s.scrollWidth, s.clientWidth]; })()")
+            self.assertLessEqual(wide[0], wide[1] + 1, f"the Brain overflows {wide}")
+            shot(f"brain-journey-reverted-narrow-{'night' if dark else 'day'}")
+        self.theme(b, False)
