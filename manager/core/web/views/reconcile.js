@@ -20,7 +20,7 @@
 import { fetch, post } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
 
-const POLICY_HEADERS = { 'Content-Type': 'application/json', 'X-Bench-Settings': '1' };
+const SETTINGS_HEADERS = { 'Content-Type': 'application/json', 'X-Bench-Settings': '1' };
 const TONE = { queued: 'b-note', running: 'rc-work', waiting: 'rc-you', review: 'rc-you',
   applied: 'rc-calm', current: 'rc-calm', stale: 'rc-warn', 'sync-pending': 'rc-warn',
   failed: 'rc-bad', blocked: 'rc-bad', cancelled: 'b-note', held: 'b-note', unqueued: 'b-note' };
@@ -61,7 +61,7 @@ async function setPolicy(change) {
   repaint(true);
   let res;
   try {
-    res = await fetch('/api/brain/reconcile/policy', { method: 'POST', headers: POLICY_HEADERS,
+    res = await fetch('/api/brain/reconcile/policy', { method: 'POST', headers: SETTINGS_HEADERS,
       body: JSON.stringify({ expected: p.revision, ...change }) });
   } catch (e) { res = null; }
   rc.acting = false;
