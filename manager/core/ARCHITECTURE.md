@@ -187,6 +187,17 @@ the same batch with classification-only items (`classify`), planned by
 `brainwrite`'s own Classify plan, refusing an entry with a manual
 override, and checking the batch's supersession links as a whole.
 
+`brainreconcile` (task 197) sits beside `recovery` (L29), directly above
+`braindraft`: the queue in front of an evaluation. It reads the Brain's
+index (`brain`), the cards' revisions (`taskfiles`) and the execution
+owner (`execowner`), launches `braindraft.start_evaluate` under a request
+identity it journalled first (`records`, durably), and — only where its
+own off-by-default policy grants the apply authority — applies through
+`braindraft.evaluate_auto_apply`, the same batch a person's Apply takes,
+reading `brainwrite.operation` for the receipt. It has no writer of its
+own: the one writer of an entry stays `brainwrite`. `routes` and `board`
+(its beat) import it.
+
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
 confirmed stack actions a reading offers — **Retarget onto <target>**
@@ -549,6 +560,7 @@ neither.
 | report filing operations, the Brain's review index (task 169) | `reportfiling` (`agents` decides when to file) | `reportfiling.LOCK`, interprocess | yes |
 | orchestrator reasoning jobs, facts documents, retained responses (task 139) | `reasoning` | `reasoning.LOCK` | no |
 | Brain drafting requests: conversation, rounds, validated proposal, source bindings (task 175) | `braindraft` (the entry itself is `brainwrite`'s) | `braindraft.LOCK` | no |
+| Brain reconciliation policy (machine-local) and its queue: entries, launch intents and receipts, the daily launch count (task 197) | `brainreconcile` (it launches `braindraft`'s evaluation; the entries are `brainwrite`'s) | `brainreconcile.LOCK`; only the designated execution installation holding its lock ticks; the policy is held to the revision a person read | yes |
 | drive record, scrubbed drive log | `drive` | the one drive | no |
 | preview configuration and records, scrubbed logs | `previews` | `previews.LOCK` | no |
 | session identity | `state` | per session | no |

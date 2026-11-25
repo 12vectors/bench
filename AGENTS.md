@@ -454,6 +454,13 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   mode (task 196) proposes classifications for selected entries, applied
   as a batch of classification-only items (see "Evaluating
   classifications with evidence")
+- `brainreconcile.py` — keeping Brain classifications reconciled with the
+  work (task 197): the off-by-default policy and its two authorities
+  (evaluate, apply), the durable queue an entry joins when a card it cites
+  changes, on enablement, a Rebuild or a Refresh sources, and the bounded
+  launch of `braindraft`'s own evaluation and its policy-attributed Apply.
+  Only the designated execution installation runs it. Beside `recovery`,
+  above `braindraft` (see "Reconciling classifications from work events")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -1544,8 +1551,10 @@ section and applying what a person chooses as one batch (task 194).
 **Evaluate classifications**, a panel on the same page, asks the Brain
 Agent to propose classifications for entries a person selects, with
 their evidence, and a person applies what they choose (task 196,
-"Evaluating classifications with evidence"). Event-driven classification
-is a later card, and nothing on the page offers it.
+"Evaluating classifications with evidence"). **Automatic
+classification**, below it, keeps classifications reconciled with the
+work once a person turns it on (task 197, "Reconciling classifications
+from work events"); off, it says *Not configured* and does nothing.
 
 ### The page's script: modules under a policy
 
@@ -1883,9 +1892,12 @@ applying the sections they choose as one all-or-none batch (task 194,
 "Reviewing and applying a seed draft"). Classifications can be
 evaluated on request: a person selects entries, the Brain Agent proposes
 with evidence, and a person's reviewed Apply writes only classification
-metadata (task 196, "Evaluating classifications with evidence"). What it
-does not do yet, said so nobody looks for it: classify by itself on a
-card's update. A run is given no
+metadata (task 196, "Evaluating classifications with evidence"), and —
+only once a person turns it on — the same evaluation is queued when a
+card an entry cites changes, with applying a separate authority (task
+197, "Reconciling classifications from work events"). What it does not do
+yet, said so nobody looks for it: write or maintain an entry's prose
+(phase 6). A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2822,10 +2834,10 @@ Apply and at start-up. **Saved**, **Committed** and **Shared** are said
 apart afterwards, with **Retry commit** and **Push now** / **Retry
 push**, exactly as for a person's own write.
 
-**Not in this version:** classifying on a card's update, rebuilding every
-entry's classification, writing or repairing handbook prose, and
+**Not in this version:** writing or repairing handbook prose, and
 classifying review projections (a review's classification record stays a
-person's, under `brain/reviews/`).
+person's, under `brain/reviews/`). Classifying on a card's update and
+rebuilding every entry's classification are the next section's.
 
 **What is proved, and what is not.** `tests/test_brainevaluate.py` drives
 the lifecycle through the Claude adapter's real `run` against a stub
@@ -2842,6 +2854,115 @@ drives the page by pointer and keyboard at 1280 and 390 pixels in both
 themes, and shows a refused harness, a cancelled round, a round cut by a
 restart and its **Try again**. Whether a real model evaluates well is a separately approved,
 billable run nothing starts by itself.
+
+### Reconciling classifications from work events
+
+Evaluate answers *is this still classified right?* when a person asks.
+**Automatic classification** (task 197, `brainreconcile.py`), a panel on
+the Brain's list below it, asks the same question when the work moves —
+and only once a person has turned it on. It is a queue in front of
+Evaluate and nothing else: the same `start_evaluate`, the same read-only
+round, the same validation and the same all-or-none writer. It has no
+prompt, agent stack or writer of its own.
+
+**Off until turned on, and two authorities.** The policy is
+`manager/local/brain-reconcile.json`, machine-local. Absent, the panel
+says *Not configured* and a tick reads that one path and returns: a fresh
+install and an upgrade queue, launch and write nothing. A person changes
+it in the panel, armed then fired (`POST /api/brain/reconcile/policy`,
+`{expected, enabled?, evaluate?, apply?, dailyLaunches?, retries?,
+batch?}`, behind the policy door), bound to the revision the page read;
+each change is a history line in the file with who made it. It grants two
+things, shown apart:
+
+| authority | lets the queue | a proposal then |
+| --- | --- | --- |
+| **evaluate** | launch read-only evaluations of entries whose inputs moved | waits for a person's review in Evaluate (**Review in Evaluate**) |
+| **apply** (needs evaluate) | apply the proposals bench selects by default — bound evidence, a changed classification, nothing blocking | is written under the policy; each history line says *applied under the Brain reconciliation policy*. Never a correction, never Unclassified, never an entry with a manual override |
+
+Both are read from disk again immediately before every launch and every
+apply. Turning reconciliation off, or revoking apply, while a round runs
+lets that round finish and leaves its proposals for a person: nothing is
+written late. Only the designated execution installation holding its
+lock runs the queue (see "Operating agreements, scopes and one
+installation"); a replica reads it and never launches or writes, and the
+panel says which this board is.
+
+**What queues an entry.** Its trigger inputs: each card its `**Source:**`
+cites (`#12`, or a review on one), with the card's text revision and
+stage, and the application commit a person last refreshed it at.
+
+| reason | when |
+| --- | --- |
+| `initial` | the first pass after turning it on, once per entry the queue has never seen |
+| `card-event` | a card it cites changed, moved or left the board |
+| `source-refresh` | a person's **Refresh sources** bound the application's current commit |
+| `rebuild` | a person's **Rebuild** asked for every eligible entry again |
+| `retry`, `stale-result`, `override-cleared` | a bounded retry, a result that went stale, an override a person cleared |
+
+Changes before an entry launches coalesce: it keeps its place in the
+queue with the newest inputs and every card that changed. The key is a
+reading of the inputs, not a list of events, so repeated, reordered or
+replayed events cannot launch twice. **Code is not a card event.** An
+entry evaluated at one application commit reads *Code changed since
+evaluated* while the checkout has moved on; it is never called fresh,
+and only **Refresh sources** queues it. A card's stage alone never
+classifies — the evaluation's rules say so. An entry with a manual
+override reads *Held* and is never queued; an Apply is held to the
+entry's own revision, so a person's edit since makes it `stale`.
+
+**Bounded, and never twice on the same inputs.** One evaluation in flight
+at a time, `batch` entries each (4; at most 8), inputs still for
+`SETTLE` seconds first (60; a person's Rebuild, Refresh or Retry skips
+it), at most `dailyLaunches` launches in any 24 hours (4; counted from
+the intent, so a crash spends one rather than refunding it) and `retries`
+retries of a failed round with backoff (2). An unchanged input key is
+never launched again whatever came of it; a refusal, a failure past its
+retries and a cancellation wait for a person's **Retry**. Nothing is
+stopped for being quiet.
+
+**Each entry's state**, in words, with why: *Not yet reconciled*,
+*Queued* (with its place), *Evaluating*, *Waiting for your answer* (the
+agent asked), *Waiting for your review*, *Applied*, *Applied; sync
+pending* (the Brain writer's push state, read now), *Up to date*,
+*Stale* (its inputs moved since), *Failed*, *Blocked*, *Cancelled*,
+*Held by a manual override* — beside the cards it cites with their
+revisions, the application commit it was evaluated at against the
+checkout now, its explanation (*Current explanation pending* where no
+Current entry explains it; nothing is written for it — that is phase 6)
+and its attempts.
+
+**Durable, and reconciled before anything reruns.** The queue is
+machine-local, `manager/local/state/brain/reconcile.json`. Each launch's
+intent is written durably before `start_evaluate`, under a request
+identity derived from the batch; a board that stopped between the two
+finds the evaluation by that identity, or records that nothing launched
+and queues the entries again. A board restart closes a running round as
+failed (#196's own recovery), which is a bounded retry here. A result
+whose inputs moved while it ran is `stale-result`: never applied, the
+entry queued again. The automatic Apply's request identity is derived
+from the evaluation and round, so a lost reply is answered from the
+Brain's journal, never written twice. A remote conflict is the Brain
+writer's, said as *sync pending* with **Push now** / **Retry push**.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/reconcile` | the policy and what it grants, the owner, the budget, every entry's state with its inputs and receipts; a read |
+| `POST /api/brain/reconcile/policy` | a person's change of the policy (policy door) |
+| `POST /api/brain/reconcile/action` | `{action: rebuild \| refresh \| retry \| cancel, request, entries?}` |
+
+**What is proved, and what is not.** `tests/test_brainreconcile.py`
+drives it through the Claude adapter's real `run` against a stub vendor
+on #175's split fixture: off by default, a stale or invalid policy, a
+replica, initial reconciliation waiting for review, a card event queuing
+only what cites it and coalescing, code drift and a refresh, rebuild,
+automatic apply with its attribution and a lost reply, a stale result, a
+revoked or disabled policy fencing a late write, an override held, sync
+pending, the daily budget, bounded retries, cancellation, and a crash
+before and after the launch. `verify/browser_cases/case_brain_reconcile.py`
+drives the panel by pointer and keyboard at 1280 and 390 pixels in both
+themes. Turning it on for a real project, and whether a real model
+evaluates well, are separate, authorized acts.
 
 ### Drafting with the Brain Agent
 
