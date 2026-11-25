@@ -479,6 +479,10 @@ def _launch(st: dict, now: float) -> str | None:
                 f"waiting: {len(used)} of {policy['dailyLaunches']} launches in the last "
                 f"24 hours are spent; it launches when one frees"))
         return None
+    for eid in queued:
+        # a launch is free again: an earlier "budget spent" is no longer why
+        if st["entries"][eid].get("code") == "budget-exhausted":
+            st["entries"][eid].update(code=None, why=None)
     batch = ready[:policy["batch"]]
     keys = {eid: st["entries"][eid]["key"] for eid in batch}
     attempt = max(st["entries"][eid].get("attempts") or 0 for eid in batch)
