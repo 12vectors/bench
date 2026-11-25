@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 156090,
-   "sha256": "92371883e4df426bb01d3c17e45335b722d4566b1f6f9919811352952ff01e8a",
+   "bytes": 156550,
+   "sha256": "26d10a2cd8a0c508f65a92622db21aac299567f462b10ff4f265555459cee9f2",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -276,8 +276,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 159632,
-   "sha256": "ea960efc881500f3cd0c3967cd80d53b86615d06f6169f2478b618233ed1ba13",
+   "bytes": 159813,
+   "sha256": "a51011b8b48887ca2a776679412bc2b0b15f91e98d1781a24ec0017d63d6458c",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -311,8 +311,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/evaluate.js": {
-   "bytes": 29384,
-   "sha256": "b6b9f68b3e9b98df5257c84677f7992a19f306a3f3d712efa273be2b295ba611",
+   "bytes": 30132,
+   "sha256": "82ad07ac7cdcde899d758648a167aa3c69887b0126823a04c84c907bece8b9e9",
    "type": "text/javascript; charset=utf-8"
   },
   "views/extras.js": {
@@ -363,6 +363,11 @@
   "views/readiness.js": {
    "bytes": 1523,
    "sha256": "c0e373660d2b9431b9486281467889651ebd6d472c1071105055eb5b9904018d",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/reconcile.js": {
+   "bytes": 12482,
+   "sha256": "148d6840598d5d7591454d2a86bdab508044788c5a243e364e70867826615be7",
    "type": "text/javascript; charset=utf-8"
   },
   "views/seed.js": {
