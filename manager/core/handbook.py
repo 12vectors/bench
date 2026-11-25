@@ -315,6 +315,13 @@ class _Budget:
         return self.heads[str(repo)]
 
 
+def budget(left: int = MAX_GIT_CHECKS) -> _Budget:
+    """A git budget a caller reading many entries' source authority shares
+    across them (task 200), so a whole-Brain reading is as bounded as one
+    handbook reading: past it, a binding reads `not-checked`."""
+    return _Budget(left)
+
+
 def _distinct_revisions(kind: str, revisions: set[str]) -> list[str]:
     """The revisions that really differ. An `app:` or `work:` revision may
     be abbreviated, so one that starts another names the same commit; a

@@ -80,6 +80,7 @@ import braindraft
 import brainwrite
 import config
 import execowner
+import handbook
 import records
 import state
 import taskfiles
@@ -805,7 +806,7 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
 
 # ── a person's actions ─────────────────────────────────────────────────
 
-ACTIONS = ("rebuild", "refresh", "retry", "cancel")
+ACTIONS = ("rebuild", "refresh", "repair", "retry", "cancel")
 
 
 def act(payload: dict) -> dict:
@@ -813,8 +814,10 @@ def act(payload: dict) -> dict:
     entry again; **Refresh sources** binds the application's current commit
     to the named entries (or all), which queues them; **Retry** puts failed,
     blocked or cancelled entries back; **Cancel** takes queued entries out
-    and cancels a running evaluation. Each is one request identity: the
-    same again answers with its first result. None launches anything."""
+    and cancels a running evaluation. **Repair** (task 200) is a Refresh of
+    exactly the entries the maintenance-health preview named, held to that
+    preview's digest. Each is one request identity: the same again answers
+    with its first result. None launches anything."""
     if not isinstance(payload, dict):
         raise Refused("the request body must be a JSON object")
     action = payload.get("action")
@@ -850,7 +853,22 @@ def act(payload: dict) -> dict:
             raise Refused(f"{unknown[0]} is not an entry the queue may evaluate", 404)
         cards = _cards()
         touched = []
-        if action == "refresh":
+        if action == "repair":
+            # task 200: a repair is a refresh of exactly the entries the
+            # health reading's preview named, held to that preview
+            if not ids:
+                raise Refused("a repair names the entries its preview showed",
+                              field="entries")
+            now_preview = health()["repair"]
+            if payload.get("preview") != now_preview["digest"]:
+                raise Refused("what a repair would queue has changed since the page read "
+                              "it; read the preview again", 409, code="preview-stale",
+                              stale=True, repair=now_preview)
+            outside = [i for i in ids if i not in now_preview["entries"]]
+            if outside:
+                raise Refused(f"{outside[0]} is not an entry the repair preview names",
+                              409, code="not-affected")
+        if action in ("refresh", "repair"):
             commit = _app_commit()
             if not commit:
                 raise Refused("the application's commit cannot be read, so there is "
@@ -861,7 +879,7 @@ def act(payload: dict) -> dict:
         for eid in chosen:
             rec = st["entries"].get(eid) or {}
             e = by_id.get(eid)
-            if action in ("rebuild", "refresh"):
+            if action in ("rebuild", "refresh", "repair"):
                 if e is None:
                     continue
                 inputs = _inputs(e, cards, st["refresh"])
@@ -869,11 +887,12 @@ def act(payload: dict) -> dict:
                 if rec.get("state") == "running":
                     # a refresh makes the round in flight about old inputs:
                     # its result reads stale and the entry is queued again
-                    if action == "refresh":
+                    if action in ("refresh", "repair"):
                         touched.append(eid)
                     continue
-                _queue(st, eid, key, inputs, "source-refresh" if action == "refresh"
-                       else "rebuild", [], now, e["revision"])
+                _queue(st, eid, key, inputs, {"refresh": "source-refresh",
+                                              "repair": "repair"}.get(action, "rebuild"),
+                       [], now, e["revision"])
                 # rebuild and refresh are a person's ask: no settle delay
                 st["entries"][eid]["changedAt"] = now - SETTLE
                 touched.append(eid)
@@ -1040,6 +1059,391 @@ def reading() -> dict:
             "bounded retries; nothing is killed for being quiet",
             "only the designated execution installation launches or applies",
         ],
+    }
+
+
+# ── maintenance health (task 200) ──────────────────────────────────────
+#
+# One passive reading over the whole Brain: which explanations the work
+# has affected, which bindings have moved, which transition links are
+# broken, which classification and explanation outcomes are unresolved,
+# what the handbook does not cover — and, said as plainly, what was not
+# inspected. It reuses the queue's own reading (`reading`), the Brain's
+# index and the handbook's source authority under one shared git budget;
+# it writes, queues and launches nothing. Its repair preview names exactly
+# what a **Repair** (`act`, action `repair`) would queue and is held to it.
+
+HEALTH_WORDS = {
+    "empty": "No maintained entries yet",
+    "attention": "Needs attention",
+    "incomplete": "Incomplete — part of the Brain was not inspected",
+    "assessed": "Assessed — no gap found in what was inspected",
+}
+# what each finding is, its severity, and the label it is listed under.
+# `problem` makes the reading need attention; `gap` and `coverage` make it
+# incomplete — unknown is never complete, and never healthy.
+FINDINGS = {
+    "never-assessed": ("gap", "Never reconciled against its inputs"),
+    "inputs-changed": ("problem", "A card it cites changed since it was evaluated"),
+    "code-changed": ("problem", "Code changed since it was evaluated"),
+    "binding-moved": ("problem", "A bound source has moved"),
+    "binding-not-checked": ("gap", "A binding was not checked in this reading"),
+    "cites-missing-card": ("problem", "It cites a card that is not on this board"),
+    "historical-no-current": ("problem", "Historical with no Current explanation"),
+    "explanation-broken": ("problem", "Its recorded explanation is no live Current entry"),
+    "superseded-no-successor": ("problem", "Superseded with no live successor"),
+    "link-missing": ("problem", "It links an entry that is not here"),
+    "unclassified": ("problem", "Unclassified: its outcome is unresolved"),
+    "outcome-unresolved": ("problem", "A reconciliation outcome is unresolved"),
+    "sync-pending": ("problem", "Applied here and not yet shared"),
+    "coverage-gap": ("coverage", "The handbook does not cover this yet"),
+    "file-unreadable": ("gap", "A file under brain/ could not be read as an entry"),
+}
+MOVED_BINDINGS = ("stale", "missing", "absent-at-revision", "off-branch",
+                  "unknown-revision", "no-repository")
+MAX_FINDINGS = 200
+MAX_TRANSITIONS = 40
+EXPLAINED_RE = re.compile(r"explained now by ([a-z0-9][a-z0-9-]{1,63})")
+NOT_INSPECTED = (
+    "claims in an entry's body are not checked against the code: bench binds the "
+    "cards an entry cites and the files it binds, nothing else",
+    "code no entry binds and cards no entry cites are not read: a change there "
+    "affects no entry this reading can name",
+    "plans/ and reference/ files an entry names as plain sources are listed, not "
+    "compared",
+    "an entry under a manual override is never re-evaluated automatically",
+)
+
+
+def _attribution(reason: str) -> str:
+    if "applied under the Brain reconciliation policy" in reason:
+        return "policy"
+    if "evaluated by the Brain Agent" in reason:
+        return "evaluation, applied by a person"
+    return "person"
+
+
+def health() -> dict:
+    """The Brain's maintenance health, read now and written nowhere: the
+    assessed scope and what was excluded or not inspected, every finding
+    with its entry, why and the concrete next action, handbook coverage,
+    the transition history, proposals waiting against what was applied,
+    manual overrides, the effective authority and a repair preview."""
+    queue = reading()
+    eff = queue["effective"]
+    rows = {r["entry"]: r for r in queue["entries"]}
+    st = _load() if state_path().exists() else _blank()
+    read = brain.reading()
+    idx = brain.index()
+    entries = read["entries"]
+    by_id = {e["id"]: e for e in entries}
+    live = sorted((e for e in entries if e["removed"] is None), key=lambda e: e["id"])
+    budget = handbook.budget()
+    findings: list[dict] = []
+    omitted = 0
+
+    def turn_on() -> dict:
+        if not eff["on"]:
+            return {"action": "turn-on", "owner": "you",
+                    "label": "Turn on automatic classification below, or Evaluate it "
+                             "yourself in Evaluate classifications"}
+        if not eff["executes"]:
+            return {"action": "none", "owner": "the execution installation",
+                    "label": f"only the execution installation queues it: "
+                             f"{eff.get('ownerReason') or ''}".strip()}
+        return {"action": "turn-on", "owner": "you",
+                "label": "grant the evaluate authority below"}
+
+    def repair_or_on() -> dict:
+        if eff["runs"]:
+            return {"action": "repair", "owner": "you",
+                    "label": "Repair: queue it for evaluation against the code now"}
+        return turn_on()
+
+    def add(entry: dict | None, code: str, message: str, nxt: dict, **extra) -> None:
+        nonlocal omitted
+        if len(findings) >= MAX_FINDINGS:
+            omitted += 1
+            return
+        severity, label = FINDINGS[code]
+        findings.append({"entry": entry["id"] if entry else None,
+                         "title": entry.get("title") if entry else None,
+                         "code": code, "severity": severity, "label": label,
+                         "message": message, "next": nxt, **extra})
+
+    assessed = never = held = changed = 0
+    checked = not_checked = 0
+    times: list[str] = []
+    repair: list[str] = []
+    entry_rows = []
+    for e in live:
+        eid = e["id"]
+        row = rows.get(eid) or {}
+        qrec = st["entries"].get(eid) or {}
+        evaluated = qrec.get("evaluated") or {}
+        stored = row.get("stored")
+        if evaluated.get("at"):
+            times.append(evaluated["at"])
+        # the entry's assessment against its inputs
+        if e["override"]:
+            held += 1
+            assessment = "held"
+        elif stored in ("queued", "running"):
+            assessment = stored
+        elif not evaluated:
+            never += 1
+            assessment = "never"
+            last = (e["history"] or [{}])[-1]
+            add(e, "never-assessed",
+                ("never reconciled against the cards and code it cites"
+                 + (f"; it was last classified {last['classification']} on {last['at']} "
+                    f"by {last['actor']}, against inputs bench did not bind"
+                    if last.get("at") else "")),
+                repair_or_on())
+            repair.append(eid)
+        elif row.get("state") == "stale":
+            changed += 1
+            assessment = "inputs-changed"
+            add(e, "inputs-changed",
+                "a card it cites changed since it was evaluated"
+                + (f" ({', '.join(row.get('triggers') or [])})" if row.get("triggers") else ""),
+                {"action": "none", "owner": "the queue",
+                 "label": "it is queued on the next pass"} if eff["runs"] else turn_on())
+        else:
+            assessed += 1
+            assessment = "current"
+        if row.get("codeDrift") and not e["override"]:
+            add(e, "code-changed",
+                f"it was evaluated at application {str(row.get('evaluatedApp'))[:12]}; the "
+                f"checkout is at {str(row.get('appNow'))[:12]}. Code is never called "
+                "fresh until a person refreshes it",
+                repair_or_on())
+            if eid not in repair:
+                repair.append(eid)
+        # bindings, under one shared budget
+        auth = handbook.authority(e, budget) if e["bindings"] else None
+        for b in (auth or {}).get("bindings") or []:
+            if b["type"] not in ("app", "work"):
+                continue
+            if b.get("state") == "not-checked":
+                not_checked += 1
+                add(e, "binding-not-checked",
+                    f"{b['type']}:{b['target']} was not checked in this reading (its git "
+                    "budget was spent); open the entry to check it",
+                    {"action": "open-entry", "owner": "you", "label": "Open the entry"})
+                continue
+            checked += 1
+            if b.get("state") in MOVED_BINDINGS:
+                add(e, "binding-moved", f"{b['type']}:{b['target']}@{b['revision'][:12]} — "
+                    f"{b.get('message') or b.get('state')}",
+                    repair_or_on() if not e["override"] else
+                    {"action": "open-entry", "owner": "you",
+                     "label": "a manual override holds it: review it on its page"},
+                    binding={"type": b["type"], "target": b["target"],
+                             "revision": b["revision"], "state": b.get("state")})
+                if not e["override"] and eid not in repair:
+                    repair.append(eid)
+        for ref in e.get("sourceRefs") or []:
+            if ref["kind"] in ("card", "review") and not ref.get("present"):
+                add(e, "cites-missing-card",
+                    f"it cites #{ref['card']}, which is not on this board (archived, "
+                    "another board's, or never written)",
+                    {"action": "open-entry", "owner": "you",
+                     "label": "Edit its sources, or restore the card"})
+        # transition links
+        klass = e["classification"]
+        if klass == "Historical":
+            named = None
+            for line in reversed(e["history"]):
+                m = EXPLAINED_RE.search(line.get("reason") or "")
+                if m:
+                    named = m.group(1)
+                    break
+            current = [r for r in ([named] if named else []) + list(e["related"])
+                       if (by_id.get(r) or {}).get("classification") == "Current"
+                       and by_id[r]["removed"] is None]
+            if named and named not in current:
+                add(e, "explanation-broken",
+                    f"its history says it is explained now by {named}, which is "
+                    + ("not on this board" if named not in by_id else
+                       "retired" if by_id[named]["removed"] is not None else
+                       f"{by_id[named]['classification']}, not Current"),
+                    {"action": "open-entry", "owner": "you",
+                     "label": "Link a live Current explanation, or write one"})
+            elif not current:
+                add(e, "historical-no-current",
+                    "no live Current entry explains what it became — Current explanation "
+                    "pending; nothing is written for it automatically",
+                    {"action": "ask-agent", "owner": "you",
+                     "label": "Ask the Brain Agent for a Current explanation, or link one"})
+        if klass == "Superseded":
+            nxt_id = (e["supersededBy"] or [None])[0]
+            seen, at = {eid}, nxt_id
+            while at and (by_id.get(at) or {}).get("supersededBy") and at not in seen:
+                seen.add(at)
+                at = by_id[at]["supersededBy"][0]
+            end = by_id.get(at) if at else None
+            if nxt_id is None and not e["invalidated"]:
+                add(e, "superseded-no-successor",
+                    "it is Superseded and names neither a successor nor an invalidation",
+                    {"action": "open-entry", "owner": "you",
+                     "label": "Classify it again with its successor or an invalidation"})
+            elif nxt_id is not None and (end is None or end["removed"] is not None
+                                         or end["classification"] != "Current"):
+                add(e, "superseded-no-successor",
+                    f"its successor chain from {nxt_id} ends "
+                    + ("at an entry that is not here" if end is None else
+                       "at a retired entry" if end["removed"] is not None else
+                       f"at a {end['classification']} entry, not a Current one"),
+                    {"action": "open-entry", "owner": "you",
+                     "label": "Point it at the live Current successor"})
+        for key in ("related", "supersedes", "supersededBy"):
+            for target in e[key]:
+                if target not in by_id:
+                    add(e, "link-missing", f"its {key} names {target}, which is not an "
+                        "entry on this board",
+                        {"action": "open-entry", "owner": "you",
+                         "label": "Edit the link, or restore the entry"})
+        if klass == "Unclassified" and not e["override"]:
+            add(e, "unclassified", "it is Unclassified, so it is not an operative "
+                "explanation and its outcome is open",
+                {"action": "open-entry", "owner": "you",
+                 "label": "Classify it, or let an evaluation propose one"})
+        # outcomes the queue holds open
+        if stored in ("failed", "blocked", "cancelled"):
+            add(e, "outcome-unresolved", f"{row.get('label')}: {row.get('why') or ''}".strip(),
+                {"action": "retry", "owner": "you", "label": "Retry"} if eff["runs"]
+                else turn_on())
+        elif stored in ("review", "waiting"):
+            add(e, "outcome-unresolved", f"{row.get('label')}: a proposal waits for a person",
+                {"action": "review", "owner": "you", "label": "Review in Evaluate",
+                 "draft": row.get("draft")})
+        if row.get("state") == "sync-pending":
+            add(e, "sync-pending", "its applied classification is committed here and not "
+                "yet on the remote",
+                {"action": "push", "owner": "you", "label": "Push now",
+                 "request": (row.get("sync") or {}).get("request")})
+        entry_rows.append({"entry": eid, "title": e["title"], "classification": klass,
+                           "assessment": assessment, "evaluatedAt": evaluated.get("at"),
+                           "evaluatedApp": evaluated.get("app"),
+                           "bindings": len(e["bindings"]),
+                           "authority": (auth or {}).get("state")})
+    # files the Brain could not read as entries: their content is not inspected
+    for d in idx["diagnostics"]:
+        add(None, "file-unreadable", f"brain/{d['file']}: {d['message']}",
+            {"action": "fix-file", "owner": "you", "label": "Fix the file by hand"},
+            file=d["file"])
+    # handbook coverage: a gap, never a gate
+    hb = handbook.reading()
+    for s in hb["sections"]:
+        cov = s["coverage"]
+        if cov["state"] != "covered":
+            add(None, "coverage-gap", f"{s['title']}: {cov['message']}",
+                {"action": "organize", "owner": "you",
+                 "label": f"Organize {s['title']} in the Project handbook"},
+                section=s["id"], coverage=cov["state"])
+    # what would a Repair queue, and on what authority and budget
+    budget_left = queue["budget"]["left"]
+    batch = queue["budget"]["batch"]
+    batches = -(-len(repair) // batch) if repair else 0
+    access = None
+    if repair:
+        try:
+            pre = braindraft.evaluate_preflight({"entries": repair[:braindraft.MAX_EVAL_ENTRIES]})
+            access = {"ready": pre["ready"], "blockers": pre["blockers"][:5],
+                      "adapter": pre.get("adapter"), "model": pre.get("selection"),
+                      "sources": pre["work"]["sources"], "authority": pre["authority"],
+                      "enforcement": pre["enforcement"]}
+        except Exception as exc:  # noqa: BLE001 — a preview never raises
+            access = {"ready": False, "blockers": [f"{type(exc).__name__}: {exc}"[:300]]}
+    refused = None
+    if not repair:
+        refused = "nothing needs repair that a refresh could reach"
+    elif not eff["runs"]:
+        refused = eff["why"]
+    preview = {
+        "entries": repair, "count": len(repair), "batches": batches,
+        "launchesLeft": budget_left, "fitsToday": batches <= budget_left,
+        "authority": {w: eff[w] for w in ("evaluate", "apply", "maintain", "executes")},
+        "available": bool(repair) and eff["runs"], "refused": refused,
+        "access": access,
+        "would": (f"queue {len(repair)} {'entry' if len(repair) == 1 else 'entries'} at the "
+                  f"application's current commit, in {batches} "
+                  f"{'evaluation' if batches == 1 else 'evaluations'} of at most {batch}, "
+                  f"one at a time; {budget_left} of {queue['budget']['dailyLaunches']} "
+                  "launches are left today"
+                  + ("" if batches <= budget_left else
+                     ", so the rest wait for tomorrow's budget")
+                  + ("; proposals are applied under the policy" if eff["apply"] else
+                     "; every proposal waits for your review")) if repair else None,
+        "never": "a repair launches nothing in its click, creates no entry, widens no "
+                 "source selection and changes no gate",
+    }
+    preview["digest"] = _digest({k: preview[k] for k in
+                                 ("entries", "launchesLeft", "authority")})[:16]
+    # transition history, proposals against what was applied, overrides
+    transitions = []
+    for e in entries:
+        for line in e["history"]:
+            transitions.append({"entry": e["id"], "title": e["title"], "at": line["at"],
+                                "classification": line["classification"],
+                                "actor": line["actor"],
+                                "by": _attribution(line.get("reason") or ""),
+                                "reason": brain.clean(line.get("reason") or "", 300)})
+    transitions.sort(key=lambda t: t["at"] or "", reverse=True)
+    proposals = [{"entry": r["entry"], "title": r["title"], "draft": r.get("draft"),
+                  "state": r["state"]} for r in queue["entries"]
+                 if r["stored"] in ("review", "waiting")]
+    applied = [{"entry": r["entry"], "title": r["title"], "applied": r.get("applied"),
+                "sync": r.get("sync"), "state": r["state"]}
+               for r in queue["entries"] if r["stored"] == "applied"]
+    overrides = [{"entry": e["id"], "title": e["title"], "override": e["override"]}
+                 for e in live if e["override"]]
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f["code"]] = counts.get(f["code"], 0) + 1
+    severities = {f["severity"] for f in findings}
+    if not live and not idx["diagnostics"]:
+        word = "empty"
+    elif "problem" in severities:
+        word = "attention"
+    elif severities or not_checked or idx["truncated"]:
+        word = "incomplete"
+    else:
+        word = "assessed"
+    retired = [e for e in entries if e["removed"] is not None]
+    return {
+        "v": VERSION, "kind": "bench-brain-health", "state": word,
+        "label": HEALTH_WORDS[word],
+        "brainRevision": read["revision"],
+        "scope": {
+            "entries": len(live), "assessed": assessed, "neverAssessed": never,
+            "inputsChanged": changed, "held": held, "retired": len(retired),
+            "bindings": {"checked": checked, "notChecked": not_checked,
+                         "gitBudget": handbook.MAX_GIT_CHECKS},
+            "files": {"unreadable": len(idx["diagnostics"]), "skipped": idx["skipped"],
+                      "truncated": bool(idx["truncated"])},
+            "lastAssessed": max(times) if times else None,
+            "oldestAssessed": min(times) if times else None,
+            "excluded": ([{"entry": o["entry"], "why": "held by a manual override"}
+                          for o in overrides] +
+                         [{"entry": e["id"], "why": "retired"} for e in retired])[:100],
+            "notInspected": list(NOT_INSPECTED),
+        },
+        "counts": counts, "findings": findings, "findingsOmitted": omitted,
+        "entries": entry_rows,
+        "coverage": [{"section": s["id"], "title": s["title"],
+                      "state": s["coverage"]["state"], "message": s["coverage"]["message"]}
+                     for s in hb["sections"]],
+        "effective": eff, "policy": queue["policy"], "budget": queue["budget"],
+        "repair": preview,
+        "transitions": transitions[:MAX_TRANSITIONS],
+        "transitionsOmitted": max(0, len(transitions) - MAX_TRANSITIONS),
+        "proposals": proposals, "applied": applied, "overrides": overrides,
+        "reads": "brain/, the cards' revisions, the queue's machine-local record and "
+                 "local git metadata, and — when a repair is possible — the evaluation's "
+                 "own preflight, which hashes the work-root selection it would pin; no "
+                 "fetch, check, agent or write",
     }
 
 
