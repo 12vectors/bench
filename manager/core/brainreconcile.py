@@ -479,9 +479,8 @@ def _launch(st: dict, now: float) -> str | None:
     attempt = max(st["entries"][eid].get("attempts") or 0 for eid in batch)
     # a person's Retry is a new decision, so it is a new identity; an
     # unchanged key with no new attempt and no Retry is the same batch
-    retries = {eid: st["entries"][eid].get("retries") or 0 for eid in batch}
-    op_key = "brc-" + _digest({"keys": keys, "attempt": attempt,
-                               "retries": retries})[:24]
+    asks = {eid: st["entries"][eid].get("asks") or 0 for eid in batch}
+    op_key = "brc-" + _digest({"keys": keys, "attempt": attempt, "asks": asks})[:24]
     if op_key in st["ops"]:
         # this exact batch already ran: an unchanged input key is never
         # launched twice — the entries wait for a change or a person
@@ -683,6 +682,8 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
         if now_keys[eid][0] == op["keys"].get(eid):
             fresh.append(eid)
     applied: dict[str, dict] = {}
+    blocked_by: dict[str, dict] = {}
+    closed = False
     auto_why = None
     eff = effective(read_policy())
     candidates = [eid for eid in fresh if eid in items
@@ -695,9 +696,16 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
                 if row.get("selected") and not row.get("blocked") and \
                         row["entry"] in candidates:
                     applied[row["entry"]] = row
+                elif row.get("blocked"):
+                    blocked_by[row["entry"]] = row["blocked"]
             op.update(applyRequest=request, status="done")
+            closed = True
         except braindraft.Refused as exc:
-            auto_why = f"not applied automatically: {exc} ({exc.extra.get('code')})"
+            for row in exc.extra.get("items") or []:
+                if row.get("blocked"):
+                    blocked_by[row["entry"]] = row["blocked"]
+            auto_why = ("not applied automatically: " + (
+                "" if blocked_by else f"{exc} ") + f"({exc.extra.get('code')})")
     elif candidates and not eff["apply"]:
         auto_why = ("the apply authority is not granted"
                     if eff["evaluate"] else "reconciliation was turned off or revoked "
@@ -739,9 +747,22 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
                 evaluated=dict(evaluated, outcome="unchanged"),
                 explanation=item.get("explanation"))
         else:
+            why = auto_why or "it is not one bench selects by default"
+            if eid in blocked_by:
+                why = f"not applied automatically: {blocked_by[eid].get('why')}"
+            if closed:
+                # the automatic Apply closed this evaluation; what it left
+                # out is said, and a Retry or a person's Evaluate asks again
+                rec.update(state="blocked", code=(blocked_by.get(eid) or {}).get(
+                    "code") or "not-default", why=(
+                    f"proposed {item.get('proposed')}; {why} — the evaluation was "
+                    f"applied without it, so Retry, or Evaluate it by hand")[:500],
+                    evaluated=dict(evaluated, outcome="proposed"),
+                    proposed=item.get("proposed"), explanation=item.get("explanation"))
+                continue
             rec.update(state="review", code="review", why=(
                 f"proposed {item.get('proposed')}; waits for a person's review — "
-                + (auto_why or "it is not one bench selects by default"))[:500],
+                + why)[:500],
                 evaluated=dict(evaluated, outcome="proposed"),
                 proposed=item.get("proposed"), explanation=item.get("explanation"))
     if op["status"] != "done" and not any(
@@ -831,8 +852,6 @@ def act(payload: dict) -> dict:
                 _queue(st, eid, _key(inputs), inputs, "retry-by-person", [], now,
                        e["revision"])
                 st["entries"][eid].update(changedAt=now - SETTLE, attempts=0)
-                # a person's Retry is a new decision: it is not the batch that ran
-                st["entries"][eid]["retries"] = (rec.get("retries") or 0) + 1
                 touched.append(eid)
             elif action == "cancel":
                 if rec.get("state") == "queued":
@@ -845,6 +864,11 @@ def act(payload: dict) -> dict:
                 elif rec.get("state") in ("running", "waiting") and rec.get("draft"):
                     cancel_draft = rec["draft"]
                     touched.append(eid)
+        if action != "cancel":
+            # a person's Rebuild, Refresh or Retry is a new decision, so it
+            # is a new launch identity even where the inputs are unchanged
+            for eid in touched:
+                st["entries"][eid]["asks"] = (st["entries"][eid].get("asks") or 0) + 1
         result = {"action": action, "entries": touched}
         st["actions"][request] = {"action": action, "entries": ids, "result": result,
                                   "at": now}
