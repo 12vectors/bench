@@ -15,7 +15,12 @@ page's own controls:
 - **choose by keyboard**: Space deselects one row; **Apply** by keyboard,
   armed then fired, writes only the chosen classifications, says saved,
   committed and shared apart, and every entry's text is unchanged;
-- **narrow and both themes**: nothing overflows at 390px; screenshots.
+- **narrow and both themes**: nothing overflows at 390px; screenshots;
+- **refusal, cancellation, restart and retry**: a harness that cannot run
+  the intent is refused by name in the preview with Evaluate disabled; a
+  held round is cancelled; a round the board restarts under reads Failed,
+  naming the restart, and is not relaunched by itself; **Try again** is the
+  person's way on; none of it writes an entry.
 """
 
 import hashlib
@@ -230,3 +235,77 @@ class Evaluate(unittest.TestCase):
             self.theme(b, dark)
             self.no_overflow(b, f"the Brain at 390px, {'night' if dark else 'day'}")
             shot(f"brain-evaluate-narrow-{'night' if dark else 'day'}")
+
+    def armed(self, b, act):
+        sel = f'#bshell [data-evact="{act}"]'
+        b.click(sel)
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.classList.contains('armed')", 5):
+            raise bv.CheckFailed(f"{act} did not arm: " + self.text(b, "#bshell")[:900])
+        b.click(sel)
+
+    def drafts(self):
+        code, raw = self.backend.get("/api/brain/drafts")
+        self.assertEqual(code, 200)
+        return json.loads(raw).get("evaluations") or []
+
+    def test_4_refusal_cancel_restart_and_retry(self):
+        b = S["browser"]
+        b.origin = self.backend.url
+        b.viewport(1280, 900)
+        env = self.backend.tool / "manager" / "local" / ".env"
+        before = self.files()
+        b.goto("/brain")
+        if not b.wait("!!document.querySelector('#bshell [data-evact=\"open\"]')", 15):
+            raise bv.CheckFailed("the evaluate panel never drew: " + self.text(b)[:1200])
+        self.theme(b, False)
+        b.click('#bshell [data-evact="open"]')
+        b.wait("!!document.querySelector('#bshell [data-evpick=\"e-json-study\"]')", 5)
+        b.click('#bshell [data-evpick="e-json-study"]')
+        # a harness that cannot run the brain intent read-only is refused by
+        # name in the preview, and Evaluate cannot be pressed
+        env.write_text("BOARD_AGENT_ADAPTER=opencode\n", encoding="utf-8")
+        try:
+            b.click('#bshell [data-evact="preflight"]')
+            self.wait_text(b, ["Evaluate is not available here."], "#bshell #ev-pre")
+            self.assertTrue(b.eval("document.querySelector('#bshell [data-evact=\"start\"]')"
+                                   ".disabled"), "a refused harness left Evaluate enabled")
+            shot("brain-evaluate-refused-day")
+        finally:
+            env.write_text("", encoding="utf-8")
+        b.click('#bshell [data-evact="preflight"]')
+        if not b.wait("document.querySelector('#bshell [data-evact=\"start\"]')"
+                      " && !document.querySelector('#bshell [data-evact=\"start\"]').disabled", 15):
+            raise bv.CheckFailed("the preview never became ready: "
+                                 + self.text(b, "#bshell #ev-pre")[:900])
+        # a held round is cancelled by the person and writes nothing
+        self.backend.brain_hold.write_text("hold", encoding="utf-8")
+        try:
+            self.armed(b, "start")
+            self.wait_text(b, ["Evaluating"], "#bshell #ev-draft", timeout=20)
+            b.click('#bshell [data-evact="cancel"]')
+            self.wait_text(b, ["Cancelled"], "#bshell #ev-draft", timeout=20)
+            shot("brain-evaluate-cancelled-day")
+            self.assertEqual(self.files(), before, "a cancelled round wrote something")
+            # a new round, and the board restarts while it runs
+            self.armed(b, "start")
+            self.wait_text(b, ["Evaluating"], "#bshell #ev-draft", timeout=20)
+            self.backend.stop()
+            self.backend.start()
+        finally:
+            self.backend.brain_hold.unlink(missing_ok=True)
+        self.wait_text(b, ["Failed", "restarted"], "#bshell #ev-draft", timeout=40)
+        self.theme(b, True)
+        shot("brain-evaluate-restart-night")
+        self.theme(b, False)
+        self.assertEqual(self.files(), before, "a round cut by a restart wrote something")
+        newest = self.drafts()[0]
+        self.assertEqual(newest["status"], "failed")
+        # nothing relaunched it by itself: Try again is the person's way on
+        b.wait("!!document.querySelector('#bshell [data-evact=\"continue\"]')", 10)
+        self.assertIn("Try again", self.text(b, '#bshell [data-evact="continue"]'))
+        b.click('#bshell [data-evact="continue"]')
+        self.wait_text(b, ["Proposals ready"], "#bshell #ev-draft", timeout=40)
+        self.assertEqual(self.files(), before, "a retried round wrote something")
+        b.click('#bshell [data-evact="discard"]')
+        self.wait_text(b, ["Discarded"], "#bshell #ev-draft", timeout=20)
+        self.assertEqual(self.files(), before, "discarding wrote something")

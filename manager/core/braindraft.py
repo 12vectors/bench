@@ -3389,7 +3389,7 @@ def eval_contract_text(draft: dict, round_no: int) -> str:
             "entry": "one selected entry id",
             "current": "its classification as given above",
             "proposed": " | ".join(brain.CLASSIFICATIONS),
-            "reason": "one plain line: why, from the evidence",
+            "reason": "one plain line of at most 300 characters: why, from the evidence",
             "evidence": ["app:path/in/checkout.py", "work:tasks/done/12-x.md",
                          "entry:<id>"],
             "supersededBy": "only for Superseded: the replacing entry's id",

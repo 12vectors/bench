@@ -2728,8 +2728,10 @@ agent stack, and the run never writes `brain/`.
 | **Apply N classifications** (armed) | `POST /api/brain/evaluate/apply` `{id, request, round, preview, choices}` | nothing | one batch |
 
 Evaluate must name the approval its preview showed: a changed entry,
-source, model, policy or template since the preview refuses it
-(`approval-stale`) with nothing launched. A harness that cannot run the
+source, application commit, model, policy, template or budget since the
+preview refuses it (`approval-stale`, or `policy-drift` for the policy)
+with nothing launched — at Evaluate and again before every later round,
+so a Continue after such a change is a new evaluation. A harness that cannot run the
 `brain` intent read-only with exact reads — opencode today — is refused
 by name in the preview and at Evaluate. A board that restarts closes a
 round in flight as failed, naming the restart; nothing is relaunched by
@@ -2738,7 +2740,8 @@ itself, and Continue is the person's way on.
 **What a proposal must be.** One JSON object, kind
 `bench-brain-evaluation`, with one evaluation per selected entry: the
 entry, its classification as the round read it, the proposed
-classification, a one-line reason, the evidence it cites (`work:`,
+classification, a one-line reason of at most 300 characters, the
+evidence it cites (`work:`,
 `entry:` or `app:` references bench re-reads and binds, exactly as a
 drafting round's citations), what stays uncertain, and the reassessment
 signals it saw. Bench validates each entry's proposal on its own and
@@ -2778,7 +2781,10 @@ reassessment signals said as signals, what is missing, the uncertainty,
 and the explanation: **Explained now by** the linked Current entry, or
 **Current explanation pending** — no page is invented and no link is
 made to an entry that does not exist (a linked entry that has since
-stopped being Current reads pending). Selected to begin with: a changed
+stopped being Current reads pending). The explanation follows the
+classification being applied, not the one proposed: a person correcting
+an entry to Historical names its Current explanation or it reads pending,
+and an entry applied as anything but Historical carries none. Selected to begin with: a changed
 classification with bound evidence that nothing blocks. An Unclassified
 proposal is offered and not selected. An entry cannot be applied when:
 
@@ -2788,6 +2794,8 @@ proposal is offered and not selected. An entry cannot be applied when:
 | `destination-changed` | the entry changed since the round read it; evaluate it again |
 | `source-drift` | a source its proposal cites no longer holds the bytes it was read at |
 | `no-change`, `needs-replacement`, `needs-reason`, `gone` | nothing would change, Superseded names nothing, there is no reason, or the entry is retired |
+| `invalid-explanation` | the person named an explanation that is no live Current entry |
+| `reason-too-long` | the person's reason is over 300 characters: shortened, never clipped, so the history line keeps it whole |
 
 **Apply is one batch of classifications.** It is the seed's
 all-or-none writer (`brainwrite.write_batch`) with classification-only
@@ -2799,8 +2807,11 @@ refusing an entry with a manual override even if asked directly. It
 changes the **Classification** field, its supersession link and one
 history line per entry, attributed to this board's git identity and
 saying which request and round proposed it, whether a person corrected
-it, its evidence and its explanation (`explained now by <id>` or
-`Current explanation pending`). It never writes an entry's text, a card,
+it, its explanation (`explained now by <id>` or `Current explanation
+pending`) and its evidence. The line is budgeted to the Brain's 500
+characters: the reason, the attribution and the explanation are always
+whole, and evidence follows as whole references while there is room,
+with how many were left out. It never writes an entry's text, a card,
 a review report, its verdict or its source binding, an application file
 or handbook prose. Apply is refused with nothing written on a stale
 preview (`preview-stale`), a stale round (`round-stale`), a changed
@@ -2828,7 +2839,8 @@ itself, entry, source and preview drift, a supersession loop, and a
 proposal about another entry, an unbound citation and an injected record
 marker each refused. `verify/browser_cases/case_brain_evaluate.py`
 drives the page by pointer and keyboard at 1280 and 390 pixels in both
-themes. Whether a real model evaluates well is a separately approved,
+themes, and shows a refused harness, a cancelled round, a round cut by a
+restart and its **Try again**. Whether a real model evaluates well is a separately approved,
 billable run nothing starts by itself.
 
 ### Drafting with the Brain Agent
