@@ -3052,7 +3052,11 @@ same batch is not maintained in it (`reclassified`).
 the explanation the round read (`destination-changed`), the bytes of what
 it cites (`source-drift`), and the section it replaces (`section-missing`);
 each refuses that half with nothing written, and the person's edits stay
-on the page. A reverted or reopened implementation is a new evaluation:
+on the page. Whether it is a working-agreement change is read again too:
+a **Policy:** field or a Ways of working link added since the round makes
+it one, and a handbook record that cannot be read holds it as one. Under
+the reconciliation policy an update is applied only with a classification
+the same batch applies — never alone. A reverted or reopened implementation is a new evaluation:
 the investigation may go back to Current, and the bench-maintained
 section is replaced — git keeps every earlier version, and the classification
 history keeps every line.

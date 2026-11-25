@@ -3898,10 +3898,18 @@ def _policy_reasons(target: dict, scope: str) -> list[str]:
         out.append(f"the entry records **Policy:** {target['policy']}")
     try:
         rec = handbook.read_record()
-        if target["id"] in ((rec.get("sections") or {}).get("ways-of-working") or []):
+        if rec.get("state") not in ("missing", "record") or rec.get("problems"):
+            # a refused, invalid or unsupported record cannot say this
+            # entry is not linked under Ways of working: fail closed
+            out.append("the handbook record cannot be read as a record, so whether it "
+                       "links this entry under Ways of working is not known")
+        elif target["id"] in ((rec.get("sections") or {}).get("ways-of-working") or []):
             out.append("the handbook links it under Ways of working")
-    except Exception:   # an unreadable handbook record says nothing here
-        pass
+    except Exception:
+        # an unreadable handbook record cannot say this entry is not a
+        # working agreement, so it is held as one: fail closed
+        out.append("the handbook record could not be read, so whether it links "
+                   "this entry under Ways of working is not known")
     return out
 
 
@@ -4138,7 +4146,16 @@ def _maint_row(draft: dict, ev: dict, item: dict, mc: dict, by_id: dict,
         else m["body"]
     edited = body != m["body"]
     authorize = _one_line(mc.get("authorize") or "")
-    policy = bool(m["policy"])
+    # whether this is a working-agreement change is read again now, not
+    # only when the round was validated: a handbook link under Ways of
+    # working (outside the entry's revision guard) or a **Policy:** field
+    # added since makes it one
+    reasons = list(m["policy"])
+    if now is not None:
+        for r in _policy_reasons(now, m["scope"]):
+            if r not in reasons:
+                reasons.append(r)
+    policy = bool(reasons)
     owner = m["owner"]
     if now is not None and m["operation"] == "replace":
         found = _named_sections(now.get("body") or "").get(m["section"].lower())
@@ -4176,7 +4193,7 @@ def _maint_row(draft: dict, ev: dict, item: dict, mc: dict, by_id: dict,
             f"only by choosing to, or leave this update out")}
     elif policy and authorization is None:
         blocked = {"code": "policy-authorization", "why": (
-            "this changes a working agreement (" + "; ".join(m["policy"]) + "): say why you "
+            "this changes a working agreement (" + "; ".join(reasons) + "): say why you "
             "authorize it, or leave it out — a factual update never changes an agreement")}
     default = (blocked is None and not policy and owner != "person" and not edited)
     selected = bool(mc["selected"]) if "selected" in mc else default
@@ -4184,7 +4201,7 @@ def _maint_row(draft: dict, ev: dict, item: dict, mc: dict, by_id: dict,
         if now is not None and m["operation"] == "replace" else None
     return {"entry": m["entry"], "title": m.get("title"), "operation": m["operation"],
             "section": m["section"], "owner": owner, "scope": m["scope"],
-            "policy": m["policy"], "body": body, "proposedBody": m["body"],
+            "policy": reasons, "body": body, "proposedBody": m["body"],
             "edited": edited, "claims": m["claims"], "uncovered": m["uncovered"],
             "evidence": [dict(b, drifted=b["ref"] in moved) for b in m["evidence"]],
             "before": before, "after": after, "revision": m["revision"],
@@ -4744,15 +4761,34 @@ def evaluate_auto_apply(draft_id: str, request: str, entries: list[str],
         wanted = set(entries)
         rows = (draft.get("evaluation") or {}).get("items") or []
         draft["applyBy"] = "policy"
+        def choices(riding: set[str]) -> list[dict]:
+            return [{"entry": r["entry"], "selected": False,
+                     **({"maintain": {"selected": False}} if r.get("maintain") else {})}
+                    if r["entry"] not in wanted else
+                    {"entry": r["entry"],
+                     **({"maintain": {"selected": False}}
+                        if r.get("maintain") and r["entry"] not in riding else {})}
+                    for r in rows]
+
         try:
-            plan = _eval_plan(draft, [
-                {"entry": r["entry"], "selected": False,
-                 **({"maintain": {"selected": False}} if r.get("maintain") else {})}
-                if r["entry"] not in wanted else
-                {"entry": r["entry"],
-                 **({"maintain": {"selected": False}}
-                    if r.get("maintain") and not maintain else {})}
-                for r in rows])
+            # an explanation update rides only with a classification this
+            # same batch applies: the policy's `maintain` authority is to
+            # apply an update *with* such a classification, never alone. So
+            # read which classifications bench would apply by default first,
+            # with every update left out, and let only theirs ride along.
+            plan = _eval_plan(draft, choices(set()))
+            riding = {r["entry"] for r in plan["items"]
+                      if r["selected"] and r["blocked"] is None} if maintain else set()
+            if riding & {r["entry"] for r in rows if r.get("maintain")}:
+                plan = _eval_plan(draft, choices(riding))
+            alone = [r["entry"] for r in plan["items"]
+                     if r.get("maintain") and r["maintain"]["selected"]
+                     and r["maintain"]["blocked"] is None
+                     and not (r["selected"] and r["blocked"] is None)]
+            if alone:
+                raise Refused("an explanation update would be applied without its "
+                              "classification — nothing was written", 409,
+                              code="classification-pending", entries=alone)
             if plan["blockers"]:
                 first = plan["blockers"][0]
                 raise Refused(f"{first['why']} — nothing was written", 409,

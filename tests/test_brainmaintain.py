@@ -47,6 +47,12 @@ UPDATE = {"entry": "e-exports", "operation": "append", "section": "CSV exports",
           "uncovered": ["the byte-order mark is not shown in the code"]}
 
 
+MUDDLE_CSV = {"entry": "e-csv-study", "current": "Current", "proposed": "Unclassified",
+              "reason": "the sources conflict about the delimiter",
+              "evidence": ["app:src/export.py"],
+              "missing": "which delimiter customers receive; a decision card would say"}
+
+
 def with_update(**changes) -> dict:
     return dict(CSV_HISTORICAL, maintain=dict(UPDATE, **changes))
 
@@ -208,6 +214,60 @@ class Claims(_Maintaining):
         item = draft["evaluate"]["evaluation"]["items"][0]
         self.assertIn("does not guess", " ".join(item["maintainRefused"]))
 
+    def test_a_partial_implementation_stays_current_and_maintains_itself(self):
+        partial = dict(JSON_CURRENT, evidence=["work:plans/export-plan.md",
+                                              "app:src/export.py"],
+                       maintain={"entry": "e-json-study", "operation": "append",
+                                 "section": "What is built", "scope": "factual",
+                                 "body": "The export module exists; JSON is not written yet.",
+                                 "claims": [{"claim": "an export module exists",
+                                             "status": "implemented",
+                                             "evidence": ["app:src/export.py"]},
+                                            {"claim": "a JSON export",
+                                             "status": "agreed-future",
+                                             "evidence": ["work:plans/export-plan.md"]}],
+                                 "uncovered": ["the JSON writer itself"]})
+        draft = self.run_one(partial)
+        row = self.row(draft, "e-json-study")
+        self.assertEqual(row["blocked"]["code"], "no-change")
+        m = row["maintain"]
+        self.assertIsNone(m["blocked"], m["blocked"])
+        self.assertTrue(m["defaultSelected"])
+        self.assertEqual(row["coupling"], "complete")  # nothing is left pending
+        self.apply(draft)
+        after = brain.entry("e-json-study")
+        self.assertEqual(after["classification"], "Current")
+        self.assertIn("## What is built", after["body"])
+        self.assertIn("**Agreed, not built** — a JSON export", after["body"])
+        self.assertIn("the JSON writer itself", after["body"])
+        self.assertIn("A JSON export is agreed and not built.", after["body"])
+
+    def test_two_updates_of_one_explanation_land_in_one_edit(self):
+        second = {"entry": "e-old-delimiter", "current": "Current", "proposed": "Historical",
+                  "reason": "the semicolon export is what the code writes now",
+                  "evidence": ["app:src/export.py"], "explanation": {"entry": "e-exports"},
+                  "maintain": dict(UPDATE, section="Delimiter history",
+                                   body="Exports were comma-separated before #12.",
+                                   claims=[{"claim": "commas came before semicolons",
+                                            "status": "unknown"}],
+                                   uncovered=[])}
+        draft = self.run_one(with_update(), second)
+        rows = {r["entry"]: r for r in self.review(draft)["items"]}
+        for eid in ("e-csv-study", "e-old-delimiter"):
+            self.assertTrue(rows[eid]["maintain"], rows[eid].get("maintainRefused"))
+            self.assertIsNone(rows[eid]["maintain"]["blocked"], rows[eid]["maintain"])
+            self.assertEqual(rows[eid]["coupling"], "complete")
+        out = self.apply(draft)
+        files = [f["id"] for f in out["operation"]["files"]]
+        self.assertEqual(files.count("e-exports"), 1, files)
+        body = brain.entry("e-exports")["body"]
+        self.assertIn("## CSV exports", body)
+        self.assertIn("## Delimiter history", body)
+        related = [r["id"] for r in brain.entry("e-exports")["related"]]
+        self.assertIn("e-csv-study", related)
+        self.assertIn("e-old-delimiter", related)
+        self.assertEqual(len(out["draft"]["applied"]["maintained"]), 2)
+
     def test_documented_policy_is_scope_policy(self):
         claim = {"claim": "exports are reviewed by finance", "status": "implemented",
                  "evidence": ["app:src/export.py", "work:plans/export-plan.md"],
@@ -299,6 +359,39 @@ class Policy(_Maintaining):
         self.assertIn("agreed in the finance review today", after["body"])
         # an inferred convention never becomes an approved agreement
         self.assertEqual(after["policy"], "inferred")
+
+    def handbook(self, text: str) -> None:
+        place = self.work / "brain" / "handbook"
+        place.mkdir(parents=True, exist_ok=True)
+        (place / "handbook.md").write_text(text, encoding="utf-8")
+
+    def test_a_ways_of_working_link_made_after_the_round_is_read_at_apply(self):
+        self.set_exports(self.exports().replace("**Policy:** inferred — from the code\n", ""))
+        draft = self.run_one()
+        self.assertTrue(self.row(draft)["maintain"]["defaultSelected"])
+        # linked under Ways of working after the round read the entry: the
+        # entry's own revision is unchanged, and the update is still policy
+        self.handbook("# Project handbook\n\n**Brain handbook:** 1\n\n"
+                      "## Ways of working\n\n- e-exports\n")
+        self.assertEqual(brain.entry("e-exports")["revision"],
+                         draft["evaluate"]["evaluation"]["items"][0]["maintain"]["revision"])
+        m = self.row(draft)["maintain"]
+        self.assertEqual(m["blocked"]["code"], "policy-authorization")
+        self.assertIn("Ways of working", " ".join(m["policy"]))
+        self.assertFalse(m["defaultSelected"])
+        before = self.exports()
+        with self.assertRaises(braindraft.Refused):
+            self.apply(draft, [{"entry": "e-csv-study", "maintain": {"selected": True}}])
+        self.assertEqual(self.exports(), before)
+
+    def test_a_broken_handbook_record_holds_the_update(self):
+        self.set_exports(self.exports().replace("**Policy:** inferred — from the code\n", ""))
+        self.handbook("# Project handbook\n\n**Brain handbook:** 1\n\n"
+                      "## Not a section\n\n- e-exports\n")
+        draft = self.run_one()
+        m = self.row(draft)["maintain"]
+        self.assertEqual(m["blocked"]["code"], "policy-authorization")
+        self.assertIn("handbook record cannot be read", " ".join(m["policy"]))
 
     def test_the_agent_saying_policy_makes_it_policy(self):
         self.set_exports(self.exports().replace("**Policy:** inferred — from the code\n", ""))
@@ -399,6 +492,23 @@ class ByPolicy(_Maintaining):
                                              maintain=True)
         self.assertEqual(out["maintained"], [])
         self.assertNotIn("## CSV exports", self.exports())
+
+    def test_an_update_never_rides_without_its_classification(self):
+        # an Unclassified proposal is never applied by the policy, so the
+        # update it carries is not applied alone either — even with maintain
+        self.script([dict(MUDDLE_CSV, maintain=dict(UPDATE))])
+        draft = self.reconcile_draft()
+        item = draft["evaluate"]["evaluation"]["items"][0]
+        self.assertEqual(item["proposed"], "Unclassified")
+        self.assertTrue(item.get("maintain"), item.get("maintainRefused"))
+        before = self.files()
+        with self.assertRaises(braindraft.Refused) as caught:
+            braindraft.evaluate_auto_apply(draft["id"], self.key(), ["e-csv-study"],
+                                           maintain=True)
+        self.assertEqual(caught.exception.extra.get("code"), "nothing-selected")
+        self.assertEqual(self.files(), before)
+        self.assertNotIn("## CSV exports", self.exports())
+        self.assertEqual(brain.entry("e-csv-study")["classification"], "Current")
 
     def test_the_policy_s_maintain_authority(self):
         path = brainreconcile.policy_path()
