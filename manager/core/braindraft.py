@@ -3158,7 +3158,12 @@ EVAL_TOP_KEYS = {"v", "kind", "draft", "round", "outcome", "summary", "questions
 EVAL_ITEM_KEYS = {"entry", "current", "proposed", "reason", "evidence", "supersededBy",
                   "invalidation", "explanation", "missing", "uncertainty", "signals"}
 EVAL_CHOICE_KEYS = {"entry", "selected", "classification", "reason", "supersededBy",
-                    "invalidation"}
+                    "invalidation", "explanation"}
+# The longest a reason may be, the agent's or a person's, so that the one
+# history line Apply writes always keeps its attribution and explanation
+# whole: that line is the only durable record of "Historical, explained now
+# by X". Evidence fills what room is left, whole references only.
+EVAL_REASON_MAX = 300
 _REASON_UNSAFE = re.compile(r"[<>]")
 
 
@@ -3258,7 +3263,7 @@ def _eval_resolve(entries: list[dict]) -> dict:
         "entries": [{"id": e["id"], "revision": e["revision"]} for e in entries],
         "policyId": found.get("policyId"),
         "template": templates.identity(loaded) if loaded else None,
-        "selection": selection, "budget": budget,
+        "selection": selection, "budget": budget, "app": app.get("commit"),
         "sources": [[s["ref"], s["sha256"]] for s in sel["sources"]]})
     return {"found": found, "loaded": loaded, "app": app, "sel": sel,
             "blockers": blockers, "selection": selection, "budget": budget,
@@ -3416,6 +3421,12 @@ def _launch_evaluate(draft: dict, *, continue_request: str) -> None:
         raise Refused("the execution policy changed since this evaluation was approved "
                       "— start a new evaluation from its preview; nothing was launched",
                       409, code="policy-drift")
+    if r["approval"] != (draft.get("frozen") or {}).get("approval"):
+        raise Refused("what this evaluation would read or ride changed since it was "
+                      "approved (an entry, a source, the application's commit, the "
+                      "model, the template or the budget) — start a new evaluation from "
+                      "its preview; nothing was launched", 409, stale=True,
+                      code="approval-stale")
     found.update({"task": f"brain:{draft['id']}", "stage": None,
                   "requestId": profiles.request_id(INTENT, draft["id"]),
                   "resolved": time.time()})
@@ -3518,7 +3529,7 @@ def _eval_item(item, n: int, rnd: dict, chosen: dict, seen: set, reading: dict
     if proposed not in brain.CLASSIFICATIONS:
         problems.append(f"{where}.proposed is one of {', '.join(brain.CLASSIFICATIONS)}")
     reason = _clean(item.get("reason"), f"{where}.reason", problems,
-                    cap=brainwrite.MAX_REASON - 120)
+                    cap=EVAL_REASON_MAX)
     uncertainty = _clean(item.get("uncertainty"), f"{where}.uncertainty", problems,
                          cap=1200, required=False)
     raw = item.get("evidence") or []
@@ -3702,6 +3713,70 @@ def _eval_drifted(draft: dict) -> set[str]:
     return {d["ref"] for d in drift(draft)}
 
 
+def _eval_explanation(item: dict, choice: dict, klass: str, by_id: dict
+                      ) -> tuple[dict | None, str | None]:
+    """The explanation the classification being applied carries, read now.
+    Only Historical has one. A person's explicit choice wins; else the
+    agent's, when it proposed Historical; else — a person correcting to
+    Historical without naming one — Current explanation pending. A linked
+    page that has gone or stopped being Current reads pending, never a
+    dangling link. Returns the explanation and, for a person's choice that
+    names no live Current entry, why it cannot be applied."""
+    if klass != "Historical":
+        return None, None
+    given = choice.get("explanation")
+    if given not in (None, "", {}):
+        if isinstance(given, dict) and set(given) == {"pending"} and given["pending"] is True:
+            return {"state": "pending"}, None
+        target = given.get("entry") if isinstance(given, dict) and \
+            set(given) == {"entry"} else None
+        other = by_id.get(target) if isinstance(target, str) else None
+        if other is None or other.get("removed") is not None or \
+                target == item["entry"] or other.get("classification") != "Current":
+            return {"state": "pending"}, (
+                f"the explanation {str(target)[:70]!r} is no live Current entry here; "
+                f"name one, or leave the explanation pending")
+        return {"state": "linked", "entry": target, "title": other.get("title")}, None
+    expl = item.get("explanation") if item.get("proposed") == "Historical" else None
+    if expl and expl.get("state") == "linked":
+        other = by_id.get(expl["entry"])
+        if other is None or other.get("removed") is not None or \
+                other.get("classification") != "Current":
+            return {"state": "pending", "was": expl["entry"]}, None
+        return dict(expl), None
+    return {"state": "pending"}, None
+
+
+def _eval_history_line(draft: dict, ev: dict, reason: str, corrected: bool,
+                       explanation: dict | None, evidence: list[dict]) -> str | None:
+    """The one classification history line Apply writes, budgeted: the
+    reason, the attribution and the explanation are always whole — None
+    when they cannot fit — and then as many whole evidence references as
+    there is room for, with how many were left out."""
+    said = (f"{reason} — evaluated by the Brain Agent ({draft['id']}, round "
+            f"{ev.get('round')})" + (", corrected and applied by a person"
+                                    if corrected else ", applied by a person"))
+    if explanation and explanation.get("state") == "linked":
+        said += f"; explained now by {explanation['entry']}"
+    elif explanation:
+        said += "; Current explanation pending"
+    said = _one_line(said)
+    if len(reason) > EVAL_REASON_MAX or len(said) > brainwrite.MAX_REASON:
+        return None
+    refs: list[str] = []
+    for b in evidence:
+        ref = _one_line(b["ref"])
+        if len(said) + len("; evidence: " + ", ".join(refs + [ref])) > brainwrite.MAX_REASON:
+            break
+        refs.append(ref)
+    if refs:
+        said += "; evidence: " + ", ".join(refs)
+    left = len(evidence) - len(refs)
+    if left and len(said) + len(f" (+{left} more)") <= brainwrite.MAX_REASON:
+        said += f" (+{left} more)"
+    return said
+
+
 def _eval_plan(draft: dict, given=None) -> dict:
     """Everything Apply would do with these choices, read now: per entry,
     the classification before and after, the person's corrections, the
@@ -3743,22 +3818,17 @@ def _eval_plan(draft: dict, given=None) -> dict:
                         else item.get("invalidation"))
         if klass != "Superseded":
             target = invalidation = None
+        explanation, expl_problem = _eval_explanation(item, c, klass, by_id)
         row = {"entry": item["entry"], "title": item.get("title"),
                "current": item["current"], "proposed": item["proposed"],
                "classification": klass, "reason": reason, "corrected": corrected,
                "supersededBy": target, "invalidation": invalidation,
-               "explanation": item.get("explanation"), "missing": item.get("missing"),
+               "explanation": explanation, "missing": item.get("missing"),
                "uncertainty": item.get("uncertainty"), "signals": item.get("signals"),
                "evidence": [dict(b, drifted=b["ref"] in moved) for b in item["evidence"]],
                "override": None, "blocked": None}
-        # the explanation as it reads now: a linked page that has since gone
-        # or stopped being Current reads pending, never a dangling link
-        expl = item.get("explanation")
-        if expl and expl.get("state") == "linked":
-            other = by_id.get(expl["entry"])
-            if other is None or other.get("removed") is not None or \
-                    other.get("classification") != "Current":
-                row["explanation"] = {"state": "pending", "was": expl["entry"]}
+        said = _eval_history_line(draft, ev, reason, corrected, explanation,
+                                  item["evidence"])
         if klass not in brain.CLASSIFICATIONS:
             row["blocked"] = {"code": "invalid", "why": "the classification is one of "
                               + ", ".join(brain.CLASSIFICATIONS)}
@@ -3783,8 +3853,14 @@ def _eval_plan(draft: dict, given=None) -> dict:
         elif klass == "Superseded" and not (target or invalidation):
             row["blocked"] = {"code": "needs-replacement", "why": (
                 "Superseded needs the replacing entry or an explicit invalidation")}
+        elif expl_problem:
+            row["blocked"] = {"code": "invalid-explanation", "why": expl_problem}
         elif len(reason) < brainwrite.MIN_REASON:
             row["blocked"] = {"code": "needs-reason", "why": "give the reason"}
+        elif said is None:
+            row["blocked"] = {"code": "reason-too-long", "why": (
+                f"the reason is {len(reason)} characters; keep it to {EVAL_REASON_MAX} "
+                f"so the history line keeps its attribution and explanation whole")}
         default = (row["blocked"] is None and item["proposed"] != "Unclassified"
                    and bool(item["evidence"]))
         row["defaultSelected"] = default
@@ -3792,17 +3868,7 @@ def _eval_plan(draft: dict, given=None) -> dict:
         if row["selected"] and row["blocked"] is not None:
             blockers.append(dict(row["blocked"], entry=item["entry"]))
         if row["selected"] and row["blocked"] is None:
-            said = (f"{reason} — evaluated by the Brain Agent ({draft['id']}, round "
-                    f"{ev.get('round')})" + (", corrected and applied by a person"
-                                            if corrected else ", applied by a person"))
-            refs = ", ".join(b["ref"] for b in item["evidence"][:4])
-            if refs:
-                said += f"; evidence: {refs}"
-            if row["explanation"] and row["explanation"].get("state") == "linked":
-                said += f"; explained now by {row['explanation']['entry']}"
-            elif row["explanation"]:
-                said += "; Current explanation pending"
-            change = {"classification": klass, "reason": _one_line(said)[:brainwrite.MAX_REASON]}
+            change = {"classification": klass, "reason": said}
             if klass == "Superseded":
                 if target:
                     change["supersededBy"] = target
@@ -3819,7 +3885,8 @@ def _eval_plan(draft: dict, given=None) -> dict:
             blockers.append({"code": exc.extra.get("code") or "invalid", "why": str(exc),
                              **({"entry": exc.extra["id"]} if exc.extra.get("id") else {})})
     preview = brainwrite.digest({"rows": [{k: r[k] for k in (
-        "entry", "classification", "reason", "selected", "supersededBy", "invalidation")}
+        "entry", "classification", "reason", "selected", "supersededBy", "invalidation",
+        "explanation")}
         for r in rows], "batch": batch, "policy": policy,
         "revisions": {r["entry"]: (by_id.get(r["entry"]) or {}).get("revision")
                       for r in rows}})

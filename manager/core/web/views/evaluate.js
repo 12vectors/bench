@@ -35,7 +35,8 @@ const STATUS_WORDS = { running: 'Evaluating', questions: 'Waiting for your answe
 const BLOCK_WORDS = { override: 'Manual override holds', 'destination-changed': 'Entry changed',
   'source-drift': 'Evidence changed', 'no-change': 'No change', gone: 'Entry gone',
   'needs-replacement': 'Needs a replacement', 'needs-reason': 'Needs a reason',
-  invalid: 'Not a classification' };
+  invalid: 'Not a classification', 'invalid-explanation': 'Not a Current explanation',
+  'reason-too-long': 'Reason too long' };
 const PUSH_WORDS = { shared: 'Shared — the remote holds it', pending: 'Committed locally; sync pending',
   failed: 'Push failed', off: 'Not shared — BOARD_SYNC is off', 'not-committed': 'Not shared',
   conflict: 'Remote conflict' };
@@ -371,6 +372,10 @@ function rowHtml(row) {
     `<p><label for="${id}-why">Reason (kept in the entry's history)</label><br><input type="text" ` +
     `id="${id}-why" class="sd-wide" data-evchoice="${esc(row.entry)}" data-evfield="reason" ` +
     `value="${esc(c.reason !== undefined ? c.reason : row.reason || '')}"></p>` +
+    (klass === 'Historical' ? `<p><label for="${id}-ex">Explained now by (a Current entry's id; ` +
+      `empty leaves it pending)</label> <input type="text" id="${id}-ex" data-evchoice="${esc(row.entry)}" ` +
+      `data-evfield="explanation" value="${esc(c.explanation ? c.explanation.entry
+        : expl && expl.state === 'linked' ? expl.entry : '')}"></p>` : '') +
     (klass === 'Superseded' ? `<p><label for="${id}-by">Replaced by (entry id)</label> <input type="text" ` +
       `id="${id}-by" data-evchoice="${esc(row.entry)}" data-evfield="supersededBy" ` +
       `value="${esc(c.supersededBy !== undefined ? c.supersededBy : row.supersededBy || '')}"> ` +
@@ -496,7 +501,14 @@ function evalField(f, e) {
   }
   if (ds.evchoice !== undefined) {
     const c = ev.choices.get(ds.evchoice) || {};
-    c[ds.evfield] = ds.evfield === 'selected' ? f.checked : f.value;
+    if (ds.evfield === 'explanation') {
+      // an entry id names the maintained Current explanation; empty leaves it
+      // to the review, which says pending when none is named
+      const named = f.value.trim();
+      if (named) c.explanation = { entry: named }; else delete c.explanation;
+    } else {
+      c[ds.evfield] = ds.evfield === 'selected' ? f.checked : f.value;
+    }
     ev.choices.set(ds.evchoice, c);
     ev.applyArmed = false;
     // a checkbox, a choice or leaving a field asks for the review again, so

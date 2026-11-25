@@ -31,6 +31,7 @@ import json
 import stat
 import time
 import unittest
+from unittest import mock
 
 from tests.test_braindraft import _Board, wait_for
 
@@ -38,6 +39,7 @@ import brain  # noqa: E402
 import braindraft  # noqa: E402
 import brainwrite  # noqa: E402
 import config  # noqa: E402
+import profiles  # noqa: E402
 
 
 def entry(eid: str, title: str, kind: str, klass: str, body: str,
@@ -318,8 +320,16 @@ class Journey(_Evaluating):
                       "evidence": ["app:src/export.py"]},
                      dict(JSON_CURRENT, uncertainty="half of it is built; the rest is not")])
         draft = self.evaluate(["e-csv-study", "e-json-study"])
+        rows = {r["entry"]: r for r in self.review(draft)["items"]}
+        # the partly built investigation stays Current, what is open said as
+        # uncertainty, and nothing is written for it
+        self.assertEqual(rows["e-json-study"]["classification"], "Current")
+        self.assertEqual(rows["e-json-study"]["blocked"]["code"], "no-change")
+        self.assertIn("half of it is built", rows["e-json-study"]["uncertainty"])
+        self.assertIsNone(rows["e-csv-study"]["explanation"])
         self.apply(draft)
         self.assertEqual(self.klass("e-csv-study"), "Current")
+        self.assertEqual(self.files()["e-json-study.md"], ENTRIES["e-json-study"])
 
 
 class Rules(_Evaluating):
@@ -386,12 +396,98 @@ class Rules(_Evaluating):
             "**Classification:** Superseded\n**Superseded by:** e-old-delimiter"))
         self.script([dict(OLD_SUPERSEDED, evidence=["app:src/export.py"])])
         draft = self.evaluate(["e-old-delimiter"])
-        if draft["status"] == "proposed":
-            review = self.review(draft)
-            self.assertFalse(review["ready"])
-            with self.assertRaises(braindraft.Refused):
-                self.apply(draft, review=review)
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        before = self.files()
+        review = self.review(draft)
+        self.assertFalse(review["ready"])
+        self.assertTrue(review["blockers"])
+        with self.assertRaises(braindraft.Refused):
+            self.apply(draft, review=review)
         self.assertEqual(self.klass("e-old-delimiter"), "Current")
+        self.assertEqual(self.files(), before)
+
+    def test_a_loop_within_one_batch_is_refused(self):
+        # neither link is a loop alone: together, in one batch, they are
+        self.script([dict(OLD_SUPERSEDED, supersededBy="e-json-study"),
+                     dict(JSON_CURRENT, proposed="Superseded", supersededBy="e-old-delimiter",
+                          reason="the comma decision replaced it",
+                          evidence=["work:plans/export-plan.md"])])
+        draft = self.evaluate(["e-old-delimiter", "e-json-study"])
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        before = self.files()
+        review = self.review(draft)
+        rows = {r["entry"]: r for r in review["items"]}
+        self.assertIsNone(rows["e-old-delimiter"]["blocked"])
+        self.assertIsNone(rows["e-json-study"]["blocked"])
+        self.assertFalse(review["ready"])
+        self.assertTrue(review["blockers"])
+        with self.assertRaises(braindraft.Refused):
+            self.apply(draft, review=review)
+        self.assertEqual(self.files(), before)
+        self.assertEqual(self.klass("e-json-study"), "Current")
+
+    def test_the_history_line_keeps_its_explanation_whatever_the_reason(self):
+        long_reason = "the semicolon export is implemented " + "x" * 260
+        refs = ["app:src/export.py", "work:tasks/done/12-export-as-csv.md",
+                "work:plans/export-plan.md", "app:src/export.py"]
+        self.script([dict(CSV_HISTORICAL, reason=long_reason[:braindraft.EVAL_REASON_MAX],
+                          evidence=refs)])
+        draft = self.evaluate(["e-csv-study"])
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        self.apply(draft)
+        line = brain.entry("e-csv-study")["history"][-1]["reason"]
+        self.assertLessEqual(len(line), brainwrite.MAX_REASON)
+        self.assertIn("explained now by e-exports", line)
+        self.assertIn(f"evaluated by the Brain Agent ({draft['id']}", line)
+        # evidence is clipped at whole references, never mid-reference
+        self.assertIn("; evidence: app:src/export.py", line)
+        listed = line.split("; evidence: ", 1)[1].split(" (+")[0].split(", ")
+        for ref in listed:
+            self.assertIn(ref, refs)
+
+    def test_an_over_long_reason_from_the_agent_is_refused(self):
+        got = self.refused(dict(CSV_HISTORICAL, reason="y" * (braindraft.EVAL_REASON_MAX + 1)))
+        self.assertIn("e-csv-study", got)
+
+    def test_a_person_s_long_reason_is_held_not_clipped(self):
+        draft = self.evaluate()
+        choices = [{"entry": "e-csv-study", "selected": True,
+                    "reason": "z" * (braindraft.EVAL_REASON_MAX + 5)}]
+        row = next(r for r in self.review(draft, choices)["items"]
+                   if r["entry"] == "e-csv-study")
+        self.assertEqual(row["blocked"]["code"], "reason-too-long")
+        with self.assertRaises(braindraft.Refused) as caught:
+            self.apply(draft, choices)
+        self.assertEqual(caught.exception.extra.get("code"), "reason-too-long")
+        self.assertEqual(self.klass("e-csv-study"), "Current")
+
+    def test_the_explanation_follows_the_classification_applied(self):
+        draft = self.evaluate()
+        # a person corrects the muddle to Historical, naming no explanation
+        choices = [{"entry": "e-muddle", "selected": True, "classification": "Historical",
+                    "reason": "UTF-8 shipped long ago"},
+                   # and corrects the agent's Historical proposal to Current
+                   {"entry": "e-csv-study", "selected": True, "classification": "Superseded",
+                    "supersededBy": "e-exports", "reason": "the exports page replaced it"}]
+        rows = {r["entry"]: r for r in self.review(draft, choices)["items"]}
+        self.assertEqual(rows["e-muddle"]["explanation"], {"state": "pending"})
+        self.assertIsNone(rows["e-csv-study"]["explanation"])
+        # a person may name the Current explanation themselves
+        named = [dict(choices[0], explanation={"entry": "e-exports"}), choices[1]]
+        rows = {r["entry"]: r for r in self.review(draft, named)["items"]}
+        self.assertEqual(rows["e-muddle"]["explanation"]["entry"], "e-exports")
+        # and one that is not a live Current entry is held, never linked
+        bad = [dict(choices[0], explanation={"entry": "e-old-delimiter-gone"})]
+        rows = {r["entry"]: r for r in self.review(draft, bad)["items"]}
+        self.assertEqual(rows["e-muddle"]["blocked"]["code"], "invalid-explanation")
+        self.apply(draft, choices)
+        muddle = brain.entry("e-muddle")["history"][-1]["reason"]
+        self.assertIn("Current explanation pending", muddle)
+        self.assertIn("corrected and applied by a person", muddle)
+        csv = brain.entry("e-csv-study")["history"][-1]["reason"]
+        self.assertNotIn("explained now by", csv)
+        self.assertNotIn("explanation pending", csv)
+        self.assertEqual(self.klass("e-csv-study"), "Superseded")
 
 
 class Guards(_Evaluating):
@@ -457,6 +553,45 @@ class Guards(_Evaluating):
                 "choices": [{"entry": "e-old-delimiter", "selected": False}]})
         self.assertEqual(caught.exception.extra.get("code"), "preview-stale")
         self.assertEqual(self.klass("e-old-delimiter"), "Current")
+
+    def other_policy(self):
+        real = profiles.resolve
+
+        def other(intent, *a, **k):
+            return dict(real(intent, *a, **k), policyId="another-policy")
+        return mock.patch.object(profiles, "resolve", other)
+
+    def test_a_changed_policy_refuses_apply(self):
+        draft = self.evaluate()
+        before = self.files()
+        with self.other_policy():
+            review = self.review(draft)
+            self.assertIn("policy-drift", [b["code"] for b in review["blockers"]])
+            with self.assertRaises(braindraft.Refused) as caught:
+                self.apply(draft, review=review)
+        self.assertEqual(caught.exception.extra.get("code"), "policy-drift")
+        self.assertEqual(self.files(), before)
+
+    def test_a_changed_policy_refuses_continue(self):
+        self.script([], outcome="questions")
+        draft = self.evaluate()
+        self.assertEqual(draft["status"], "questions")
+        with self.other_policy():
+            with self.assertRaises(braindraft.Refused) as caught:
+                braindraft.continue_({"id": draft["id"], "request": self.key(),
+                                      "round": draft["round"], "answers": {"q1": "on"}})
+        self.assertEqual(caught.exception.extra.get("code"), "policy-drift")
+        self.assertEqual(self.calls(), 1)
+
+    def test_a_changed_source_refuses_continue(self):
+        self.script([], outcome="questions")
+        draft = self.evaluate()
+        (self.work / "plans" / "export-plan.md").write_text("changed between rounds\n")
+        with self.assertRaises(braindraft.Refused) as caught:
+            braindraft.continue_({"id": draft["id"], "request": self.key(),
+                                  "round": draft["round"], "answers": {"q1": "on"}})
+        self.assertEqual(caught.exception.extra.get("code"), "approval-stale")
+        self.assertEqual(self.calls(), 1)
 
     def test_the_single_entry_apply_refuses_an_evaluation(self):
         draft = self.evaluate()
