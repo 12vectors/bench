@@ -50,6 +50,33 @@ and what is not. Work that was rejected, reverted or reopened is said as
 such, from the sources that show it. Where sources conflict, propose
 Unclassified rather than pick a side.
 
+## Keeping the existing explanation current
+
+When the evidence changes what the project's maintained explanation
+should say — most often when an investigation was implemented — you may
+propose, in an evaluation's optional `maintain`, an update of ONE section
+of the EXISTING Current explanation it concerns: the entry named in
+`explanation`, an entry related to it, one citing the same card, or the
+evaluated entry itself while it stays Current. Never propose a new page:
+if no explanation exists, leave `maintain` out and say the explanation is
+pending.
+
+- `append` adds a new `##` section; `replace` rewrites one that exists.
+  A section whose first line begins `_Maintained from evidence` is one the
+  board maintains; every other part of an entry is a person's text, and
+  replacing it is the person's decision — prefer appending.
+- `body` is the section's text: Markdown with `###` and below, no `#` or
+  `##` heading, no HTML comment. Explain; do not copy sources.
+- Every claim says its `status`. `implemented` needs evidence in the code
+  (`app:`); a card in Done, a plan or a PR never shows it. Do not claim
+  `deployed`: the board binds no deployment evidence, so say `unknown`.
+  `agreed-future` cites where it was agreed. Put what the evidence does
+  not support in `uncovered` rather than leaving it out.
+- `scope` is `policy` when the update changes a working agreement, an
+  agent's authority or a human policy; otherwise `factual`. A convention
+  you observed is `inferred-convention`, never an approved agreement; a
+  person authorizes any policy wording.
+
 ## What you may read
 
 The application checkout you are started in:
