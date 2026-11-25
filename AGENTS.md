@@ -453,7 +453,9 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   no entry itself (see "Drafting with the Brain Agent"). Its `evaluate`
   mode (task 196) proposes classifications for selected entries, applied
   as a batch of classification-only items (see "Evaluating
-  classifications with evidence")
+  classifications with evidence"), and — task 199 — an update of one
+  section of the existing explanation each concerns, in the same batch
+  (see "Maintaining the existing explanation from evidence")
 - `brainreconcile.py` — keeping Brain classifications reconciled with the
   work (task 197): the off-by-default policy and its two authorities
   (evaluate, apply), the durable queue an entry joins when a card it cites
