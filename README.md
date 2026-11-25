@@ -325,6 +325,17 @@ saved, committed and shared said apart. See "Seeding the Brain:
 inspecting approved sources", "Generating a private seed draft" and
 "Reviewing and applying a seed draft" in `AGENTS.md`.
 
+As work lands, **Evaluate classifications** on the Brain asks the Brain
+Agent whether entries you select are still classified right. After a
+preview of the model, the sources and their revisions, it proposes a
+classification per entry with the evidence it read: an implemented
+investigation becomes Historical only with evidence in the code (a card
+in Done is a reason to look again, not proof), and its Current
+explanation is linked or said to be pending. You correct and choose, and
+**Apply** writes only those classifications, as one batch; an entry with
+a manual override is never changed by it. See "Evaluating
+classifications with evidence" in `AGENTS.md`.
+
 ## Update
 
 ```bash

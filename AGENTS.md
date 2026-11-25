@@ -450,7 +450,10 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   by exact reads, its follow-up questions or proposal validated and its
   citations re-read, and the person's Apply written through `brainwrite`
   under the destination's revision and the sources' bindings. It writes
-  no entry itself (see "Drafting with the Brain Agent")
+  no entry itself (see "Drafting with the Brain Agent"). Its `evaluate`
+  mode (task 196) proposes classifications for selected entries, applied
+  as a batch of classification-only items (see "Evaluating
+  classifications with evidence")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -1538,8 +1541,11 @@ library below it is unchanged and still lists every entry. An empty
 Brain offers **Seed Brain**: inspecting approved sources (task 192),
 generating a private draft (task 193), and reviewing it section by
 section and applying what a person chooses as one batch (task 194).
-Automatic classification is a later phase, and nothing on the page
-offers it.
+**Evaluate classifications**, a panel on the same page, asks the Brain
+Agent to propose classifications for entries a person selects, with
+their evidence, and a person applies what they choose (task 196,
+"Evaluating classifications with evidence"). Event-driven classification
+is a later card, and nothing on the page offers it.
 
 ### The page's script: modules under a policy
 
@@ -1874,8 +1880,12 @@ sources (task 192, "Seeding the Brain: inspecting approved sources") and
 generating a private, evidence-linked draft from exactly those (task
 193, "Generating a private seed draft"), and a person reviewing it and
 applying the sections they choose as one all-or-none batch (task 194,
-"Reviewing and applying a seed draft"). What it does not do yet, said
-so nobody looks for it: any agent classification. A run is given no
+"Reviewing and applying a seed draft"). Classifications can be
+evaluated on request: a person selects entries, the Brain Agent proposes
+with evidence, and a person's reviewed Apply writes only classification
+metadata (task 196, "Evaluating classifications with evidence"). What it
+does not do yet, said so nobody looks for it: classify by itself on a
+card's update. A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2691,6 +2701,135 @@ drives the page by pointer and keyboard at 1280 and 390 pixels in both
 themes. The real-agent seed probe (`develop/brain-agent-probe.py --seed`)
 still proves generation only; applying is deterministic and needs no
 model.
+
+### Evaluating classifications with evidence
+
+A classification says what an entry is now: the operative explanation,
+history, replaced, or not known. Work moves on and the classification
+does not follow by itself. **Evaluate classifications** (task 196), a
+panel on the Brain's list, asks the Brain Agent whether chosen entries
+are still classified right, from the code, the cards and the plans, and
+leaves every write to a person. It is a mode of the Brain drafting
+request — the same store, rounds, questions, cancellation, time limit,
+restart handling, launch accounting and `brain` intent — not a second
+agent stack, and the run never writes `brain/`.
+
+**The journey, and what each step costs.**
+
+| step | what happens | launches | writes |
+| --- | --- | --- | --- |
+| **Choose entries to evaluate** | up to eight maintained entries, by checkbox | nothing | nothing |
+| **Review what Evaluate would use** | `POST /api/brain/evaluate/preflight` `{entries}`: each entry's classification, revision and any manual override; the cards they cite and whether the bounded selection pins each; the harness, model and profile; every work-root source and its sha256; the application's commit; the budget; the rules; and an **approval** digest over all of it | nothing | nothing |
+| **Evaluate** (armed) | `POST /api/brain/evaluate/start` `{request, entries, approval, text?}`: one read-only round | one run | the private request |
+| the agent asks | *Waiting for your answers* | — | — |
+| **Continue**, **Cancel**, **Discard** | the drafting routes | one run, or nothing | the private request |
+| **Review proposals** | `POST /api/brain/evaluate/review` `{id, choices}` — a read with a body | nothing | nothing |
+| correct, choose | per entry: a checkbox, the classification, the reason, a replacement or invalidation; each change asks for the review again | nothing | nothing |
+| **Apply N classifications** (armed) | `POST /api/brain/evaluate/apply` `{id, request, round, preview, choices}` | nothing | one batch |
+
+Evaluate must name the approval its preview showed: a changed entry,
+source, model, policy or template since the preview refuses it
+(`approval-stale`) with nothing launched. A harness that cannot run the
+`brain` intent read-only with exact reads — opencode today — is refused
+by name in the preview and at Evaluate. A board that restarts closes a
+round in flight as failed, naming the restart; nothing is relaunched by
+itself, and Continue is the person's way on.
+
+**What a proposal must be.** One JSON object, kind
+`bench-brain-evaluation`, with one evaluation per selected entry: the
+entry, its classification as the round read it, the proposed
+classification, a one-line reason, the evidence it cites (`work:`,
+`entry:` or `app:` references bench re-reads and binds, exactly as a
+drafting round's citations), what stays uncertain, and the reassessment
+signals it saw. Bench validates each entry's proposal on its own and
+refuses one that:
+
+- is about an entry the person did not select, or names the wrong
+  current classification;
+- changes a classification and cites nothing bench could bind, or cites a
+  credential-shaped path, bench's private state or a source the round was
+  not given;
+- proposes **Historical** without evidence in the code (an `app:`
+  citation): a card's stage, a card edit or a pull request is a
+  reassessment signal, never proof of implementation or deployment;
+- proposes **Historical** without naming the maintained **Current**
+  explanation (`{"entry": "<id>"}` — an entry that exists and is Current)
+  or saying it is pending (`{"pending": true}`);
+- proposes **Superseded** without the replacing entry or an explicit
+  invalidation — age and completion are not supersession;
+- proposes **Unclassified** without saying what evidence is missing and
+  how to get it;
+- carries an HTML comment, a control or direction-changing character, or
+  an unknown field.
+
+The proposals that pass are the evaluation; the rest are listed as
+refused, and an entry the run left out is said to be not evaluated.
+**Current** may stay Current for an accepted investigation that is not
+built: Current is never a claim that something shipped. A partly built
+investigation stays Current with what is open said as uncertainty; work
+that was reverted or reopened may go back from Historical to Current with
+its evidence; rejected work is Superseded with its invalidation; and
+conflicting sources are Unclassified.
+
+**The review, per entry.** The classification before and after (the
+person's correction marked as theirs), the reason, every bound citation
+with its sha256 and *changed since it was read* where it has, the
+reassessment signals said as signals, what is missing, the uncertainty,
+and the explanation: **Explained now by** the linked Current entry, or
+**Current explanation pending** — no page is invented and no link is
+made to an entry that does not exist (a linked entry that has since
+stopped being Current reads pending). Selected to begin with: a changed
+classification with bound evidence that nothing blocks. An Unclassified
+proposal is offered and not selected. An entry cannot be applied when:
+
+| code | when |
+| --- | --- |
+| `override` | it carries a person's manual override — an evaluation never reverses it. Clear the override on the entry's own page first |
+| `destination-changed` | the entry changed since the round read it; evaluate it again |
+| `source-drift` | a source its proposal cites no longer holds the bytes it was read at |
+| `no-change`, `needs-replacement`, `needs-reason`, `gone` | nothing would change, Superseded names nothing, there is no reason, or the entry is retired |
+
+**Apply is one batch of classifications.** It is the seed's
+all-or-none writer (`brainwrite.write_batch`) with classification-only
+items — `{"id", "expected", "classify": {"classification", "reason",
+"supersededBy" | "invalidation"}}` — planned exactly as a person's
+**Classify** is (revision guard, reason rules, the replacement must be a
+live entry, no supersession loop, the batch's links read as a whole) and
+refusing an entry with a manual override even if asked directly. It
+changes the **Classification** field, its supersession link and one
+history line per entry, attributed to this board's git identity and
+saying which request and round proposed it, whether a person corrected
+it, its evidence and its explanation (`explained now by <id>` or
+`Current explanation pending`). It never writes an entry's text, a card,
+a review report, its verdict or its source binding, an application file
+or handbook prose. Apply is refused with nothing written on a stale
+preview (`preview-stale`), a stale round (`round-stale`), a changed
+policy (`policy-drift`), and every row code above for a selected entry.
+The same request identity again answers with the first outcome; an Apply
+whose reply was lost is settled from the Brain's journal at the next
+Apply and at start-up. **Saved**, **Committed** and **Shared** are said
+apart afterwards, with **Retry commit** and **Push now** / **Retry
+push**, exactly as for a person's own write.
+
+**Not in this version:** classifying on a card's update, rebuilding every
+entry's classification, writing or repairing handbook prose, and
+classifying review projections (a review's classification record stays a
+person's, under `brain/reviews/`).
+
+**What is proved, and what is not.** `tests/test_brainevaluate.py` drives
+the lifecycle through the Claude adapter's real `run` against a stub
+vendor on #175's split fixture: the preview a read, approval and harness
+refusals, a Current unimplemented investigation, an evidence-confirmed
+Historical one linked or pending, an explicit Superseded replacement and
+invalidation, an Unclassified conflict, a reverted implementation,
+questions, cancellation and restart, a person's correction, a double
+click and a lost reply, an override held at the review and in the writer
+itself, entry, source and preview drift, a supersession loop, and a
+proposal about another entry, an unbound citation and an injected record
+marker each refused. `verify/browser_cases/case_brain_evaluate.py`
+drives the page by pointer and keyboard at 1280 and 390 pixels in both
+themes. Whether a real model evaluates well is a separately approved,
+billable run nothing starts by itself.
 
 ### Drafting with the Brain Agent
 

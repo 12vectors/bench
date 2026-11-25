@@ -181,7 +181,11 @@ handbook record, journalled before it touches a file, staged under hidden
 names and switched in under `brain.VISIBLE`, the lock every reading of
 `brain/` (and `handbook.read_record`) takes, so a reader in this process
 sees none or all of a batch; `brainwrite.recover` settles a batch a dead
-process left part way.
+process left part way. Since task 196 an `evaluate` mode of the same
+request proposes classifications for selected entries; its Apply rides
+the same batch with classification-only items (`classify`), planned by
+`brainwrite`'s own Classify plan, refusing an entry with a manual
+override, and checking the batch's supersession links as a whole.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
