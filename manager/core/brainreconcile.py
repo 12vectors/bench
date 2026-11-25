@@ -89,8 +89,12 @@ KIND = "bench-brain-reconcile"
 POLICY_KIND = "bench-brain-reconcile-policy"
 LIMITS = {"dailyLaunches": (0, 48, 4), "retries": (0, 5, 2),
           "batch": (1, braindraft.MAX_EVAL_ENTRIES, 4)}
-POLICY_KEYS = {"v", "kind", "enabled", "evaluate", "apply", "dailyLaunches",
+POLICY_KEYS = {"v", "kind", "enabled", "evaluate", "apply", "maintain", "dailyLaunches",
                "retries", "batch", "at", "actor", "history"}
+# The authorities, in the order each needs the one before it. `maintain`
+# (task 199) is optional in the file: a policy written before it grants
+# no explanation update, and reads exactly as it did.
+WORDS = ("enabled", "evaluate", "apply", "maintain")
 SETTLE = 60.0          # seconds an entry's inputs hold still before it launches
 BACKOFF = 120.0        # the first retry's delay; doubled per attempt
 DAY = 24 * 3600
@@ -142,7 +146,7 @@ def read_policy() -> dict:
     `invalid` and grants nothing either. A read."""
     path = policy_path()
     base = {"state": "unconfigured", "enabled": False, "evaluate": False, "apply": False,
-            "revision": "none", "problem": None, "at": None, "actor": None,
+            "maintain": False, "revision": "none", "problem": None, "at": None, "actor": None,
             "history": [], "file": "manager/local/brain-reconcile.json",
             **{k: v[2] for k, v in LIMITS.items()}}
     if not path.exists() and not path.is_symlink():
@@ -162,7 +166,7 @@ def read_policy() -> dict:
         return dict(base, state="invalid", revision=revision, problem=problem)
     return dict(base, state="configured", revision=revision,
                 enabled=raw["enabled"], evaluate=raw["evaluate"], apply=raw["apply"],
-                at=raw.get("at"), actor=raw.get("actor"),
+                maintain=raw.get("maintain", False), at=raw.get("at"), actor=raw.get("actor"),
                 history=list(raw.get("history") or [])[-MAX_HISTORY:],
                 **{k: raw.get(k, v[2]) for k, v in LIMITS.items()})
 
@@ -180,6 +184,11 @@ def _policy_problem(raw) -> str | None:
             return f"{k} is true or false"
     if raw["apply"] and not raw["evaluate"]:
         return "apply needs evaluate: nothing is applied that was not evaluated"
+    if not isinstance(raw.get("maintain", False), bool):
+        return "maintain is true or false"
+    if raw.get("maintain") and not raw["apply"]:
+        return ("maintain needs apply: an explanation is updated only with the "
+                "classification it rides with")
     for k, (low, high, _) in LIMITS.items():
         v = raw.get(k, LIMITS[k][2])
         if not isinstance(v, int) or isinstance(v, bool) or not low <= v <= high:
@@ -195,6 +204,7 @@ def effective(policy: dict | None = None, owner: dict | None = None) -> dict:
     on = p["state"] == "configured" and p["enabled"]
     evaluates = on and p["evaluate"]
     applies = evaluates and p["apply"]
+    maintains = applies and bool(p.get("maintain"))
     if p["state"] == "unconfigured":
         why = ("not configured: nothing is queued or launched until a person turns "
                "reconciliation on")
@@ -206,13 +216,17 @@ def effective(policy: dict | None = None, owner: dict | None = None) -> dict:
         why = "on, without the evaluate authority: nothing is launched"
     elif not o["allowed"]:
         why = f"this board does not execute: {o['reason']}"
+    elif maintains:
+        why = ("evaluates entries whose inputs moved, and applies the proposals bench "
+               "selects by default under this policy, with their factual explanation "
+               "updates")
     elif applies:
         why = ("evaluates entries whose inputs moved, and applies the proposals bench "
                "selects by default under this policy")
     else:
         why = ("evaluates entries whose inputs moved; every proposal waits for a "
                "person's review and Apply")
-    return {"on": on, "evaluate": evaluates, "apply": applies,
+    return {"on": on, "evaluate": evaluates, "apply": applies, "maintain": maintains,
             "executes": bool(o["allowed"]), "owner": o.get("code"),
             "ownerReason": o.get("reason"), "runs": evaluates and bool(o["allowed"]),
             "why": why}
@@ -234,24 +248,32 @@ def set_policy(payload: dict) -> dict:
         if current["state"] == "invalid" and current["revision"] == "unreadable":
             raise Refused("the policy file cannot be read; fix or remove it by hand", 409)
         doc = {"v": VERSION, "kind": POLICY_KIND}
-        for k in ("enabled", "evaluate", "apply"):
+        for k in WORDS:
             v = payload.get(k, current[k])
             if not isinstance(v, bool):
                 raise Refused(f"{k} is true or false", field=k)
             doc[k] = v
+        if not doc["apply"] and "maintain" not in payload:
+            # revoking apply revokes what rides on it
+            doc["maintain"] = False
+        if not doc["maintain"] and "maintain" not in payload and \
+                current["state"] == "configured":
+            # an older page that knows nothing of maintain leaves the file
+            # as it reads: without the key
+            doc.pop("maintain")
         for k in LIMITS:
             doc[k] = payload.get(k, current[k])
         problem = _policy_problem(doc)
         if problem:
             raise Refused(problem)
         who = acceptance.actor()
-        changed = [k for k in ("enabled", "evaluate", "apply", *LIMITS)
-                   if doc[k] != current[k] or current["state"] != "configured"]
+        changed = [k for k in (*WORDS, *LIMITS)
+                   if doc.get(k, False) != current[k] or current["state"] != "configured"]
         if not changed:
             raise Refused("that is the policy already in force; nothing was written")
         line = {"at": _now(), "actor": who["name"] or "unknown",
                 "actorSource": who["source"],
-                "change": {k: doc[k] for k in changed}}
+                "change": {k: doc.get(k, False) for k in changed}}
         doc.update(at=line["at"], actor=line["actor"],
                    history=(current["history"] + [line])[-MAX_HISTORY:])
         records.write_json(policy_path(), doc, durable=True)
@@ -261,7 +283,7 @@ def set_policy(payload: dict) -> dict:
 
 
 def _public_policy(p: dict) -> dict:
-    return {k: p[k] for k in ("state", "enabled", "evaluate", "apply", "revision",
+    return {k: p[k] for k in ("state", "enabled", "evaluate", "apply", "maintain", "revision",
                               "problem", "at", "actor", "history", "file", *LIMITS)}
 
 
@@ -700,7 +722,8 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
     if eff["apply"] and candidates:
         request = f"{key}-apply-{op['round']}"
         try:
-            out = braindraft.evaluate_auto_apply(d["id"], request, candidates)
+            out = braindraft.evaluate_auto_apply(d["id"], request, candidates,
+                                                 maintain=eff["maintain"])
             for row in out.get("items") or []:
                 if row.get("selected") and not row.get("blocked") and \
                         row["entry"] in candidates:
@@ -1002,7 +1025,11 @@ def reading() -> dict:
                         "inputs moved; proposals wait for a person's review",
             "apply": "the proposals bench selects by default are applied under this "
                      "policy, attributed as such; never a correction, never an entry "
-                     "with a manual override"},
+                     "with a manual override",
+            "maintain": "with apply, a proposal's factual update of one section bench "
+                        "maintains in an existing explanation is applied with its "
+                        "classification; a person's section, a working-agreement "
+                        "change or an edit is never applied by this policy"},
         "rules": [
             "a change to a card an entry cites queues it; changes before it launches "
             "coalesce into one place in the queue",

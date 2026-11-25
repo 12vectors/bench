@@ -37,6 +37,19 @@ const BLOCK_WORDS = { override: 'Manual override holds', 'destination-changed': 
   'needs-replacement': 'Needs a replacement', 'needs-reason': 'Needs a reason',
   invalid: 'Not a classification', 'invalid-explanation': 'Not a Current explanation',
   'reason-too-long': 'Reason too long' };
+// an explanation update (task 199): what holds it, and how it lands with
+// its classification — one half is never shown as a complete result
+const MAINT_BLOCK_WORDS = { 'human-owned': "A person's section", 'policy-authorization': 'Needs your authorization',
+  'destination-changed': 'Explanation changed', 'source-drift': 'Evidence changed',
+  'invalid-text': 'Your edit cannot be written', reclassified: 'Explanation reclassified here',
+  gone: 'Explanation gone', 'not-current': 'No longer Current', 'section-missing': 'Section gone' };
+const COUPLING_WORDS = { complete: 'The classification and the explanation update apply together',
+  'explanation-pending': 'Explanation update pending — the classification applies without it',
+  'classification-pending': 'Classification pending — only the explanation update applies' };
+const OWNER_WORDS = { new: 'a new section', bench: 'a section bench maintains', person: "a person's section",
+  missing: 'a section that is gone' };
+const CLAIM_WORDS = { implemented: 'Implemented in the source', deployed: 'Deployed',
+  'agreed-future': 'Agreed, not built', unresolved: 'Unresolved', unknown: 'Not known' };
 const PUSH_WORDS = { shared: 'Shared — the remote holds it', pending: 'Committed locally; sync pending',
   failed: 'Push failed', off: 'Not shared — BOARD_SYNC is off', 'not-committed': 'Not shared',
   conflict: 'Remote conflict' };
@@ -385,7 +398,53 @@ function rowHtml(row) {
       `<label for="${id}-inv">or the invalidation</label> <input type="text" id="${id}-inv" ` +
       `data-evchoice="${esc(row.entry)}" data-evfield="invalidation" ` +
       `value="${esc(c.invalidation !== undefined ? c.invalidation : row.invalidation || '')}"></p>` : '') +
-    '</article>';
+    maintHtml(row) + '</article>';
+}
+
+/* The proposed update of the existing explanation (task 199): one section,
+   its before and after, who owns it, whether it is a fact or a working
+   agreement, every claim and what is not supported — and the person's
+   edit, resolution and authorization, each sent only through the review. */
+function maintHtml(row) {
+  const m = row.maintain;
+  if (!m) {
+    return row.maintainRefused ? `<p class="b-warn" role="status"><b>Explanation update refused.</b> ` +
+      `${esc(row.maintainRefused.join('; '))} The classification proposal stands on its own.</p>` : '';
+  }
+  const id = `ev-m-${esc(row.entry)}`;
+  const mc = (ev.choices.get(row.entry) || {}).maintain || {};
+  const blocked = m.blocked ? `<p class="b-warn" role="status"><b>${esc(MAINT_BLOCK_WORDS[m.blocked.code] || m.blocked.code)}.</b> ` +
+    `${esc(m.blocked.why)}</p>` : '';
+  const claims = (m.claims || []).map(c => `<li><b>${esc(CLAIM_WORDS[c.status] || c.status)}</b>` +
+    `${c.authority ? ` <span class="b-note">(${esc(c.authority)})</span>` : ''} — ${esc(c.claim)}` +
+    `${(c.evidence || []).length ? ` <span class="b-note">${c.evidence.map(b => esc(b.ref)).join(', ')}</span>` : ''}</li>`).join('');
+  const uncovered = (m.uncovered || []).map(u => `<li>${esc(u)}</li>`).join('');
+  const body = mc.body !== undefined ? mc.body : m.body;
+  return `<section class="ev-maint" aria-labelledby="${id}-h">` +
+    `<h5 id="${id}-h">Update of its explanation: <a href="/brain/e/${encodeURIComponent(m.entry)}" data-route>` +
+    `${esc(m.title || m.entry)}</a> § ${esc(m.section)}</h5>` +
+    (row.coupling ? `<p class="b-note" role="status">${esc(COUPLING_WORDS[row.coupling] || row.coupling)}</p>` : '') +
+    `<p class="sd-row"><input type="checkbox" id="${id}-sel" data-evmaint="${esc(row.entry)}" data-evmfield="selected"` +
+    `${m.selected ? ' checked' : ''}> <label for="${id}-sel">Apply this update: ${m.operation === 'replace' ? 'replace' : 'add'} ` +
+    `${esc(OWNER_WORDS[m.owner] || m.owner)}${m.edited ? ' (your edit)' : ''}</label></p>` + blocked +
+    '<dl class="sd-facts">' +
+    `<dt>Kind of change</dt><dd>${m.policy && m.policy.length
+      ? `<b>Working agreement</b> — ${esc(m.policy.join('; '))}. It needs your authorization, and it never writes **Policy:**`
+      : 'Factual documentation'}</dd>` +
+    `<dt>Claims</dt><dd>${claims ? `<ul class="sd-list">${claims}</ul>` : '—'}</dd>` +
+    (uncovered ? `<dt>Not supported yet</dt><dd><ul class="sd-list">${uncovered}</ul></dd>` : '') +
+    `<dt>Held to</dt><dd>revision <code>${esc(short(m.revision, 16))}</code> of <code>${esc(m.entry)}</code></dd></dl>` +
+    (m.before ? `<details class="sd-excl"><summary>The section now</summary><pre class="ev-diff">${esc(m.before)}</pre></details>` : '') +
+    `<details class="sd-excl" open><summary>The section after Apply</summary><pre class="ev-diff">${esc(m.after)}</pre></details>` +
+    `<p><label for="${id}-body">The section's text (yours to edit; ### and below)</label><br>` +
+    `<textarea id="${id}-body" rows="6" class="sd-wide" data-evmaint="${esc(row.entry)}" data-evmfield="body">${esc(body)}</textarea></p>` +
+    (m.owner === 'person' ? `<p class="sd-row"><input type="checkbox" id="${id}-res" data-evmaint="${esc(row.entry)}" ` +
+      `data-evmfield="resolution"${mc.resolution === 'replace-human' ? ' checked' : ''}> <label for="${id}-res">` +
+      'Replace this person\'s section with the update</label></p>' : '') +
+    (m.policy && m.policy.length ? `<p><label for="${id}-auth">Why you authorize this working-agreement wording ` +
+      `(kept with your name in the section)</label><br><input type="text" id="${id}-auth" class="sd-wide" ` +
+      `data-evmaint="${esc(row.entry)}" data-evmfield="authorize" value="${esc(mc.authorize || '')}"></p>` : '') +
+    '</section>';
 }
 
 function reviewHtml() {
@@ -393,8 +452,8 @@ function reviewHtml() {
   if (!d || !['proposed', 'applying'].includes(d.status)) return '';
   const r = ev.review;
   const head = '<section class="b-panel" id="ev-review" tabindex="-1" aria-labelledby="ev-h-review">' +
-    '<h3 id="ev-h-review">Review and apply</h3><p>Correct and choose the classifications to apply. ' +
-    'Apply is separate: one batch, all or nothing, changing classification metadata only.</p>';
+    '<h3 id="ev-h-review">Review and apply</h3><p>Correct and choose the classifications to apply, and ' +
+    'any update of an existing explanation. Apply is separate: one batch, all or nothing.</p>';
   if (!r) {
     return head + `<div class="sd-acts"><button type="button" class="b-btn b-primary" data-evact="review"` +
       `${ev.reviewBusy ? ' disabled aria-busy="true"' : ''}>${ev.reviewBusy ? 'Reading…' : 'Review proposals'}</button></div>` +
@@ -402,7 +461,8 @@ function reviewHtml() {
   }
   const pub = r.publication || {};
   const blockers = (r.blockers || []).map(b => `<li><b>${esc(b.code)}</b>${b.entry ? ` <code>${esc(b.entry)}</code>` : ''} — ${esc(b.why)}</li>`).join('');
-  const label = `Apply ${r.selected} classification${r.selected === 1 ? '' : 's'}`;
+  const label = `Apply ${r.selected} classification${r.selected === 1 ? '' : 's'}` +
+    (r.updates ? ` and ${r.updates} explanation update${r.updates === 1 ? '' : 's'}` : '');
   return head + r.items.map(rowHtml).join('') +
     '<dl class="sd-facts">' +
     `<dt>Writes</dt><dd>${(pub.writes || []).map(w => `<code>${esc(w)}</code>`).join(', ') || 'nothing'}</dd>` +
@@ -436,7 +496,12 @@ function outcomeHtml() {
   return '<section class="b-panel" id="ev-outcome" tabindex="-1" aria-labelledby="ev-h-out">' +
     '<h3 id="ev-h-out">Applied</h3>' +
     `<ul class="sd-list" role="status">${Object.entries(changes).map(([id, k]) =>
-      `<li><a href="/brain/e/${encodeURIComponent(id)}" data-route><code>${esc(id)}</code></a> → ${esc(k)}</li>`).join('')}</ul>` +
+      `<li><a href="/brain/e/${encodeURIComponent(id)}" data-route><code>${esc(id)}</code></a> → ${esc(k)}</li>`).join('')}` +
+    `${((d.applied && d.applied.maintained) || []).map(m => `<li><a href="/brain/e/${encodeURIComponent(m.entry)}" data-route>` +
+      `<code>${esc(m.entry)}</code></a> § ${esc(m.section)} updated — applied by ${m.authority === 'policy'
+        ? 'the reconciliation policy' : 'a person'}${m.authorized ? `, authorized: ${esc(m.authorized)}` : ''}</li>`).join('')}</ul>` +
+    `${((d.applied && d.applied.pending) || []).map(p => `<p class="b-warn" role="status"><code>${esc(p.entry)}</code>: ` +
+      `${esc(COUPLING_WORDS[p.coupling] || p.coupling)}</p>`).join('')}` +
     '<dl class="sd-facts">' +
     `<dt>Saved</dt><dd>${op ? (op.saved ? 'Applied locally' : 'Not saved') : 'Reading…'}</dd>` +
     `<dt>Committed</dt><dd>${commitWord}</dd>` +
@@ -500,6 +565,20 @@ function evalField(f, e) {
     ev.armed = false;
     repaint(true);
     document.getElementById(`ev-p-${ds.evpick}`)?.focus();
+    return true;
+  }
+  if (ds.evmaint !== undefined) {
+    const c = ev.choices.get(ds.evmaint) || {};
+    const mc = { ...(c.maintain || {}) };
+    if (ds.evmfield === 'selected') mc.selected = f.checked;
+    else if (ds.evmfield === 'resolution') { if (f.checked) mc.resolution = 'replace-human'; else delete mc.resolution; }
+    else mc[ds.evmfield] = f.value;
+    c.maintain = mc;
+    ev.choices.set(ds.evmaint, c);
+    ev.applyArmed = false;
+    // the person's edit stays on this page whatever the review answers; a
+    // checkbox or leaving a field asks for the review again
+    if (e.type === 'change') review();
     return true;
   }
   if (ds.evchoice !== undefined) {

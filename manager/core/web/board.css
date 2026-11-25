@@ -2158,6 +2158,14 @@
   .sd-sections li{display:block;padding:3px 0}
   .sd-problems{margin:6px 0;padding-left:18px;display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere}
   .sd-acts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+  /* an evaluation's proposed explanation update (task 199): set apart
+     from the classification above it; its before and after wrap and
+     grow, so a long line reads at 390px and the page is the one scroller */
+  .ev-maint{border-top:1px solid var(--border-soft);margin-top:10px;padding-top:8px}
+  .ev-maint h5{margin:0 0 6px;font-size:13.5px}
+  .ev-diff{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:12.5px;
+    background:var(--sunken);border:1px solid var(--border-soft);border-radius:6px;padding:8px;
+    margin:6px 0}
   /* the result table wraps rather than scrolling sideways: a path or a
      digest breaks anywhere, so 390px reads it without a second scroller */
   .sd-table{max-width:100%}
