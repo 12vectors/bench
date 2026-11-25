@@ -37,6 +37,7 @@ from tests.test_brainreconcile import (EVERYTHING, EXPORTS_CURRENT, JSON_CURRENT
                                        MUDDLE_UNCLASSIFIED, OLD_SUPERSEDED, _Reconciling)
 
 import brain  # noqa: E402
+import braindraft  # noqa: E402
 import brainreconcile  # noqa: E402
 import handbook  # noqa: E402
 
@@ -222,6 +223,97 @@ class Repair(_Health):
         rows = self.rows()
         self.assertTrue(all(rows[e]["reason"] == "repair" for e in drifted))
         self.assertEqual(self.calls(), calls, "the click launched something")
+
+
+class Endings(_Health):
+    """A failed, refused or cancelled round wrote an ending, not an
+    assessment: the scope and the last-assessed time never count it (the
+    review of task 200 found they did)."""
+
+    def scope_adds_up(self, read: dict) -> None:
+        s = read["scope"]
+        self.assertEqual(s["assessed"] + s["neverAssessed"] + s["inputsChanged"]
+                         + s["inProgress"] + s["unresolved"] + s["held"], s["entries"])
+
+    def test_a_failed_round_is_not_an_assessment(self):
+        self.script(EVERYTHING, fail=True)
+        self.enable(retries=0)
+        self.drain()
+        read = self.health()
+        self.assertEqual(read["scope"]["assessed"], 0)
+        self.assertEqual(read["scope"]["unresolved"], len(LIVE))
+        self.assertIsNone(read["scope"]["lastAssessed"])
+        self.assertNotEqual(read["state"], "assessed")
+        self.assertIn("outcome-unresolved", self.codes(read, "e-csv-study"))
+        self.scope_adds_up(read)
+
+    def test_a_refused_launch_is_not_an_assessment(self):
+        def refuse(payload, **kw):
+            raise braindraft.Refused("the harness is not installed here")
+        with mock.patch.object(braindraft, "start_evaluate", refuse):
+            self.enable()
+            brainreconcile.tick()
+        rows = self.rows()
+        self.assertTrue(all(rows[e]["stored"] == "blocked" for e in LIVE))
+        read = self.health()
+        self.assertEqual(read["scope"]["assessed"], 0)
+        self.assertIsNone(read["scope"]["lastAssessed"])
+        self.scope_adds_up(read)
+
+    def test_a_cancelled_entry_is_not_an_assessment_and_keeps_its_real_time(self):
+        self.enable(dailyLaunches=1, batch=1)
+        self.drain()
+        rows = self.rows()
+        done = [e for e in LIVE if rows[e]["stored"] == "review"]
+        waiting = [e for e in LIVE if rows[e]["stored"] == "queued"]
+        self.assertEqual(len(done), 1)
+        before = self.health()
+        self.assertEqual(before["scope"]["assessed"], 1)
+        self.assertEqual(before["scope"]["inProgress"], len(waiting))
+        self.scope_adds_up(before)
+        brainreconcile.act({"action": "cancel", "request": self.key(),
+                            "entries": waiting})
+        read = self.health()
+        self.assertEqual(read["scope"]["assessed"], 1)
+        self.assertEqual(read["scope"]["unresolved"], len(waiting))
+        self.assertEqual(read["scope"]["lastAssessed"], before["scope"]["lastAssessed"])
+        self.scope_adds_up(read)
+
+    def test_a_later_failure_keeps_when_it_was_really_assessed(self):
+        self.enable()
+        self.drain()
+        first = self.health()["scope"]["lastAssessed"]
+        self.assertIsNotNone(first)
+        self.script(EVERYTHING, fail=True)
+        self.policy(retries=0)
+        brainreconcile.act({"action": "rebuild", "request": self.key()})
+        self.drain()
+        read = self.health()
+        self.assertEqual(read["scope"]["assessed"], 0)
+        self.assertEqual(read["scope"]["lastAssessed"], first)
+        self.scope_adds_up(read)
+
+
+class RepairBounds(_Health):
+
+    def test_a_repair_without_the_evaluate_authority_is_refused_as_the_preview_says(self):
+        self.policy(enabled=True, evaluate=False)
+        read = self.health()
+        self.assertFalse(read["repair"]["available"])
+        with self.assertRaises(brainreconcile.Refused) as caught:
+            brainreconcile.act({"action": "repair", "request": self.key(),
+                                "entries": read["repair"]["entries"],
+                                "preview": read["repair"]["digest"]})
+        self.assertEqual(caught.exception.extra.get("code"), "not-available")
+        self.assertFalse(any(r["stored"] == "queued" for r in self.rows().values()))
+
+    def test_a_repair_larger_than_one_action_is_offered_in_parts(self):
+        with mock.patch.object(brainreconcile, "MAX_REPAIR", 2):
+            read = self.health()
+        pre = read["repair"]
+        self.assertEqual(pre["count"], 2)
+        self.assertEqual(pre["more"], len(LIVE) - 2)
+        self.assertIn("more need repair", pre["would"])
 
 
 class Journey(_Health):

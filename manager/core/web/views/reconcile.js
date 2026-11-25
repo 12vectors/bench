@@ -85,6 +85,17 @@ async function action(name, entries) {
   if (res.status !== 0) rc.actKey = null;
   if (!res.ok) rc.actError = res.error;
   await read();
+  await rereadHealth(res);
+}
+
+/* An action taken from the health panel (Retry, Push now) changes what the
+   health reading says, so an open health panel is read again with it and
+   says a refusal in its own place. */
+async function rereadHealth(res) {
+  if (!hl.open || !hl.data) return;
+  hl.actError = res && !res.ok ? res.error : null;
+  hl.done = null;
+  await readHealth();
 }
 
 function armed(name) { return rc.armed === name; }
@@ -269,7 +280,8 @@ function repairHtml(p) {
     : `<p class="b-note">Repair is not available: ${esc(p.refused || '')}</p>`;
   return '<h4>Repair</h4><dl class="sd-facts">' +
     `<dt>Would</dt><dd>${esc(p.would || '')}</dd>` +
-    `<dt>Entries</dt><dd>${p.entries.map(e => `<a href="/brain/e/${encodeURIComponent(e)}" data-route>${esc(e)}</a>`).join(', ')}</dd>` +
+    `<dt>Entries</dt><dd>${p.entries.map(e => `<a href="/brain/e/${encodeURIComponent(e)}" data-route>${esc(e)}</a>`).join(', ')}` +
+    `${p.more ? ` <span class="b-note">— and ${p.more} more, for a later Repair once these are queued</span>` : ''}</dd>` +
     `<dt>Authority now</dt><dd>evaluate ${word(a.evaluate)} · apply ${word(a.apply)} · explanation update ${word(a.maintain)} · ` +
     `executes here ${a.executes ? 'yes' : 'no'}</dd>` +
     `<dt>Budget</dt><dd>${p.batches} ${p.batches === 1 ? 'evaluation' : 'evaluations'}; ${p.launchesLeft} launches left today` +
@@ -290,7 +302,9 @@ function healthBody() {
     (hl.done ? `<p class="rc-calm">${esc(hl.done)}</p>` : '') +
     '<dl class="sd-facts">' +
     `<dt>Assessed scope</dt><dd>${s.assessed} of ${s.entries} live entries reconciled against their current inputs; ` +
-    `${s.neverAssessed} never reconciled; ${s.inputsChanged} with changed inputs; ${s.held} held by an override; ${s.retired} retired</dd>` +
+    `${s.neverAssessed} never reconciled; ${s.inputsChanged} with changed inputs; ${s.inProgress} queued or being evaluated; ` +
+    `${s.unresolved} whose last round ended without an assessment; ${s.held} held by an override ` +
+    `<span class="b-note">(these add up to ${s.entries})</span>; ${s.retired} retired</dd>` +
     `<dt>Bindings</dt><dd>${s.bindings.checked} checked, ${s.bindings.notChecked} not checked ` +
     `<span class="b-note">(at most ${s.bindings.gitBudget} git reads)</span></dd>` +
     `<dt>Files</dt><dd>${s.files.unreadable} not readable as entries${s.files.truncated ? '; the listing was truncated' : ''}</dd>` +
@@ -368,9 +382,10 @@ function act(name, arg) {
   if (name === 'refresh-all') { action('refresh'); return; }
   if (['retry', 'cancel', 'refresh'].includes(name)) { action(name, [arg]); return; }
   if (name === 'push') {
-    post('/api/brain/retry', { request: arg, action: 'push' }).then(res => {
+    post('/api/brain/retry', { request: arg, action: 'push' }).then(async res => {
       if (!res.ok) rc.actError = res.error;
-      read();
+      await read();
+      await rereadHealth(res);
     });
   }
 }

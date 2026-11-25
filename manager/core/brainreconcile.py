@@ -798,6 +798,14 @@ def _settle_proposal(st: dict, key: str, op: dict, d: dict) -> None:
                 + why)[:500],
                 evaluated=dict(evaluated, outcome="proposed"),
                 proposed=item.get("proposed"), explanation=item.get("explanation"))
+    # the last round that actually assessed an entry is kept apart from its
+    # newest ending, so a later failure, refusal or cancellation never reads
+    # as an assessment and never erases when one really happened (task 200)
+    for eid in op["entries"]:
+        rec = st["entries"].get(eid) or {}
+        ev = rec.get("evaluated") or {}
+        if ev.get("draft") == d["id"] and ev.get("outcome") in ASSESSED_OUTCOMES:
+            rec["assessed"] = dict(ev)
     if op["status"] != "done" and not any(
             (st["entries"].get(eid) or {}).get("state") == "review"
             and (st["entries"].get(eid) or {}).get("op") == key for eid in op["entries"]):
@@ -859,6 +867,11 @@ def act(payload: dict) -> dict:
             if not ids:
                 raise Refused("a repair names the entries its preview showed",
                               field="entries")
+            if not eff["runs"]:
+                # the preview says Repair is not available here; the action
+                # holds to the same answer rather than queueing what nothing runs
+                raise Refused(f"a repair is not available: {eff['why']}", 409,
+                              code="not-available")
             now_preview = health()["repair"]
             if payload.get("preview") != now_preview["digest"]:
                 raise Refused("what a repair would queue has changed since the page read "
@@ -1102,6 +1115,16 @@ FINDINGS = {
 MOVED_BINDINGS = ("stale", "missing", "absent-at-revision", "off-branch",
                   "unknown-revision", "no-repository")
 MAX_FINDINGS = 200
+# the outcomes of a round that really assessed an entry against its inputs.
+# A failed, refused, cancelled, not-evaluated or gone round wrote an ending,
+# not an assessment, and is never counted as one
+ASSESSED_OUTCOMES = ("applied", "unchanged", "proposed")
+# at most this many entries in one Repair: the action's own id limit. The
+# rest are named as more, for a later Repair once these are queued
+MAX_REPAIR = 200
+# an entry already queued or being evaluated is not offered to a Repair:
+# the queue already has it
+BUSY = ("queued", "running", "waiting")
 MAX_TRANSITIONS = 40
 EXPLAINED_RE = re.compile(r"explained now by ([a-z0-9][a-z0-9-]{1,63})")
 NOT_INSPECTED = (
@@ -1171,7 +1194,7 @@ def health() -> dict:
                          "code": code, "severity": severity, "label": label,
                          "message": message, "next": nxt, **extra})
 
-    assessed = never = held = changed = 0
+    assessed = never = held = changed = in_progress = unresolved = 0
     checked = not_checked = 0
     times: list[str] = []
     repair: list[str] = []
@@ -1181,15 +1204,24 @@ def health() -> dict:
         row = rows.get(eid) or {}
         qrec = st["entries"].get(eid) or {}
         evaluated = qrec.get("evaluated") or {}
+        real = evaluated.get("outcome") in ASSESSED_OUTCOMES
+        # when it was last really assessed: a failed, refused or cancelled
+        # ending is not an assessment and moves no time (task 200 review)
+        last_real = qrec.get("assessed") or (evaluated if real else {})
         stored = row.get("stored")
-        if evaluated.get("at"):
-            times.append(evaluated["at"])
-        # the entry's assessment against its inputs
+        if last_real.get("at"):
+            times.append(last_real["at"])
+        # the entry's assessment against its inputs: every live entry falls
+        # in exactly one of these buckets, so the scope adds up
         if e["override"]:
             held += 1
             assessment = "held"
-        elif stored in ("queued", "running"):
+        elif stored in ("queued", "running", "waiting"):
+            in_progress += 1
             assessment = stored
+        elif evaluated and not real:
+            unresolved += 1
+            assessment = "unresolved"
         elif not evaluated:
             never += 1
             assessment = "never"
@@ -1218,7 +1250,7 @@ def health() -> dict:
                 f"checkout is at {str(row.get('appNow'))[:12]}. Code is never called "
                 "fresh until a person refreshes it",
                 repair_or_on())
-            if eid not in repair:
+            if eid not in repair and assessment not in BUSY:
                 repair.append(eid)
         # bindings, under one shared budget
         auth = handbook.authority(e, budget) if e["bindings"] else None
@@ -1241,7 +1273,7 @@ def health() -> dict:
                      "label": "a manual override holds it: review it on its page"},
                     binding={"type": b["type"], "target": b["target"],
                              "revision": b["revision"], "state": b.get("state")})
-                if not e["override"] and eid not in repair:
+                if not e["override"] and eid not in repair and assessment not in BUSY:
                     repair.append(eid)
         for ref in e.get("sourceRefs") or []:
             if ref["kind"] in ("card", "review") and not ref.get("present"):
@@ -1324,8 +1356,9 @@ def health() -> dict:
                 {"action": "push", "owner": "you", "label": "Push now",
                  "request": (row.get("sync") or {}).get("request")})
         entry_rows.append({"entry": eid, "title": e["title"], "classification": klass,
-                           "assessment": assessment, "evaluatedAt": evaluated.get("at"),
-                           "evaluatedApp": evaluated.get("app"),
+                           "assessment": assessment, "evaluatedAt": last_real.get("at"),
+                           "evaluatedApp": last_real.get("app"),
+                           "lastEnding": evaluated.get("outcome"),
                            "bindings": len(e["bindings"]),
                            "authority": (auth or {}).get("state")})
     # files the Brain could not read as entries: their content is not inspected
@@ -1343,6 +1376,8 @@ def health() -> dict:
                  "label": f"Organize {s['title']} in the Project handbook"},
                 section=s["id"], coverage=cov["state"])
     # what would a Repair queue, and on what authority and budget
+    more = max(0, len(repair) - MAX_REPAIR)
+    repair = repair[:MAX_REPAIR]
     budget_left = queue["budget"]["left"]
     batch = queue["budget"]["batch"]
     batches = -(-len(repair) // batch) if repair else 0
@@ -1362,7 +1397,7 @@ def health() -> dict:
     elif not eff["runs"]:
         refused = eff["why"]
     preview = {
-        "entries": repair, "count": len(repair), "batches": batches,
+        "entries": repair, "count": len(repair), "more": more, "batches": batches,
         "launchesLeft": budget_left, "fitsToday": batches <= budget_left,
         "authority": {w: eff[w] for w in ("evaluate", "apply", "maintain", "executes")},
         "available": bool(repair) and eff["runs"], "refused": refused,
@@ -1374,6 +1409,8 @@ def health() -> dict:
                   "launches are left today"
                   + ("" if batches <= budget_left else
                      ", so the rest wait for tomorrow's budget")
+                  + (f"; {more} more need repair and are offered once these are queued"
+                     if more else "")
                   + ("; proposals are applied under the policy" if eff["apply"] else
                      "; every proposal waits for your review")) if repair else None,
         "never": "a repair launches nothing in its click, creates no entry, widens no "
@@ -1407,7 +1444,7 @@ def health() -> dict:
         word = "empty"
     elif "problem" in severities:
         word = "attention"
-    elif severities or not_checked or idx["truncated"]:
+    elif severities or not_checked or idx["truncated"] or unresolved or in_progress:
         word = "incomplete"
     else:
         word = "assessed"
@@ -1418,7 +1455,8 @@ def health() -> dict:
         "brainRevision": read["revision"],
         "scope": {
             "entries": len(live), "assessed": assessed, "neverAssessed": never,
-            "inputsChanged": changed, "held": held, "retired": len(retired),
+            "inputsChanged": changed, "inProgress": in_progress, "unresolved": unresolved,
+            "held": held, "retired": len(retired),
             "bindings": {"checked": checked, "notChecked": not_checked,
                          "gitBudget": handbook.MAX_GIT_CHECKS},
             "files": {"unreadable": len(idx["diagnostics"]), "skipped": idx["skipped"],
