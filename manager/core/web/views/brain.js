@@ -2072,7 +2072,7 @@ function proposalHtml(d) {
         `${esc(p.classification)}; you decide</legend>` + ['Current', 'Historical', 'Unclassified'].map(c =>
         `<label class="b-radio"><input type="radio" name="bf-ag-class" data-age="classification" value="${c}"` +
         `${e.classification === c ? ' checked' : ''}> ${classChip(c)}</label>`).join('') + '</fieldset>' +
-        field('ag-reason', 'Why this classification', `<input id="bf-ag-reason" data-age="reason" type="text" value="${esc(e.reason)}" autocomplete="off">`);
+        field('ag-reason', 'Reason (optional)', `<input id="bf-ag-reason" data-age="reason" type="text" value="${esc(e.reason)}" autocomplete="off">`);
     } else {
       pane += `<p class="b-note">The entry's classification (${esc(target ? target.classification : 'as it is')}) and its history are kept. ` +
         `The agent suggested ${esc(p.classification)}; change it with Classify after applying, if you agree.</p>`;

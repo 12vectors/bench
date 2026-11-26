@@ -503,6 +503,29 @@ class Journey(_Board):
         self.assertTrue(again.get("already"))
         self.assertEqual(len([e for e in brain.reading()["entries"]]), 2)
 
+    def test_apply_without_a_reason_writes_no_reason_in_the_persons_name(self):
+        # task 202: a person choosing the starting classification need not
+        # explain it, and bench never writes an explanation they did not give
+        for klass, reason in (("Current", None), ("Historical", ""),
+                              ("Current", "   "), ("Unclassified", None)):
+            with self.subTest(klass=klass, reason=reason):
+                draft = self.start("propose")
+                extra = {} if reason is None else {"reason": reason}
+                done = self.apply(draft, classification=klass, **extra)
+                self.assertEqual(done["draft"]["status"], "applied")
+                entry = brain.entry(done["operation"]["id"])
+                self.assertEqual(entry["classification"], klass)
+                last = entry["history"][-1]
+                self.assertEqual(last["classification"], klass)
+                self.assertFalse(last.get("reason"), last)
+                self.assertNotIn("reviewed before applying", json.dumps(entry))
+
+    def test_apply_keeps_a_short_comment_as_typed(self):
+        draft = self.start("propose")
+        done = self.apply(draft, classification="Current", reason="ok")
+        entry = brain.entry(done["operation"]["id"])
+        self.assertEqual(entry["history"][-1]["reason"], "ok")
+
     def test_a_sufficient_request_drafts_without_questions(self):
         draft = self.start("propose")
         self.assertEqual(draft["status"], "proposed")

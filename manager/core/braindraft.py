@@ -2548,12 +2548,11 @@ def apply(payload: dict) -> dict:
             klass = payload.get("classification") or "Unclassified"
             if klass not in SUGGESTED_CLASSES:
                 raise Refused("a new entry starts Current, Historical or Unclassified")
-            write.update(classification=klass,
-                         reason=payload.get("reason") or (
-                             "drafted by the Brain Agent and reviewed before applying"
-                             if klass != "Unclassified" else None))
-            if write["reason"] is None:
-                write.pop("reason")
+            write["classification"] = klass
+            # the person's reason, as given: optional, and never filled in
+            # with words they did not write (task 202)
+            if payload.get("reason") is not None:
+                write["reason"] = payload.get("reason")
         draft["applyRequest"] = write["request"]
         draft["status"] = "applying"
         _save(draft)
