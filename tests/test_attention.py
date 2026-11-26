@@ -207,6 +207,22 @@ class Bounds(Isolated):
         self.assertIn("could not be read", attention.reading()["note"])
 
 
+class PrivateToThisInstallation(unittest.TestCase):
+    def test_the_inbox_is_tool_state_never_work_state(self):
+        # machine-local, beside the other runtime records — never in the
+        # work root a sync shares, never in the application
+        self.assertEqual(config.ATTENTION_DIR, config.STATE / "attention")
+        self.assertFalse(str(config.ATTENTION_DIR).startswith(str(config.TASKS)))
+        page = (CORE / "web" / "views" / "attention.js").read_text("utf-8")
+        # the notification preference and what this browser announced stay
+        # in the browser; nothing posts them
+        self.assertIn("localStorage", page)
+        self.assertEqual(page.count("post('"), 1)
+        self.assertIn("post('/api/attention/ack'", page)
+        self.assertNotIn("requestPermission", page.split("async function setNotify")[0],
+                         "permission is asked only from the person's own opt-in")
+
+
 class ReadingWritesNothing(Isolated):
     def test_the_get_route_reads_the_record_only(self):
         self.observe_items([])
