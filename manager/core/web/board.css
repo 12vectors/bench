@@ -2544,7 +2544,18 @@
   .attn-link:hover{color:var(--text)}
   .attn-empty{color:var(--muted);font-size:12.5px;margin:8px 0}
   .attn-foot{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
-  @media (max-width:760px){ .attnbtn .attn-lab{display:none} .attn-act,.attn-filter,.attn-link{min-height:44px} }
+  /* compact wherever the header is: no label, the count and the glyph */
+  @media (max-width:760px), (max-height:480px){
+    .attnbtn{min-height:36px;padding:3px 8px;gap:5px}
+    .attnbtn .attn-lab{display:none}
+  }
+  /* on a phone it shares the views' own row, so the header keeps its
+     height: the views scroll sideways beside it */
+  @media (max-width:760px){
+    header .views{flex:1 1 calc(100% - 60px)}
+    header .attnbtn{order:11;flex:none;min-height:40px;min-width:44px;justify-content:center}
+    .attn-act,.attn-filter,.attn-link{min-height:44px}
+  }
   /* a card's detail view and the panel can be read side by side */
   body.agent-open:not(.agent-full) #drawer{right:var(--ap-w,420px)}
   body.agent-wide:not(.agent-full) #drawer{right:min(760px,70vw)}

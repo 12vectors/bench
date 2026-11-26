@@ -163,6 +163,7 @@ class AttentionInbox(unittest.TestCase):
         self.assertTrue(self.item(iid)["unread"], "navigating marked nothing read")
 
         # — looking marks nothing read: open, filter, close —
+        b.wait("attentionState().loaded", 10)
         before = record_bytes()
         b.click("#attnbtn")
         if not b.wait(f"!{POP}.hidden && !!{POP}.querySelector('[data-item]')", 10):
@@ -223,8 +224,10 @@ class AttentionInbox(unittest.TestCase):
         theme(b, "light")
         b.viewport(390, 844)
         b.goto("/board")
-        b.wait(f"!!{BTN}", 10)
+        b.wait(f"!!{BTN} && attentionState().loaded", 15)
         self.assertTrue(b.eval(f"!!{BTN}.getClientRects().length"), "the control is not folded behind More")
+        self.assertLessEqual(b.eval("document.querySelector('header').getBoundingClientRect().height"), 140,
+                             "the control shares the views' row rather than adding one")
         self.assertTrue(b.eval(f"{BTN}.getAttribute('aria-label').startsWith('Agent activity')"))
         b.click("#attnbtn")
         if not b.wait(f"!{POP}.hidden", 10):

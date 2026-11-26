@@ -291,7 +291,7 @@ function paint() {
   if (!A.open) { el.innerHTML = ''; return; }
   const active = document.activeElement;
   const keep = active && el.contains(active) && active.dataset
-    ? (active.dataset.id ? `[data-attn="${active.dataset.attn}"][data-id="${CSS.escape(active.dataset.id)}"]`
+    ? (active.id ? `#${CSS.escape(active.id)}` : active.dataset.id ? `[data-attn="${active.dataset.attn}"][data-id="${CSS.escape(active.dataset.id)}"]`
       : active.dataset.attn ? `[data-attn="${active.dataset.attn}"]${active.dataset.f ? `[data-f="${active.dataset.f}"]` : ''}` : null)
     : null;
   const list = el.querySelector('.attn-list');
@@ -374,7 +374,7 @@ function mountAttention() {
 
 /* For the browser suite and a person at the console. A read. */
 function attentionState() {
-  return { open: A.open, filter: A.filter, error: A.error, said: A.said,
+  return { loaded: !!A.data, open: A.open, filter: A.filter, error: A.error, said: A.said,
            unread: counts().unread, running: counts().running,
            items: ((A.data && A.data.items) || []).map(it => ({ id: it.id, state: it.state, key: it.key, unread: it.unread, gone: it.gone })) };
 }
