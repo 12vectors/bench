@@ -177,7 +177,10 @@ class Ask(unittest.TestCase):
             (backend.work / "tasks" / stage / PHASE).unlink(missing_ok=True)
         shutil.rmtree(backend.work / "orchestration" / "conversations", ignore_errors=True)
         try:
-            S["browser"].eval("(() => { try { sessionStorage.removeItem('bench-agent-panel'); } catch (e) {} return true; })()")
+            # close the panel first, so nothing this case opened is drawn
+            # over the next case's page, then forget what this tab kept
+            S["browser"].eval("(() => { document.querySelector('#agentpanel [data-pact=\"close\"]')?.click(); "
+                              "try { sessionStorage.removeItem('bench-agent-panel'); } catch (e) {} return true; })()")
         except (bv.CheckFailed, bv.SetupError):
             pass
         time.sleep(2.5)
@@ -367,7 +370,10 @@ class Ask(unittest.TestCase):
 
     def test_5_keyboard_themes_and_widths(self):
         before = reasoning_jobs()
-        b = visit("/orchestrator/ask?card=43", "document.querySelector('#ap-otext')", fresh=True)
+        # Ask is enabled once the board has said what asking would launch
+        b = visit("/orchestrator/ask?card=43", "document.querySelector('#ap-otext') && "
+                  "document.querySelector(\"#agentpanel [data-oact='pask']\") && "
+                  "!document.querySelector(\"#agentpanel [data-oact='pask']\").disabled", fresh=True)
         b.eval("document.querySelector('#ap-otext').focus()")
         b.key("Tab")
         focused = b.eval("document.activeElement && document.activeElement.textContent")

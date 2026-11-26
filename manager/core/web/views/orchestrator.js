@@ -457,10 +457,18 @@ function convWhereWords(c) {
   return `${w.kind === 'phase' ? 'Phase' : 'Card'} #${parseInt(w.card || c.subject, 10) || c.subject}`;
 }
 
+/* Whether a listed conversation is about a target: by kind and card
+   number (what the listing says), or by the card's file where that is all
+   either side names */
 function scopeMatches(c, scope) {
   if (scope.kind === 'board') return (c.scope || (c.where || {}).kind) === 'board';
   const t = findCard(scope.card, S.state).task;
-  return !!t && (c.where || {}).file === t.file;
+  const w = c.where || {};
+  if (t && w.file && (w.file === t.file || String(w.file).endsWith('/' + t.file))) return true;
+  const there = slotTargetOf(c);
+  if (there.kind === 'board') return false;
+  const n = (x) => String(parseInt(x, 10) || x);
+  return n(there.card) === n(scope.card) || (!!t && !!t.number && n(there.card) === n(t.number));
 }
 
 function preflightHtml(pre, follow) {
