@@ -226,8 +226,9 @@ class AttentionInbox(unittest.TestCase):
         b.goto("/board")
         b.wait(f"!!{BTN} && attentionState().loaded", 15)
         self.assertTrue(b.eval(f"!!{BTN}.getClientRects().length"), "the control is not folded behind More")
-        self.assertLessEqual(b.eval("document.querySelector('header').getBoundingClientRect().height"), 140,
-                             "the control shares the views' row rather than adding one")
+        self.assertLess(b.eval("Math.abs(document.querySelector('#attnbtn').getBoundingClientRect().top - "
+                               "document.querySelector('#views').getBoundingClientRect().top)"), 12,
+                        "the control shares the views' row rather than adding one")
         self.assertTrue(b.eval(f"{BTN}.getAttribute('aria-label').startsWith('Agent activity')"))
         b.click("#attnbtn")
         if not b.wait(f"!{POP}.hidden", 10):

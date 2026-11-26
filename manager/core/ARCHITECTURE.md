@@ -595,6 +595,7 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+attention._save
 braindraft._save
 brainreconcile._save
 brainreconcile.set_policy
