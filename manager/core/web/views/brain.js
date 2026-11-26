@@ -2820,7 +2820,7 @@ function renderBrain(force) {
   // typing — the caret is kept below — but never under a pressed pointer
   const typing = isField(document.activeElement) && el.contains(document.activeElement);
   // the shared panel paints by its own rules (it holds under its own typing)
-  if (activeSlot() && activeSlot().purpose === 'brain') renderPanel(force === true);
+  if (activeSlot() && activeSlot().purpose === 'brain') renderPanel(force === true || force === 'live' ? force : false);
   if (force === 'live' ? pressing().held() : !force && (typing || pressing().held())) return;
   let html;
   // a destination has not arrived until its reading has: an entry's own

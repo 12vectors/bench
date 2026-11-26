@@ -24,7 +24,7 @@ import { ARM_MS, arming } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { setHtml } from '../lib/keyed.js';
 import { md } from '../lib/md.js';
-import { activeSlot, askAttrs, openAgent, registerAgent, renderPanel, savePanel } from '../lib/panel.js';
+import { activeSlot, askAttrs, openAgent, panelMounted, registerAgent, renderPanel, savePanel } from '../lib/panel.js';
 import { pressHold } from '../lib/press.js';
 import { admissionWords, ageWords, capacityWords, GROUP_WORDS, stepHere, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
 import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
@@ -802,7 +802,8 @@ function askHtml() {
   const a = askState();
   loadAsk(false);
   const here = pageTarget();
-  if (S.orchItem && a.linked !== S.orchItem && S.state) {
+  // only once the panel is mounted (the composition root paints again then)
+  if (S.orchItem && a.linked !== S.orchItem && S.state && panelMounted()) {
     a.linked = S.orchItem;
     setTimeout(() => openAgent('orch', here, { focus: 'composer' }), 0);
   } else if (!S.orchItem) a.linked = null;

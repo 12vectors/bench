@@ -11,7 +11,7 @@ import { fetch, onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
 import { holdRoute, linkFor, onCardLink, plainClick, replaceRoute, routeReady, routeWrites, setRouteSource, syncRoute } from './lib/nav.js';
 import { isNarrow, logOpenKey } from './lib/layout.js';
-import { mountPanel, panelState, restorePanel } from './lib/panel.js';
+import { listenForAsks, mountPanel, panelState, restorePanel } from './lib/panel.js';
 import { CARD_VIEWS, findCard, parseRoute, routeOf } from './lib/route.js';
 import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
@@ -501,6 +501,7 @@ applyTheme();
 registerOrchAgent();
 registerBrainAgent();
 restorePanel();
+listenForAsks();
 // The address the page was opened at, applied before the first reading so
 // the first paint is the destination; an alias (`/`, `#setup`, a number
 // written with leading zeros, the Overview tab named) is corrected in
@@ -519,6 +520,8 @@ loadState().then(() => {
   }
   routeReady();
   mountPanel($('#agentpanel'));
+  // a view that waited for the panel (an Ask address naming a card) paints again
+  render();
   connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });
 });
 // the setup guide is read once on load for the header's invitation; the

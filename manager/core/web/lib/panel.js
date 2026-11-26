@@ -235,7 +235,9 @@ function renderPanel(force) {
   // held while a person types in it, and while a pointer is down on it: a
   // repaint between the press and the click would take the pressed button
   // out of the page, and the click with it (the Orchestrator's rule, task 147)
-  if (!force && ((inside && isField(active)) || P.pressed)) return;
+  // `live` — a reading arriving (what the run would read) — paints under
+  // the person's typing with the caret kept, never under a press
+  if ((!force && inside && isField(active)) || (force !== true && P.pressed)) return;
   const html = `<div class="ap-grip" data-pgrip aria-hidden="true" title="drag to resize"></div>` +
     `<section class="ap-inner" role="dialog" aria-modal="false" aria-labelledby="ap-title" data-pslot="${esc(s.key)}">` +
     headerHtml(s, ad) + `<div class="ap-body">${ad.body(s)}</div></section>`;
@@ -312,8 +314,31 @@ function mountPanel(el) {
     e.stopPropagation();
     closePanel();
   }, true);
-  // the page-wide entry points: a link a new tab can still take, answered
-  // here — in capture, before the router follows it — with the panel
+  // a press holds the repaint until its click is dispatched; released in
+  // capture, so the panel's own handlers paint what the click did
+  document.addEventListener('click', () => {
+    if (!P.pressed) return;
+    P.pressed = false;
+    setTimeout(() => renderPanel(), 0);
+  }, true);
+  document.addEventListener('pointercancel', () => { P.pressed = false; });
+  // a field left: the repaint it held may run now
+  el.addEventListener('focusout', (e) => { if (isField(e.target)) setTimeout(() => renderPanel(), 0); });
+  wirePanelGrip(el);
+  for (const ad of Object.values(adapters)) if (ad.wire) ad.wire(el);
+  renderPanel(true);
+}
+
+function panelMounted() { return !!P.el; }
+
+/* The page-wide entry points (`data-agent-ask`), listened for from the
+   moment the page boots — before the board has been read and the panel
+   mounted, so a click that early opens the conversation rather than
+   following the link: a link a new tab can still take, answered here in
+   capture, before the router follows it. */
+function listenForAsks() {
+  if (P.listening || typeof document === 'undefined') return;
+  P.listening = true;
   document.addEventListener('click', (e) => {
     const a = e.target.closest && e.target.closest('[data-agent-ask]');
     if (!a || a.disabled) return;
@@ -327,17 +352,12 @@ function mountPanel(el) {
     if (!target) return;
     openAgent(purpose, target, { from: a, fresh: true });
   }, true);
-  // a field left: the repaint it held may run now
-  el.addEventListener('focusout', (e) => { if (isField(e.target)) setTimeout(() => renderPanel(), 0); });
-  // a press holds the repaint until its click is dispatched; released in
-  // capture, so the panel's own handlers paint what the click did
-  document.addEventListener('click', () => {
-    if (!P.pressed) return;
-    P.pressed = false;
-    setTimeout(() => renderPanel(), 0);
-  }, true);
-  document.addEventListener('pointercancel', () => { P.pressed = false; });
-  // resizing: the grip on the panel's edge, by pointer (a finger as a mouse)
+}
+
+/* Presses and the resize grip: the grip on the panel's edge, by pointer
+   (a finger as a mouse); a press anywhere else holds the repaint. */
+function wirePanelGrip(el) {
+  const root = document.documentElement;
   let drag = null;
   el.addEventListener('pointerdown', (e) => {
     if (e.isPrimary !== false && !(e.target.closest && e.target.closest('[data-pgrip]'))) {
@@ -363,8 +383,6 @@ function mountPanel(el) {
   };
   document.addEventListener('pointerup', end);
   document.addEventListener('pointercancel', end);
-  for (const ad of Object.values(adapters)) if (ad.wire) ad.wire(el);
-  renderPanel(true);
 }
 
 /* For the browser suite and a person at the console: what the panel holds,
@@ -380,6 +398,6 @@ function askAttrs(purpose, target) {
 }
 
 export {
-  activeSlot, askAttrs, closePanel, dropSlot, mountPanel, openAgent, panelOpen, panelState,
+  activeSlot, askAttrs, closePanel, dropSlot, listenForAsks, mountPanel, openAgent, panelMounted, panelOpen, panelState,
   registerAgent, renderPanel, restorePanel, save as savePanel, setSize, slot, slotsOf
 };

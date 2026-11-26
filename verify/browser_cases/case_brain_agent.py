@@ -134,6 +134,13 @@ class BrainAgent(unittest.TestCase):
         b.goto(path)
         if not b.wait("!!document.querySelector('#bshell .b-title')", 15):
             raise bv.CheckFailed(f"{path}: the Brain drew no heading")
+        # each test starts as a new tab would: no conversation kept open
+        # from the one before (the panel keeps them per tab, task 205)
+        if b.eval("(() => { try { const had = !!sessionStorage.getItem('bench-agent-panel');"
+                  " sessionStorage.removeItem('bench-agent-panel'); return had; } catch (e) { return false; } })()"):
+            b.goto(path)
+            if not b.wait("!!document.querySelector('#bshell .b-title')", 15):
+                raise bv.CheckFailed(f"{path}: the Brain drew no heading")
         b.eval(f"S.dark = {str(dark).lower()}; applyTheme(); true")
         return b
 
