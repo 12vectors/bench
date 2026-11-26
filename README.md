@@ -36,6 +36,17 @@ shared first come, first served: a phase uses a slot only while a run
 of its own holds one, so an idle or finished phase never keeps
 standalone work waiting ("Shared capacity, first come first served").
 
+Talking to an agent happens beside the work, not on a separate form.
+**Ask orchestrator** (on the Board's bar, the Orchestrator, or a card's
+Overview) and the Brain's **New entry** and **Ask Brain Agent** open one
+right-hand conversation panel, already about the board, phase, card or
+entry you asked from — its **About** chip says which, and **Change** picks
+another without losing this one. The page stays in view, the conversation
+keeps its target and your unsent text while you move around, and a
+reload gives it back. Opening, reading and closing it launch nothing;
+only an explicit, armed Ask, Generate or Continue does ("The shared agent
+conversation" in `AGENTS.md`).
+
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this
 repository's own markdown, so what the docs say and what bench does

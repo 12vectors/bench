@@ -3217,7 +3217,14 @@ correct or add. A launched, read-only coding agent reads the project,
 asks follow-up questions only when it must, and proposes **one** entry.
 A person reviews it, edits it and applies it. Writing the entry yourself
 stays one click away (**Write it yourself instead**), and **Edit** works
-exactly as before.
+exactly as before. Since task 205 the request is held in the shared
+conversation panel beside the Brain ("The shared agent conversation"):
+the entry it is about stays in view while you read the draft, one
+conversation is kept per target (a new entry, or each entry being
+updated), and reading other entries, leaving the Brain or reloading
+keeps its request, answers and edits. **New entry** after a request has
+ended (applied, cancelled, discarded or failed) starts a new one; an
+ended request stays listed under **Brain Agent requests**.
 
 **The journey, and what each step costs.**
 
@@ -9502,17 +9509,29 @@ order will this phase deliver?" A person asks those on the board itself
 this card** (**Ask about this phase** on a phase card) in a card's
 Overview, beside its Orchestration line. Asking explains; it never acts.
 
-**How to ask.** Choose what the question is about — **Board**, a
-**Phase** or a **Card** (from a card, that card is already chosen) —
-write the question, and press **Ask**; it arms, and the second press
-sends it. Above the button the page says what that costs before you
-send: the harness and model the `reason` intent resolves to (Settings →
-Agents), that it is one read-only reasoning run, and how it is counted.
-A reply appears in the conversation; **Ask follow-up** asks again in the
-same conversation without restating the subject, and **New
-conversation** starts another. Opening the section, reloading it,
-choosing a conversation and reconnecting launch nothing: only a
-submission does.
+**How to ask.** Since task 205 the question is asked in the shared
+conversation panel (see "The shared agent conversation", below), and
+what it is about is inferred from where you asked: **Ask orchestrator**
+on the Board's bar or the Orchestrator page asks about the whole board,
+**Ask about this card** / **this phase** about that card or phase. The
+panel's **About** chip names the target; **Change** picks another, which
+opens that target's own conversation and keeps this one. There is no
+Board/Phase/Card form to fill in first. Write the question and press
+**Ask**; it arms, and the second press sends it. What that costs — the
+harness and model the `reason` intent resolves to (Settings → Agents),
+that it is one read-only reasoning run, and how it is counted — is in
+the composer's **Technical details** fold; a reason it cannot be asked
+now (a harness that cannot run it, no free slot) is shown above the
+button instead. A reply appears in the conversation; **Ask follow-up**
+asks again in the same conversation without restating the subject, and
+**New conversation** starts another. A question naming another card
+(`#44`, `card 44`, `phase 44`) offers **Ask about #44 instead** and
+never switches by itself; a number naming two cards says so and
+switches nothing. The **Ask orchestrator** section lists the board's
+conversations, each opening in the panel, and its old address
+`/orchestrator/ask?card=<card>` opens that card's conversation there.
+Opening the section or the panel, reloading, choosing a conversation and
+reconnecting launch nothing: only a submission does.
 
 **One reasoning run, the shared lifecycle.** A question is the `ask`
 reasoning need, asked by a person (`reasoning.request(…, "ask",
@@ -9642,6 +9661,83 @@ board scopes, follow-ups, duplicates, retry, cancel, drift, hostile text
 and persistence — and `verify/browser_cases/case_task_questions.py` the page. Whether
 the installed CLI with a real model answers well is the opt-in, billable
 `develop/reasoning-probe.py`, which nothing runs by itself.
+
+### The shared agent conversation
+
+One right-hand conversation panel (task 205, `web/lib/panel.js`) holds
+every conversation a person has with an agent on this page: the
+Orchestrator's questions ("Asking the orchestrator") and the Brain
+Agent's single-entry drafts ("Drafting with the Brain Agent"). It is a
+presentation shell over the routes those already own — `/api/ask*` and
+`/api/brain/draft*` — with no agent, job, store or route of its own.
+
+**Where it opens, and about what.**
+
+| entry point | the conversation is about |
+| --- | --- |
+| **Ask orchestrator** on the Board's bar, on the Orchestrator page | the whole board (the card or phase the Orchestrator address names, if any) |
+| **Ask about this card** / **this phase** in a card's Overview | that card or phase |
+| `/orchestrator/ask?card=<card>` (kept from task 181) | that card or phase, opened in the panel once per arrival |
+| an earlier conversation in Orchestrator → Ask orchestrator | that conversation's target |
+| **New entry** on the Brain | a new Brain entry |
+| **Ask Brain Agent** on an entry | that entry |
+| **Open** under Brain Agent requests | that request |
+
+The header names the agent and what it can do (*Answers questions about
+the work; does not change it* — *Drafts one entry from the project;
+writes nothing until you apply it*). The **About** chip names the
+target; **Change** (the Orchestrator's) lists the board and every card
+and phase, and choosing one opens that target's own conversation —
+never retargets this one. **Conversations** switches between the ones
+open in this tab.
+
+**A conversation follows its target, never the page.** Each target has
+one slot: its conversation, its unsent text and the request identity of
+its next submission. Navigating to another card leaves the panel about
+the card it was about; asking about the other card opens a second slot
+beside it, and the first keeps everything typed in it. The slots are
+kept in this tab's `sessionStorage` (`bench-agent-panel`), so a reload
+gives back the open panel, its target and its unsent text. They are this
+tab's only: not shared, not committed, and gone with the tab — the
+conversations themselves are where they always were (the card's
+Orchestration record, the board's conversation file, the Brain's private
+requests).
+
+**Nothing starts by itself.** Opening, reading, switching, changing the
+target, resizing and closing the panel read and launch nothing, and
+**Close** (or Escape, with focus given back to the control that opened
+it) stops nothing: a running question or draft goes on and is there
+when the panel is opened again. **Cancel this question**, **Cancel** on a
+running draft and the Brain's **Discard** are the separate, armed acts
+they always were. Every submission — Ask, Generate, Continue, Apply — is
+still armed, and still carries a request identity kept with its slot
+before it is sent: a double click, a resend after a lost reply or a
+reload resends the same identity, and the server's own request journal
+answers it with the first outcome, so it launches at most one run.
+
+**What leads, and what folds.** The conversation and the composer lead.
+For the Orchestrator: each question, its replies (the four parts, the
+recorded facts with evidence, the gaps, the suggestions), a run in
+flight as bench observes it, and Ask; the harness, model, access and
+accounting are in **Technical details**, and only a reason the question
+cannot be asked now is shown above the button. For the Brain Agent: the
+request, the conversation, then **Observed** — the round's state as
+bench recorded it — apart from what the agent reported (done, now,
+remaining, waiting on) and its last tool activity, which is activity,
+not progress; what the agent would read and may do stays in its fold.
+No percentage is drawn, and a run that reports nothing says so.
+
+**Layout.** Beside the content on a desktop (a grip on its edge resizes
+it, remembered per browser as `bench-agent-w`), **Widen**, **Full
+screen** and back from the header, and always full screen below 760px,
+with Close as the way back. A card's detail view moves aside so both can
+be read at once. Its repaint holds while a person types or presses in
+it, keeps the caret, and follows a new reply only for a reader already
+at the end of the conversation.
+
+**Not in this version:** card refinement, work and review runs and the
+background attention inbox (cards 206 and 207), and anchored comments
+and per-change navigation of Brain edits (phase 208).
 
 ### The Orchestrator view
 
