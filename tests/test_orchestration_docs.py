@@ -41,6 +41,9 @@ PAGES = {
                                           "in the phase branch, not delivered"),
     "/guides/ask-orchestrator/": ("Ask about this card", "Ask is not act",
                                   "Where replies are kept", "Asking needs no orchestration authority"),
+    # task 205: the panel both agents talk in
+    "/concepts/agent-conversation/": ("A conversation follows its target, never the page",
+                                      "Nothing starts by itself", "launches at most one run"),
     "/concepts/orchestrator-view/": ("Nine sections",
                                      # task 184
                                      "The decision trace: why it acted",

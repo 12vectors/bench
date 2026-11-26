@@ -104,10 +104,14 @@ test('a card’s entry links to the exact section and card, and escapes what it 
   // nothing else to say: no agreement and no history — but a question
   // about the card is always open to ask (task 181), and opening it
   // launches nothing
+  // task 205: a plain click opens the shared panel about this card; the
+  // address stays for a new tab
   assert.equal(cardEntryHtml(task, { orchestration: { configured: false }, decisions: {} }, '140'),
-               '<a class="o-asklink" data-route data-o="ask-card" href="/orchestrator/ask?card=140">Ask about this card</a>');
-  assert.match(html, /href="\/orchestrator\/ask\?card=140">Ask about this card<\/a>/);
-  assert.match(phase, /href="\/orchestrator\/ask\?card=140">Ask about this phase<\/a>/);
+               '<a class="o-asklink" data-route data-o="ask-card" href="/orchestrator/ask?card=140"' +
+               ' data-agent-ask="orch" data-agent-target="{&quot;kind&quot;:&quot;card&quot;,&quot;card&quot;:&quot;140&quot;}">' +
+               'Ask about this card</a>');
+  assert.match(html, /href="\/orchestrator\/ask\?card=140"[^>]*>Ask about this card<\/a>/);
+  assert.match(phase, /href="\/orchestrator\/ask\?card=140"[^>]*&quot;phase&quot;[^>]*>Ask about this phase<\/a>/);
   // an identifier is escaped where it is written
   assert.ok(!cardEntryHtml(task, state, '"><x').includes('"><x'));
   assert.equal(orchHref('overview'), '/orchestrator');

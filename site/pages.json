@@ -311,6 +311,17 @@
       "lede": "How to ask from the Orchestrator or a card, what the run reads and how fresh it is, what an answer holds, what it costs and who may ask, where replies are kept, and the line between asking and acting.",
       "source": "AGENTS.md",
       "from": "### Asking the orchestrator",
+      "to": "### The shared agent conversation"
+    },
+    {
+      "path": "/concepts/agent-conversation/",
+      "title": "The shared agent conversation",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "One right-hand panel for talking to the Orchestrator and the Brain Agent beside the work: its target inferred from where you asked, kept with your unsent text across navigation and reload, and launching nothing until you submit.",
+      "lede": "Where the panel opens and what it is about, why a conversation follows its target and never the page, what leads and what folds away, and what opening, closing and reloading do — nothing.",
+      "source": "AGENTS.md",
+      "from": "### The shared agent conversation",
       "to": "### The Orchestrator view"
     },
     {

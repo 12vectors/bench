@@ -134,39 +134,47 @@ class BrainAgent(unittest.TestCase):
         b.goto(path)
         if not b.wait("!!document.querySelector('#bshell .b-title')", 15):
             raise bv.CheckFailed(f"{path}: the Brain drew no heading")
+        # each test starts as a new tab would: no conversation kept open
+        # from the one before (the panel keeps them per tab, task 205)
+        if b.eval("(() => { try { const had = !!sessionStorage.getItem('bench-agent-panel');"
+                  " sessionStorage.removeItem('bench-agent-panel'); return had; } catch (e) { return false; } })()"):
+            b.goto(path)
+            if not b.wait("!!document.querySelector('#bshell .b-title')", 15):
+                raise bv.CheckFailed(f"{path}: the Brain drew no heading")
         b.eval(f"S.dark = {str(dark).lower()}; applyTheme(); true")
         return b
 
     def answer_with(self, text: str) -> None:
         self.backend.brain_reply.write_text(text, encoding="utf-8")
 
+    # the Brain Agent talks in the shared panel beside the Brain (task 205)
     def type(self, b, attr, name, text):
-        sel = f'#bshell [{attr}="{name}"]'
+        sel = f'#agentpanel [{attr}="{name}"]'
         b.eval(f"(() => {{ const f = document.querySelector({json.dumps(sel)}); f.focus(); "
                f"f.value = {json.dumps(text)}; "
                "f.dispatchEvent(new Event('input', {bubbles: true})); "
                "f.dispatchEvent(new Event('change', {bubbles: true})); })()")
 
     def text(self, b):
-        return b.eval("document.querySelector('#bshell').innerText")
+        return b.eval("document.querySelector('#agentpanel').innerText")
 
-    def wait_text(self, b, words, timeout=20):
-        cond = " && ".join(f"document.querySelector('#bshell').innerText.includes({json.dumps(w)})"
+    def wait_text(self, b, words, timeout=20, where="#agentpanel"):
+        cond = " && ".join(f"document.querySelector({json.dumps(where)}).innerText.includes({json.dumps(w)})"
                            for w in words)
         if not b.wait(cond, timeout):
             # the agent's panel first, on one line: a cut message must still
             # say what state the request was in and what it said
-            panel = b.eval("(document.querySelector('#bshell .b-agent') || {}).innerText || ''")
+            panel = b.eval("(document.querySelector('#agentpanel') || {}).innerText || ''")
             state = json.dumps([{k: d.get(k) for k in ("status", "round", "error", "mode")}
                                 for d in self.drafts()[:2]])
-            raise bv.CheckFailed(f"never showed {words}; requests {state}; panel: "
+            raise bv.CheckFailed(f"never showed {words} in {where}; requests {state}; panel: "
                                  + " | ".join(panel.split("\n"))[:1200])
 
     def armed_click(self, b, act):
-        sel = f'#bshell [data-bact="{act}"]'
+        sel = f'#agentpanel [data-bact="{act}"]'
         b.click(sel)
         if not b.wait(f"document.querySelector({json.dumps(sel)})?.classList.contains('armed')", 5):
-            panel = b.eval("(document.querySelector('#bshell .b-agent') || {}).innerText || ''")
+            panel = b.eval("(document.querySelector('#agentpanel') || {}).innerText || ''")
             raise bv.CheckFailed(f"{act} did not arm; panel: " + " | ".join(panel.split("\n"))[:900])
         b.click(sel)
 
@@ -176,10 +184,10 @@ class BrainAgent(unittest.TestCase):
         return json.loads(raw)["drafts"]
 
     def no_overflow(self, b, where):
-        wide = b.eval("(() => { const s = document.querySelector('#bshell');"
+        wide = b.eval("(() => { const s = document.querySelector('#agentpanel .ap-body');"
                       " return [s.scrollWidth, s.clientWidth, document.documentElement.scrollWidth,"
                       " innerWidth]; })()")
-        self.assertLessEqual(wide[0], wide[1] + 1, f"{where}: the Brain view overflows {wide}")
+        self.assertLessEqual(wide[0], wide[1] + 1, f"{where}: the conversation panel overflows {wide}")
         self.assertLessEqual(wide[2], wide[3] + 1, f"{where}: the page overflows {wide}")
 
     # ── the journey, in order ──
@@ -187,16 +195,25 @@ class BrainAgent(unittest.TestCase):
     def test_1_question_answer_draft_edit_apply(self):
         b = self.open("/brain")
         b.click('#bshell [data-bact="ag-new"]')
-        if not b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5):
-            raise bv.CheckFailed("New entry opened no composer")
+        if not b.wait("!!document.querySelector('#agentpanel:not([hidden]) [data-ag=\"text\"]')", 5):
+            raise bv.CheckFailed("New entry opened no composer in the panel")
         self.assertEqual(b.eval("document.activeElement?.dataset?.ag || null"), "text",
                          "the composer's request field takes focus")
-        self.assertTrue(b.eval("document.querySelector('#bshell [data-bact=\"ag-generate\"]').disabled"),
+        self.assertTrue(b.eval("!!document.querySelector('#bshell .b-title')"),
+                        "the Brain stays in view beside the conversation")
+        self.assertIn("A new Brain entry", b.eval("document.querySelector('#agentpanel .ap-chip').textContent"))
+        self.assertTrue(b.eval("document.querySelector('#agentpanel [data-bact=\"ag-generate\"]').disabled"),
                         "Generate waits for a request")
         self.type(b, "data-ag", "text", "Explain how a new contributor gets started")
         self.wait_text(b, ["What the Brain Agent will read"])
         self.assertEqual(self.drafts(), [], "opening the composer launched nothing")
-        b.eval("document.querySelector('#bshell .b-scope').open = true")
+        # the unsent request survives a reload in this tab, and sends nothing
+        b.goto("/brain")
+        if not b.wait("document.querySelector('#agentpanel [data-ag=\"text\"]')?.value === "
+                      "'Explain how a new contributor gets started'", 15):
+            raise bv.CheckFailed("the unsent request did not survive a reload")
+        self.assertEqual(self.drafts(), [], "reloading launched nothing")
+        b.eval("document.querySelector('#agentpanel .b-scope').open = true")
         shot("brain-agent-composer-night")
         self.answer_with(block(reply("questions")))
         self.armed_click(b, "ag-generate")
@@ -211,11 +228,11 @@ class BrainAgent(unittest.TestCase):
         for words in ("app:README.md", "agreed-future", "unknown", "Nothing says whether"):
             self.assertIn(words, text)
         shot("brain-agent-draft-night")
-        b.click('#bshell [data-bact="ag-view"][data-barg="changes"]')
+        b.click('#agentpanel [data-bact="ag-view"][data-barg="changes"]')
         self.wait_text(b, ["+ New contributors start with the README"])
         shot("brain-agent-whole-entry-night")
-        b.click('#bshell [data-bact="ag-view"][data-barg="edit"]')
-        if not b.wait("!!document.querySelector('#bshell [data-age=\"title\"]')", 5):
+        b.click('#agentpanel [data-bact="ag-view"][data-barg="edit"]')
+        if not b.wait("!!document.querySelector('#agentpanel [data-age=\"title\"]')", 5):
             raise bv.CheckFailed("Edit drew no fields")
         self.type(b, "data-age", "title", "Getting started as a contributor")
         shot("brain-agent-edit-night")
@@ -226,10 +243,15 @@ class BrainAgent(unittest.TestCase):
         entries = json.loads(raw)["brain"]["entries"]
         self.assertEqual([e["title"] for e in entries], ["Getting started as a contributor"])
         type(self).entry_id = entries[0]["id"]
-        b.click(f'#bshell a[data-brain-id="{entries[0]["id"]}"]')
+        b.click(f'#agentpanel a[data-brain-id="{entries[0]["id"]}"]')
         if not b.wait(f"location.pathname === '/brain/e/{entries[0]['id']}'", 10):
             raise bv.CheckFailed("the applied entry's link did not open it")
-        self.wait_text(b, ["Sources and claims", "Saved"])
+        self.wait_text(b, ["Sources and claims", "Saved"], where="#bshell")
+        # the conversation stays beside the entry it made; Close stops nothing
+        self.assertFalse(b.eval("document.querySelector('#agentpanel').hidden"))
+        b.click('#agentpanel [data-pact="close"]')
+        if not b.wait("document.querySelector('#agentpanel').hidden", 5):
+            raise bv.CheckFailed("Close did not close the panel")
 
     def test_2_ask_on_an_entry_shows_changes_and_discard_leaves_it(self):
         entry = type(self).entry_id
@@ -238,16 +260,19 @@ class BrainAgent(unittest.TestCase):
         before = path.read_bytes()
         b = self.open(f"/brain/e/{entry}")
         b.click('#bshell [data-bact="ag-ask"]')
-        if not b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5):
+        if not b.wait("!!document.querySelector('#agentpanel:not([hidden]) [data-ag=\"text\"]')", 5):
             raise bv.CheckFailed("Ask Brain Agent opened no composer")
+        self.assertIn("Updating Getting started as a contributor",
+                      b.eval("document.querySelector('#agentpanel .ap-chip').textContent"),
+                      "About names the entry the request is about")
         self.type(b, "data-ag", "text", "Add that new contributors should ask in review.")
         self.answer_with(block(reply("proposal", action="update", target=entry)))
         # leaving the request field is usually a press on Generate, and the
         # repaint that follows (the field's change, the preflight read it
         # asks for) must not replace the button under the pressed pointer
-        sel = '#bshell [data-bact="ag-generate"]'
+        sel = '#agentpanel [data-bact="ag-generate"]'
         hit = b.press(sel)
-        b.eval("document.querySelector('#bshell [data-ag=\"text\"]')"
+        b.eval("document.querySelector('#agentpanel [data-ag=\"text\"]')"
                ".dispatchEvent(new Event('change', {bubbles: true})); true")
         time.sleep(0.6)
         b.release(hit)
@@ -255,7 +280,10 @@ class BrainAgent(unittest.TestCase):
             raise bv.CheckFailed("a repaint under the pressed Generate lost the click")
         b.click(sel)
         self.wait_text(b, ["Draft ready for review", "Updating"])
-        b.click('#bshell [data-bact="ag-view"][data-barg="changes"]')
+        # the entry it is about stays in view beside the draft
+        self.assertTrue(b.eval("!!document.querySelector('#bshell .b-title')"))
+        shot("brain-agent-update-beside-entry-night")
+        b.click('#agentpanel [data-bact="ag-view"][data-barg="changes"]')
         self.wait_text(b, ["+ - ask in review"])
         shot("brain-agent-update-changes-night")
         self.armed_click(b, "ag-discard")
@@ -265,15 +293,18 @@ class BrainAgent(unittest.TestCase):
     def test_3_a_refused_proposal_and_a_cancelled_round(self):
         b = self.open("/brain")
         b.click('#bshell [data-bact="ag-new"]')
-        b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5)
+        b.wait("!!document.querySelector('#agentpanel [data-ag=\"text\"]')", 5)
         self.type(b, "data-ag", "text", "Capture the deployment settings")
         self.answer_with(block(reply("proposal", extra_source="app:.env")))
         self.armed_click(b, "ag-generate")
         self.wait_text(b, ["Failed", "credential", "Nothing was written."])
         shot("brain-agent-refused-night")
-        b.click('#bshell [data-bact="ag-close"]')
+        # New entry after a failed request starts a new one; the failed one
+        # stays listed to retry or discard
+        b.click('#agentpanel [data-pact="close"]')
         b.click('#bshell [data-bact="ag-new"]')
-        b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5)
+        if not b.wait("document.querySelector('#agentpanel [data-ag=\"text\"]')?.value === ''", 5):
+            raise bv.CheckFailed("New entry after a failure did not start a new request")
         self.type(b, "data-ag", "text", "Explain the review flow")
         self.backend.brain_hold.write_text("hold", encoding="utf-8")
         try:
@@ -294,13 +325,13 @@ class BrainAgent(unittest.TestCase):
         # them (the repair of the first review's finding 1)
         b = self.open("/brain")
         b.click('#bshell [data-bact="ag-new"]')
-        b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5)
+        b.wait("!!document.querySelector('#agentpanel [data-ag=\"text\"]')", 5)
         self.type(b, "data-ag", "text", "Explain how contributors are onboarded")
         self.answer_with(block(reply("proposal")))
         self.armed_click(b, "ag-generate")
         self.wait_text(b, ["Draft ready for review", "Onboarding new contributors"])
-        b.click('#bshell [data-bact="ag-view"][data-barg="edit"]')
-        if not b.wait("!!document.querySelector('#bshell [data-age=\"title\"]')", 5):
+        b.click('#agentpanel [data-bact="ag-view"][data-barg="edit"]')
+        if not b.wait("!!document.querySelector('#agentpanel [data-age=\"title\"]')", 5):
             raise bv.CheckFailed("Edit drew no fields")
         self.type(b, "data-age", "title", "Onboarding, as edited by a person")
         self.type(b, "data-ag", "note", "Say who answers questions in review.")
@@ -311,9 +342,9 @@ class BrainAgent(unittest.TestCase):
         drafts = self.drafts()
         self.assertEqual(drafts[0]["status"], "proposed", "the earlier draft was kept")
         self.assertEqual(drafts[0]["round"], 2)
-        self.assertEqual(b.eval("document.querySelector('#bshell [data-age=\"title\"]')?.value || null"),
+        self.assertEqual(b.eval("document.querySelector('#agentpanel [data-age=\"title\"]')?.value || null"),
                          "Onboarding, as edited by a person", "the person's edit survived the failed round")
-        self.assertFalse(b.eval("document.querySelector('#bshell [data-bact=\"ag-apply\"]').disabled"),
+        self.assertFalse(b.eval("document.querySelector('#agentpanel [data-bact=\"ag-apply\"]').disabled"),
                          "Apply is still offered for the kept draft")
         shot("brain-agent-failed-revision-kept-night")
         self.armed_click(b, "ag-apply")
@@ -323,26 +354,70 @@ class BrainAgent(unittest.TestCase):
         self.assertIn("Onboarding, as edited by a person", titles)
         self.assertEqual(len(titles), 2, "the kept draft applied as one entry")
 
+    def test_3c_typed_text_survives_a_reload_and_a_lost_reply_launches_once(self):
+        b = self.open("/brain")
+        b.click('#bshell [data-bact="ag-new"]')
+        if not b.wait("!!document.querySelector('#agentpanel:not([hidden]) [data-ag=\"text\"]')", 5):
+            raise bv.CheckFailed("New entry opened no composer in the panel")
+        words = "Explain what happens when a reply is lost"
+        # typed with the caret still in the composer: no change, no blur
+        sel = '#agentpanel [data-ag="text"]'
+        b.eval(f"(() => {{ const f = document.querySelector({json.dumps(sel)}); f.focus(); "
+               f"return document.execCommand('insertText', false, {json.dumps(words)}); }})()")
+        self.assertEqual(b.eval("document.activeElement?.dataset?.ag || null"), "text")
+        b.goto("/brain")
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.value === {json.dumps(words)}", 15):
+            raise bv.CheckFailed("text typed in the composer did not survive a reload")
+        before = len(self.drafts())
+        self.answer_with(block(reply("questions")))
+        # the server receives Generate and both replies are lost: the page's
+        # own resend, then the person's after a reload
+        b.eval("(() => { const real = window.fetch; window.__lost = 2; "
+               "window.fetch = async (url, opts) => { const r = await real(url, opts); "
+               "if (window.__lost > 0 && String(url) === '/api/brain/draft/start' && opts && opts.method === 'POST') "
+               "{ window.__lost--; throw new TypeError('the reply was lost'); } return r; }; return true; })()")
+        b.wait("!document.querySelector('#agentpanel [data-bact=\"ag-generate\"]')?.disabled", 15)
+        self.armed_click(b, "ag-generate")
+        if not b.wait("window.__lost === 0", 20):
+            raise bv.CheckFailed("Generate was not sent twice")
+        time.sleep(1)
+        self.assertEqual(len(self.drafts()), before + 1, "the page's own resend launched a second request")
+        b.goto("/brain")
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.value === {json.dumps(words)}", 15):
+            raise bv.CheckFailed("a request whose reply was lost was not kept to resend")
+        b.wait("!document.querySelector('#agentpanel [data-bact=\"ag-generate\"]')?.disabled", 15)
+        self.armed_click(b, "ag-generate")
+        self.wait_text(b, ["Waiting for your answers"])
+        self.assertEqual(len(self.drafts()), before + 1, "a resend after a lost reply launched another request")
+        self.armed_click(b, "ag-discard")
+        self.wait_text(b, ["Discarded"])
+
     def test_4_narrow_and_both_themes(self):
         for dark in (True, False):
             word = "night" if dark else "day"
             b = self.open("/brain", 390, 844, dark)
             b.click('#bshell [data-bact="ag-new"]')
-            b.wait("!!document.querySelector('#bshell [data-ag=\"text\"]')", 5)
+            b.wait("!!document.querySelector('#agentpanel [data-ag=\"text\"]')", 5)
+            self.assertTrue(b.eval("document.body.classList.contains('agent-full')"),
+                            "a phone shows the conversation full screen")
             self.type(b, "data-ag", "text", f"Explain onboarding ({word})")
             self.answer_with(block(reply("proposal")))
             self.armed_click(b, "ag-generate")
             self.wait_text(b, ["Draft ready for review"])
             self.no_overflow(b, f"draft narrow {word}")
             shot(f"brain-agent-draft-narrow-{word}")
-            b.click('#bshell [data-bact="ag-view"][data-barg="edit"]')
-            b.wait("!!document.querySelector('#bshell [data-age=\"body\"]')", 5)
+            b.click('#agentpanel [data-bact="ag-view"][data-barg="edit"]')
+            b.wait("!!document.querySelector('#agentpanel [data-age=\"body\"]')", 5)
             self.no_overflow(b, f"edit narrow {word}")
             shot(f"brain-agent-edit-narrow-{word}")
             self.armed_click(b, "ag-discard")
             self.wait_text(b, ["Discarded"])
+            # Close is the way back to the Brain, focus with it
+            b.click('#agentpanel [data-pact="close"]')
+            if not b.wait("document.querySelector('#agentpanel').hidden", 5):
+                raise bv.CheckFailed("Close did not give the Brain back on a phone")
         b = self.open("/brain", 1280, 900, False)
-        self.wait_text(b, ["Getting started as a contributor"])
+        self.wait_text(b, ["Getting started as a contributor"], where="#bshell")
         shot("brain-agent-list-day")
 
     def test_5_nothing_else_moved(self):

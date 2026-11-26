@@ -11,6 +11,7 @@ import { fetch, onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
 import { holdRoute, linkFor, onCardLink, plainClick, replaceRoute, routeReady, routeWrites, setRouteSource, syncRoute } from './lib/nav.js';
 import { isNarrow, logOpenKey } from './lib/layout.js';
+import { listenForAsks, mountPanel, panelState, restorePanel } from './lib/panel.js';
 import { CARD_VIEWS, findCard, parseRoute, routeOf } from './lib/route.js';
 import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
@@ -18,6 +19,7 @@ import { toast } from './lib/toast.js';
 import { archiveCard, renderBar, renderLog, unarchiveLast } from './views/activity.js';
 import { openArchiveAll } from './views/archiveall.js';
 import { STACK_SHEETS } from './views/board.js';
+import { registerBrainAgent } from './views/brain.js';
 import { acts, closeSheet, focusCard, move, rawMove, requiredSheet, showDetail } from './views/card.js';
 import { FACE_WORDS, deliveryOf } from './views/delivery.js';
 import { renderDrawer } from './views/detail/drawer.js';
@@ -26,6 +28,7 @@ import { findTask, renderFocus } from './views/focus.js';
 import { clip, render, renderCards, setView } from './views/frame.js';
 import { gateSheet } from './views/gates.js';
 import { renderChip, renderDoctor } from './views/header.js';
+import { openAskAddress, registerOrchAgent } from './views/orchestrator.js';
 import { isolated } from './views/profile.js';
 import { fold } from './views/sessions.js';
 import { ensureDraft } from './views/settings/draft.js';
@@ -491,6 +494,14 @@ setInterval(() => {
 }, 5000);
 
 applyTheme();
+// the shared agent conversations (task 205): both agents register, and
+// what this tab kept — open conversations, unsent text, request
+// identities — is read back before anything is drawn. Mounted once the
+// board has been read, since a conversation names cards
+registerOrchAgent();
+registerBrainAgent();
+restorePanel();
+listenForAsks();
 // The address the page was opened at, applied before the first reading so
 // the first paint is the destination; an alias (`/`, `#setup`, a number
 // written with leading zeros, the Overview tab named) is corrected in
@@ -508,6 +519,11 @@ loadState().then(() => {
     holdRoute(() => openCardLink(id, tab, badTab));
   }
   routeReady();
+  mountPanel($('#agentpanel'));
+  // the address the page booted on may name a conversation (task 181's
+  // `/orchestrator/ask?card=<card>`): opened in the panel, a read
+  openAskAddress();
+  render();
   connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });
 });
 // the setup guide is read once on load for the header's invitation; the
@@ -518,4 +534,4 @@ fetchSetup().then(() => { if (setupAlias) openSetupGuide(); });
    name a global; modules make none. The browser suite (and a person
    at the console) reaches the page through these names and no
    others. Replacing one here does not replace it inside a module. */
-Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, holdReadings, isolated, loadState, move, pageSettled, readingsHeld, releaseReadings, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast, whenSettled });
+Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, holdReadings, isolated, loadState, move, pageSettled, panelState, readingsHeld, releaseReadings, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast, whenSettled });
