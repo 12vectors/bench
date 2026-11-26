@@ -327,13 +327,20 @@ function mountPanel(el) {
   // unsent text is kept as it is typed, not only when the field is left:
   // the composer has the caret, so a reload usually comes before a blur.
   // The adapters read the keystroke into their slot in their own `input`
-  // listeners; the save runs after them, and once more as the page goes.
+  // listeners; the save runs after them, and as the page goes if it has
+  // not yet. Only a pending keystroke is flushed then: leaving the page
+  // otherwise writes nothing, so what the tab kept stays what it kept.
   el.addEventListener('input', (e) => {
     if (!isField(e.target)) return;
     clearTimeout(P.saveSoon);
-    P.saveSoon = setTimeout(save, 200);
+    P.saveSoon = setTimeout(() => { P.saveSoon = 0; save(); }, 200);
   });
-  const flush = () => { clearTimeout(P.saveSoon); save(); };
+  const flush = () => {
+    if (!P.saveSoon) return;
+    clearTimeout(P.saveSoon);
+    P.saveSoon = 0;
+    save();
+  };
   if (typeof window !== 'undefined') window.addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
   wirePanelGrip(el);
