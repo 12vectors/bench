@@ -125,11 +125,15 @@ class Refinement(unittest.TestCase):
         self.assertEqual(code, 200, body[:300])
         return json.loads(body)
 
-    def open_panel(self, width=1440, height=900):
+    def open_panel(self, width=1440, height=900, scheme=None):
         b = S["browser"]
         b.viewport(width, height)
         b.eval("(() => { try { sessionStorage.removeItem('bench-agent-panel'); } catch (e) {} return true; })()")
         b.goto("/cards/46?tab=brief")
+        # the theme is switched before a full-screen panel covers the header
+        if scheme:
+            b.wait("!!document.querySelector('#disc-live')", 15)
+            theme(b, scheme)
         if not b.wait("!!document.querySelector('#disc-live') && !!document.querySelector('.discussion .ap-open')", 15):
             raise bv.CheckFailed("the card's Discussion never offered the conversation panel")
         b.click(".discussion .ap-open")
@@ -155,7 +159,7 @@ class Refinement(unittest.TestCase):
         if not b.wait("[...document.querySelectorAll('#agentpanel .dentry.comment')]"
                       ".some(r => r.innerText.includes('for later'))", 10):
             raise bv.CheckFailed("the saved comment never appeared in the panel")
-        self.assertFalse(b.eval("!!document.querySelector('#agentpanel .dentry.comment b')"),
+        self.assertFalse(b.eval("!!document.querySelector('#agentpanel .dentry.comment .cbody b')"),
                          "a comment is drawn as text, never markup")
         time.sleep(1)
         self.assertEqual(before_jobs, jobs(), "Add comment launched a refinement")
@@ -225,13 +229,14 @@ class Refinement(unittest.TestCase):
         self.assertTrue(b.wait(f"{PANEL}.hidden", 5), "Escape did not close the panel")
 
     def test_2_narrow_light_full_screen(self):
-        b = self.open_panel(390, 844)
-        theme(b, "light")
+        b = self.open_panel(390, 844, scheme="light")
         self.assertTrue(b.eval("document.body.classList.contains('agent-full')"), "a phone is full screen")
         self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391, "no document overflow")
         self.assertTrue(b.eval("!!document.querySelector('#agentpanel [data-pact=\"close\"]')"
                                ".getAttribute('aria-label')"), "Close has an accessible name")
         shot("agent-refine-panel-390-light")
+        b.click("#agentpanel [data-pact='close']")
+        b.wait(f"{PANEL}.hidden", 5)
         theme(b, "dark")
 
 
@@ -272,11 +277,20 @@ class RunInspection(unittest.TestCase):
         b.click(f"#agentpanel a[href^='/focus/']")
         if not b.wait("!!document.querySelector('#cgrid [data-agent-ask=\"run\"]')", 10):
             raise bv.CheckFailed("Focus offered no Inspect in panel")
+        # narrow and light: the theme switched with the panel closed (full
+        # screen covers the header), then the run reopened from Focus
+        b.click("#agentpanel [data-pact='close']")
+        b.wait(f"{PANEL}.hidden", 5)
         b.viewport(390, 844)
-        b.wait(f"{OPEN}", 5)
-        self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391)
         theme(b, "light")
+        b.eval("document.querySelector('#cgrid [data-agent-ask=\"run\"]').click()")
+        if not b.wait(f"{OPEN} && document.querySelector('#agentpanel .prog')", 10):
+            raise bv.CheckFailed("Inspect in panel from Focus opened no run: " + panel_text(b)[:300])
+        self.assertTrue(b.eval("document.body.classList.contains('agent-full')"), "a phone is full screen")
+        self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391)
         shot("agent-run-inspect-390-light")
+        b.click("#agentpanel [data-pact='close']")
+        b.wait(f"{PANEL}.hidden", 5)
         theme(b, "dark")
 
 
