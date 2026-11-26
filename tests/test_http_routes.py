@@ -284,8 +284,9 @@ class EveryMutationRefusesAHostilePage(unittest.TestCase):
         # preflight and review (reads with a body), Evaluate and its Apply
         # as one batch of classifications, browser-mutation; task 197 two,
         # the Brain reconciliation policy, policy-mutation, and an action
-        # on its queue, browser-mutation
-        self.assertEqual(116, len(self.routes))
+        # on its queue, browser-mutation; task 207 one, acknowledging
+        # agent activity in the inbox, browser-mutation
+        self.assertEqual(117, len(self.routes))
         self.assertEqual(37, sum(1 for k in self.routes.values()
                                  if k == "policy-mutation"))
 

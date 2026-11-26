@@ -322,6 +322,17 @@
       "lede": "Where the panel opens and what it is about, why a conversation follows its target and never the page, what leads and what folds away, what each purpose supports — follow-up, cancel, reporting — and what opening, closing and reloading do: nothing.",
       "source": "AGENTS.md",
       "from": "### The shared agent conversation",
+      "to": "### Agent activity and the inbox"
+    },
+    {
+      "path": "/concepts/agent-activity/",
+      "title": "Agent activity and the inbox",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "The header's Activity control and its inbox: what every agent is doing or has done, projected from records bench already keeps, with unread results and questions kept across navigation, reload and restart — and nothing marked read, opened or launched by looking.",
+      "lede": "Which records the list reads and the state words it uses, what makes a transition unread and what acknowledges it, why a proposal is never applied and applied is never shared, how optional browser notifications behave, and where the inbox is kept, for whom and for how long.",
+      "source": "AGENTS.md",
+      "from": "### Agent activity and the inbox",
       "to": "### The Orchestrator view"
     },
     {

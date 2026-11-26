@@ -69,7 +69,7 @@ L27 phasescope archiveall
 L28 refine reasoning coordinate braindraft
 L29 recovery brainreconcile
 L30 scheduler
-L31 ask
+L31 ask attention
 L32 routes watch
 L33 httpd
 L34 board
@@ -483,7 +483,7 @@ L26 phasescope archiveall
 L27 refine reasoning coordinate braindraft
 L28 recovery brainreconcile
 L29 scheduler
-L30 ask
+L30 ask attention
 L31 watch routes
 L32 httpd
 L33 board
@@ -595,6 +595,7 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+attention._save
 braindraft._save
 brainreconcile._save
 brainreconcile.set_policy
@@ -809,5 +810,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 193
+routes 195
 ```

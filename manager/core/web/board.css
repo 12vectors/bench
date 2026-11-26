@@ -2498,6 +2498,65 @@
   .agentpanel[hidden]{display:none}
   body.agent-wide .agentpanel{width:min(760px,70vw);max-width:none}
   body.agent-full .agentpanel{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:40;border-left:0}
+  /* Agent activity and its inbox (task 207): a header control on every
+     view, and a non-modal list under it. Colour carries state only beside
+     its words. */
+  .attnbtn{font-family:inherit;color:var(--text);min-height:32px}
+  .attnbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .attnbtn .attn-glyph{color:var(--muted)}
+  .attnbtn.has-unread{border-color:var(--accent)}
+  .attnbtn[aria-expanded="true"]{border-color:var(--accent);background:var(--raised)}
+  .attn-count{min-width:20px;padding:1px 6px;border-radius:99px;background:var(--accent);color:var(--bg);
+    font-size:11.5px;font-weight:600;text-align:center}
+  .attnpop{position:fixed;top:56px;right:12px;z-index:45;width:min(440px,calc(100vw - 24px));max-height:calc(100vh - 72px);
+    display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 14px;overflow:auto;color:var(--text)}
+  .attnpop[hidden]{display:none}
+  .attnpop.narrow{inset:0;top:0;right:0;width:auto;max-height:none;border-radius:0;border:0}
+  .attn-head{display:flex;align-items:center;gap:8px}
+  .attn-head h2{flex:1;margin:0;font-size:15px;font-weight:600}
+  .attn-head h2:focus{outline:none}
+  .attn-sum{margin:2px 0 8px;color:var(--muted);font-size:12.5px}
+  .attn-err{margin:0 0 8px;color:var(--alarm);font-size:12.5px}
+  .attn-said{margin:0 0 8px;padding:6px 8px;border-left:3px solid var(--accent);background:var(--canvas);font-size:12.5px}
+  .attn-bar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .attn-filters{display:flex;gap:4px}
+  .attn-filter{min-height:32px;padding:3px 10px;border-radius:99px;font-size:12.5px}
+  .attn-filter[aria-pressed="true"]{border-color:var(--accent);color:var(--text);background:var(--raised)}
+  .attn-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;overflow:auto;min-height:0}
+  .attn-item{padding:8px 10px;border:1px solid var(--border-soft);border-radius:8px;background:var(--canvas)}
+  .attn-item.unread{border-color:var(--accent)}
+  .attn-item.gone{opacity:.85}
+  .attn-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .attn-state{display:inline-flex;gap:6px;align-items:center;font-size:12px;font-weight:600}
+  .attn-state.t-working{color:var(--accent)} .attn-state.t-calm{color:var(--calm)}
+  .attn-state.t-alarm{color:var(--alarm)} .attn-state.t-attention{color:var(--text)}
+  .attn-state.t-neutral{color:var(--muted)}
+  .attn-dot{width:8px;height:8px;border-radius:99px;background:var(--accent);flex:none}
+  .attn-when{font-family:var(--mono);font-size:11px;color:var(--dim);flex:none}
+  .attn-title{margin:3px 0 0;font-size:13px;overflow-wrap:anywhere}
+  .attn-note{margin:3px 0 0;color:var(--muted);font-size:12px}
+  .attn-gone{margin:3px 0 0;color:var(--alarm);font-size:12px}
+  .attn-acts{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;margin-top:6px}
+  .attn-act{min-height:32px;padding:3px 12px;font-size:12.5px;color:var(--text)}
+  .attn-link{border:0;padding:4px 2px;min-height:32px;color:var(--accent);background:none;font-size:12.5px;
+    text-decoration:underline;text-underline-offset:3px;cursor:pointer;display:inline-flex;align-items:center}
+  .attn-link:hover{color:var(--text)}
+  .attn-empty{color:var(--muted);font-size:12.5px;margin:8px 0}
+  .attn-foot{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
+  /* compact wherever the header is: no label, the count and the glyph */
+  @media (max-width:760px), (max-height:480px){
+    .attnbtn{min-height:36px;padding:3px 8px;gap:5px}
+    .attnbtn .attn-lab{display:none}
+  }
+  /* on a phone it shares the views' own row, so the header keeps its
+     height: the views scroll sideways beside it */
+  @media (max-width:760px){
+    header .views{flex:1 1 calc(100% - 104px)}
+    header .attnbtn{order:11;flex:none;min-height:40px;min-width:44px;max-width:88px;justify-content:center;overflow:hidden}
+    header .attnbtn.has-unread .attn-glyph{display:none}
+    .attn-act,.attn-filter,.attn-link{min-height:44px}
+  }
   /* a card's detail view and the panel can be read side by side */
   body.agent-open:not(.agent-full) #drawer{right:var(--ap-w,420px)}
   body.agent-wide:not(.agent-full) #drawer{right:min(760px,70vw)}

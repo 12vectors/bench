@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask / attention < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -497,6 +497,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   conversations read back from cards and the work state's
   `orchestration/conversations/`. It executes nothing an answer suggests
   (see "Asking the orchestrator")
+- `attention.py` — agent activity and its inbox (task 207): one list
+  projected from records other modules keep (runs' progress records,
+  Orchestrator questions and replies, Brain drafts, card refinements,
+  open owner questions), each with one state word, and the one thing
+  none of them keeps — which transition a person on this installation
+  acknowledged — in a bounded, machine-local record. Its beat wakes on
+  the frames that announce a change; it launches, retries and schedules
+  nothing (see "Agent activity and the inbox")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request
@@ -9843,10 +9851,140 @@ work, runs a check, or changes a merge rule, a budget, an agreement or a
 grant; the only submissions are the armed, existing ones each purpose
 already had.
 
-**Not in this version:** the background attention inbox (card 207), and
-anchored comments and per-change navigation of Brain edits (phase 208).
-Live steering of a running coding job is not supported and is not
-planned by this phase.
+**Not in this version:** anchored comments and per-change navigation of
+Brain edits (phase 208). Live steering of a running coding job is not
+supported and is not planned by this phase. Finding a result after the
+panel is closed is the next section's.
+
+### Agent activity and the inbox
+
+Closing a conversation, going to another view, reloading or restarting
+the board does not lose what an agent did meanwhile (task 207). The
+header's **Activity** control, on every view and never folded behind
+**More**, says how many agent results and questions are unread here and
+whether agents are running, and opens a list of them.
+
+**One list, projected, not a second registry.** `attention.py` reads
+records bench already keeps and owns none of them:
+
+| source | item | its states |
+| --- | --- | --- |
+| a run's progress record (`progress`) — implementation, repair, review | `run:<agent>` | running; finished (*not yet reviewed*; a review *is a review, not an acceptance*); returned — not ready; failed; cancelled (‖ hold); interrupted — its ending was not observed |
+| an Orchestrator conversation (`decisions`, `reasoning`) | `ask:<conversation>` | running; answer ready (*an interpretation; nothing was executed*); failed; cancelled; outcome unknown |
+| a Brain Agent draft, seed or evaluation (`braindraft`) | `brain:<draft>` | running; needs your answer; ready for your review — not applied; applied (*whether it is committed and shared is shown on the entry*); failed; cancelled |
+| a card refinement (`refine`) | `refine:<job>` | running; proposal ready (*the brief is unchanged until you apply it*); applied; failed; cancelled |
+| an open owner question on a card (`decisions`) | `question:<card>:<id>` | needs your answer, until it is answered or withdrawn |
+
+An item's state is always re-read from its source, so nothing in the
+list can launch, retry, cancel, apply or schedule anything, and nothing
+is invented: a run a restart closed reads **Interrupted**, never
+finished; a question with no run and no reply reads **Outcome unknown**;
+a draft's proposal is never *applied*, and *applied* is never *shared*.
+An evaluation the reconciliation policy launched says so. An item whose
+source no longer holds it (removed, retired, expired) stays listed as
+**No longer on this board** and opens nothing in its place; an owner
+question someone answered stops asking.
+
+**Unread is a transition nobody here acknowledged.** Each item has a
+transition key (its state and the round, answer or ending it is about).
+It is unread while its state is one to notice — needs your answer,
+answer ready, ready for review, applied, finished, returned, failed,
+cancelled, interrupted, unknown — and the acknowledged key is not its
+current one. So the same transition seen again (a replayed frame, a
+reconnect, a second tab, a restart) is still one; a newer transition of
+the same item — a follow-up answered — is unread again; and
+acknowledging an older key never hides a newer one (the reply names it,
+and it stays unread). Running, discarded and superseded are never
+unread. The first time an installation reads its sources, what is
+already over is recorded as read, so turning this on does not raise
+every old result; what still waits on you — an open owner question, a
+proposal to review — stays unread.
+
+**Nothing is marked read by looking.** Opening the list, filtering it,
+closing it, opening the panel or visiting a card mark nothing. Only a
+person's click does:
+
+| control | does |
+| --- | --- |
+| **Open** | opens that item's exact conversation, proposal or run in the shared panel — the Orchestrator conversation with its replies, the Brain request, the card's refinement (on its relevance review, where it came from), the run to inspect — and marks that one transition read |
+| **Go there** | for an owner question: its card in Orchestrator → Decisions, and that transition read |
+| the card, the run's page | a plain link (a new tab may take it); marks nothing |
+| **Mark read**, **Mark unread** | one item, at the key the list showed |
+| **Mark all N read** | exactly the unread transitions the list shows |
+
+Nothing navigates, opens or takes focus by itself. A transition that
+arrives while a page is open gets one toast — announced to a screen
+reader in the polite region, focus left where it was — and the inbox is
+the durable record, not the toast. A page's first reading announces
+nothing: what arrived while it was closed is counted on the control.
+
+**Browser notifications are off until you turn them on**, in the list's
+footer. That click is when — and the only time — the browser is asked
+for permission; nothing prompts on a first question or a first result.
+Turned on, a notification is shown only while a bench page is open and
+hidden, at most three at once, carrying the kind of agent, its state and
+a card number — never a title, a question, an answer or a draft's text —
+and a click brings the page forward and opens the item. Unsupported,
+denied, or the browser closed: nothing is delivered and nothing claims it
+was; the list holds everything. There is no push service, email or chat
+behind any of it. The preference, and which transitions this browser
+already announced (so two tabs announce one transition once), are kept in
+the browser's own storage and never leave it.
+
+**Where it is kept, and for whom.** `manager/local/state/attention/inbox.json`
+— machine-local, never committed, never synced — holds each item's
+identity, state, transition key, when it was first and last seen, and the
+key acknowledged. It holds no draft text, prompt, answer body or
+credential: titles are a card's title, a question's opening line (already
+shared work history) or a Brain entry's id. This board has no
+authentication, so the inbox is **this installation's**: every tab and
+every person reaching this board read and acknowledge one inbox, and it
+is synchronized to no other board or device. A record a later version
+wrote, or one that cannot be read, is set aside beside it
+(`inbox.unreadable-<time>.json`), never written over, and the list starts
+again from a baseline, saying so.
+
+**Bounds, said.** At most `BOARD_ATTENTION_MAX` items (200), each
+removed `BOARD_ATTENTION_RETENTION_DAYS` (30) after it last changed —
+here or in its source — the oldest by their source's own time first past
+the cap; the list's footer says both and how many each has removed. A
+running item is never expired. The sources are not bounded (every run
+record on disk, say), so the same bounds decide what is listed: an item
+whose source dates it past retention, or that would be the first to go
+past the cap, is not listed, and the footer counts those as held back.
+So a removed result never returns as new and unread while its source
+still holds it, and **Mark all read** stays read. A source that cannot
+be read on a beat marks none of its items gone: they keep what they last
+said until a reading succeeds.
+
+**When it is read.** The beat reads the sources at start-up — after the
+restart recoveries, so an ending they closed is read at once — then when a
+frame announces a change (`board`, `agents`, `progress`, `brain`) and at
+the latest every `BOARD_ATTENTION_INTERVAL` seconds (30). A change sends
+one `attention` frame and every open page reads the list again; a page
+that reconnects reads it again too.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/attention` | the list: items newest change first, each with its state, label, whether it is unread, where it opens and whether it is gone; the bounds and what they removed; the identity scope. A read of the record — nothing is projected, written or launched |
+| `POST /api/attention/ack` | `{items: [{id, key}], unread?}` — at most 400; a key that is no longer the item's is reported `stale` and leaves the newer transition unread |
+
+The POST sits behind the browser-mutation door. **What is proved:**
+`tests/test_attention.py` (each source's states, baseline, deduplication,
+stale and concurrent acknowledgements, restart, bounds, an unreadable
+record, a read that writes nothing), `tests/node/attention.test.mjs` (no
+announcement or permission prompt on a first reading, one announcement
+across replays and tabs, bounded notification words, a gone item opening
+nothing, Open acknowledging exactly its transition) and
+`verify/browser_cases/case_task_attention.py` (a refinement's result
+arriving with the panel closed, counted on every top-level view and
+across a reload and a board restart, the list by pointer and keyboard,
+Open reaching the exact conversation, no permission prompt, at 1440
+pixels in the night theme and 390 in daylight).
+
+**Not in this version:** cross-device unread synchronization, per-person
+inboxes (there is no identity to key them by), push, email or chat
+delivery, and any automatic retry or relaunch.
 
 ### The Orchestrator view
 

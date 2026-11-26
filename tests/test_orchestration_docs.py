@@ -47,6 +47,11 @@ PAGES = {
                                       # task 206: every purpose, and its limits
                                       "Every agent purpose, and what it supports",
                                       "Typing is never a command", "A run inspected"),
+    # task 207: what an agent did after the panel closed
+    "/concepts/agent-activity/": ("One list, projected, not a second registry",
+                                  "Unread is a transition nobody here acknowledged",
+                                  "Nothing is marked read by looking",
+                                  "Browser notifications are off until you turn them on"),
     "/concepts/orchestrator-view/": ("Nine sections",
                                      # task 184
                                      "The decision trace: why it acted",

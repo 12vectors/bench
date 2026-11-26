@@ -64,6 +64,12 @@
           aria-label="More controls: theme, refresh and setup"><span aria-hidden="true">⋯</span>
     <span class="mlab">More</span></button>
   <div class="phasechips" id="phasechips" hidden></div>
+  <!-- agent activity and its inbox (task 207): on every view, never folded
+       behind More. Its label is written by views/attention.js — how many
+       results and questions are unread here and how many agents run.
+       Opening the list reads; it marks nothing read. -->
+  <button id="attnbtn" class="livechip attnbtn" type="button" aria-expanded="false"
+          aria-controls="attnpop" aria-label="Agent activity">Activity</button>
   <!-- the configuration check: always here, because it is the way in to a
        diagnosis rather than a state that comes and goes. Opening it reads;
        everything that does something is armed inside it. -->
@@ -85,6 +91,9 @@
   <button id="themebtn" class="hsec">Daylight</button>
   <button id="refresh" class="hsec">Refresh</button>
 </header>
+<!-- the agent activity list (task 207): a non-modal dialog under the
+     header's Activity control, drawn by views/attention.js -->
+<div id="attnpop" class="attnpop" role="dialog" aria-modal="false" aria-labelledby="attn-title" hidden></div>
 
 <!-- the Board's own navigation (task 159), drawn only while the Board is
      the primary destination: its two kinds of work — Tasks and Phases —

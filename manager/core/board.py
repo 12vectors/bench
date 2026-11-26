@@ -58,6 +58,7 @@ import artifacts  # noqa: F401
 import appinspect  # noqa: F401
 import archiveall  # noqa: F401
 import ask  # noqa: F401
+import attention
 import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
@@ -157,6 +158,10 @@ def wire() -> None:
       registered as the drive's end hook. Idempotent.
     """
     drive.on_ended(previews.record_last)
+    # the agent activity list (task 207) reads its sources again when a
+    # frame announces a change; `state` only calls what it is handed
+    if attention.wake not in state.BROADCAST_HOOKS:
+        state.BROADCAST_HOOKS.append(attention.wake)
 
 
 def refuse_broken_layout() -> None:
@@ -316,6 +321,11 @@ def main() -> None:
     # manager/local/brain-reconcile.json, each tick reads that one path and
     # does nothing. Only the designated execution installation launches.
     threading.Thread(target=brainreconcile.beat, daemon=True).start()
+    # Agent activity and its attention inbox (task 207): runs after the
+    # recoveries above, so an ending a restart closed — unobserved,
+    # interrupted — is read at once rather than invented as a success. It
+    # writes only its own machine-local record and launches nothing.
+    threading.Thread(target=attention.beat, daemon=True).start()
     if config.SYNC:
         # Team mode: board commits publish themselves and a beat pulls what
         # the other boards published. Off, neither thread nor hook exists.

@@ -922,6 +922,8 @@ ROUTES: dict[str, str] = {
     "POST /api/ask": "browser-mutation",
     "POST /api/ask/retry": "browser-mutation",
     "POST /api/ask/cancel": "browser-mutation",
+    "GET /api/attention": "read",
+    "POST /api/attention/ack": "browser-mutation",
     "POST /api/card/acceptance/track": "browser-mutation",
     "POST /api/card/comment": "browser-mutation",
     "POST /api/card/delivery/check-remote": "browser-mutation",
