@@ -5,8 +5,9 @@ PR review round and a relevance review. The case moves it through the
 board's own routes and reads the Brain after each step, by pointer, in
 Night and Daylight, with screenshots:
 
-- **closure**: moved to done/, its PR review reads Historical in the
-  library, with a *closed ticket* chip, and on its page the panel says it
+- **closure**: moved to done/, its PR review is counted as a hidden
+  Historical entry (Historical is hidden by default) and, shown, reads
+  Historical in the library, with a *closed ticket* chip, and on its page the panel says it
   is a lifecycle default — no person's decision, no agent's assessment;
   the relevance review stays Unclassified;
 - **reopen**: moved back to in-progress/, it reads Unclassified again —
@@ -107,6 +108,14 @@ class ClosedTicketReviews(unittest.TestCase):
         for dark in (True, False):
             b = self.open("/brain", dark)
             row = f'.b-list a[data-brain-id="21/{self.rv}"]'
+            if want == "Historical":
+                # Historical is hidden by default: the filter counts say so,
+                # and a person shows it with its checkbox
+                if not b.wait("(document.querySelector('#bshell')?.innerText || '')"
+                              ".includes('1 Historical entry is hidden')", 15):
+                    raise bv.CheckFailed(f"{label}: the hidden Historical review was not counted: "
+                                         + self.text(b)[:600])
+                b.click('[data-bshow="Historical"]')
             if not b.wait(f"!!document.querySelector({json.dumps(row)}) && "
                           f"document.querySelector({json.dumps(row)}).closest('.b-row').innerText"
                           f".includes({json.dumps(want)})", 15):
