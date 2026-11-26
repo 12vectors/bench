@@ -802,11 +802,10 @@ function askHtml() {
   const a = askState();
   loadAsk(false);
   const here = pageTarget();
-  // only once the panel is mounted (the composition root paints again then)
-  if (S.orchItem && a.linked !== S.orchItem && S.state && panelMounted()) {
-    a.linked = S.orchItem;
-    setTimeout(() => openAgent('orch', here, { focus: 'composer' }), 0);
-  } else if (!S.orchItem) a.linked = null;
+  // only once the panel is mounted (the composition root opens the
+  // address it booted on itself; this is for a link followed later)
+  if (S.orchItem && a.linked !== S.orchItem && S.state && panelMounted()) setTimeout(openAskAddress, 0);
+  else if (!S.orchItem) a.linked = null;
   const list = a.list || [];
   const listHtml = !a.list ? `<p class="o-dim" aria-busy="true">Reading conversations…</p>`
     : !list.length ? `<p class="o-dim">No conversations yet. Ask the first question.</p>`
@@ -818,6 +817,18 @@ function askHtml() {
     (a.error ? `<p class="o-notice alarm" role="alert">${esc(a.error)}</p>` : '') +
     `<div class="o-acts"><button type="button" class="o-btn primary" data-o="ask-here"${askAttrs('orch', here)}>Ask about ${esc(scopeWords(here))}</button></div>` +
     `<section class="o-askhistory" aria-labelledby="o-askhist-h"><h2 id="o-askhist-h" class="o-eyebrow">Conversations on this board</h2>${listHtml}</section>`;
+}
+
+/* `/orchestrator/ask?card=<card>`: the card's conversation, opened in the
+   panel once per arrival at the address. A read; nothing is asked. */
+function openAskAddress() {
+  if (S.view !== 'orchestrator' || S.orchSection !== 'ask' || !S.orchItem || !S.state) return false;
+  const a = askState();
+  if (a.linked === S.orchItem) return false;
+  if (!selected()) return false;
+  a.linked = S.orchItem;
+  openAgent('orch', pageTarget(), { focus: 'composer' });
+  return true;
 }
 
 /* One submission from a panel slot. Its request identity is kept with the
@@ -2476,6 +2487,6 @@ function renderOrchTab() {
 }
 
 export {
-  closedQuestionHtml, loadOrch, referencesIn, registerOrchAgent, renderOrchestrator, renderOrchStrip,
+  closedQuestionHtml, loadOrch, openAskAddress, referencesIn, registerOrchAgent, renderOrchestrator, renderOrchStrip,
   renderOrchTab, setPath
 };

@@ -28,7 +28,7 @@ import { findTask, renderFocus } from './views/focus.js';
 import { clip, render, renderCards, setView } from './views/frame.js';
 import { gateSheet } from './views/gates.js';
 import { renderChip, renderDoctor } from './views/header.js';
-import { registerOrchAgent } from './views/orchestrator.js';
+import { openAskAddress, registerOrchAgent } from './views/orchestrator.js';
 import { isolated } from './views/profile.js';
 import { fold } from './views/sessions.js';
 import { ensureDraft } from './views/settings/draft.js';
@@ -520,7 +520,9 @@ loadState().then(() => {
   }
   routeReady();
   mountPanel($('#agentpanel'));
-  // a view that waited for the panel (an Ask address naming a card) paints again
+  // the address the page booted on may name a conversation (task 181's
+  // `/orchestrator/ask?card=<card>`): opened in the panel, a read
+  openAskAddress();
   render();
   connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });
 });

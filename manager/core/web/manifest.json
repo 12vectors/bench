@@ -261,8 +261,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 24586,
-   "sha256": "c82a80dcde676892b1acf9038b3ce9d2f1ee524a55ade615be7d137358576657",
+   "bytes": 24679,
+   "sha256": "5205c0eebfa2f68190be15629ae9fd95a54c2339b62f33f5d56e437243dfcd55",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -346,8 +346,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 150707,
-   "sha256": "d3b6f2a11be3a8abef13328ee48d18827bee91ca5cf3f83bffbcbd18505d1296",
+   "bytes": 151188,
+   "sha256": "af0cb9e6960d0aadf9cd112f846be9543805826661c36e52fb7c78ffcc4cddff",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {
