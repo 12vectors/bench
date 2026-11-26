@@ -274,6 +274,14 @@ def _runs(tasks: dict, live: dict) -> list[dict]:
     return out
 
 
+def _card_id(task: dict) -> str:
+    """A card's id as the page names it: its number without leading zeros
+    (`07` is `7`), else its file's stem — so the inbox opens the very
+    conversation slot the card's own Ask opened."""
+    number = str(task.get("number") or "")
+    return str(int(number)) if number.isdigit() else task["file"][:-3]
+
+
 def _ask_items(tasks: list[dict], skipped: set | None = None) -> list[dict]:
     skipped = set() if skipped is None else skipped
     found = []
@@ -290,8 +298,7 @@ def _ask_items(tasks: list[dict], skipped: set | None = None) -> list[dict]:
             continue
         kind = "phase" if task.get("isPhase") else "card"
         for conv in convs:
-            found.append((conv, {"kind": kind, "card": str(task.get("number") or
-                                                            task["file"][:-3])}, task))
+            found.append((conv, {"kind": kind, "card": _card_id(task)}, task))
     out = []
     for conv, target, task in found:
         if not conv.get("exchanges"):

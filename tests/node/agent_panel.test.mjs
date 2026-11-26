@@ -96,6 +96,35 @@ test('a finished conversation is replaced by a fresh one only when asked to be',
   assert.notEqual(next, first, 'a new one after a finished one');
 });
 
+test('a request opened by its id resumes the slot it was composed in (review of 204)', async () => {
+  // A Brain request asked in this tab stays in its composer's slot
+  // (`brain:new`); the Activity inbox opens it by its id (`{draft}`). The
+  // adapter's resolve names the slot already holding it, so there is one
+  // conversation and the answers typed in it are the ones shown.
+  const panel = await load('lib/panel.js');
+  panel.registerAgent('r', {
+    label: 'Resolving agent', body: () => '',
+    key: (t) => t.draft ? `r:d:${t.draft}` : 'r:new',
+    create: () => ({ draftId: null, answers: {} }),
+    resolve: (t, slots) => {
+      if (!t.draft) return null;
+      const have = slots.find(s => s.data.draftId === t.draft);
+      return have ? have.key : null;
+    },
+  });
+  const composed = panel.openAgent('r', { entry: null });
+  composed.data.draftId = 'bd-1';
+  composed.data.answers = { q1: 'typed before leaving' };
+  const fromInbox = panel.openAgent('r', { draft: 'bd-1' });
+  assert.equal(fromInbox, composed, 'one conversation, not a second');
+  assert.equal(panel.panelState().active, 'r:new');
+  assert.deepEqual(fromInbox.data.answers, { q1: 'typed before leaving' });
+  // a request no slot holds opens its own
+  const other = panel.openAgent('r', { draft: 'bd-2' });
+  assert.notEqual(other, composed);
+  assert.equal(panel.panelState().active, 'r:d:bd-2');
+});
+
 test('entry points carry their target as escaped data, never as markup', async () => {
   const { askAttrs } = await load('lib/panel.js');
   const html = askAttrs('orch', { kind: 'card', card: '"><x' });

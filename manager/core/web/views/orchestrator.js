@@ -592,11 +592,16 @@ function targetChoices(s) {
 
 /* The Orchestrator's adapter for the shared panel (task 205). Registered
    by the composition root; it draws through the routes task 181 owns. */
+// `07` and `7` are one card: a conversation slot is keyed by the number
+function canonCard(card) {
+  return /^[0-9]+$/.test(String(card)) ? String(Number(card)) : card;
+}
+
 function registerOrchAgent() {
   registerAgent('orch', {
     label: 'Orchestrator',
     capability: 'Answers questions about the work; does not change it.',
-    key: (t) => !t || t.kind === 'board' ? 'orch:board' : `orch:${t.kind}:${t.card}`,
+    key: (t) => !t || t.kind === 'board' ? 'orch:board' : `orch:${t.kind}:${canonCard(t.card)}`,
     create: () => ({ conv: null, text: '', req: null, chosen: false }),
     about: (s) => scopeWords(s.target),
     targets: targetChoices,

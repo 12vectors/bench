@@ -437,6 +437,23 @@ class EachSourceSaysWhatItIs(Isolated):
         lost = self.project(board_conversations=[conv])["ask:k-abc"]
         self.assertEqual(lost["state"], "unknown", "a question with no run and no reply is unknown")
 
+    def test_a_card_question_opens_the_slot_the_card_names(self):
+        # review of 204: a zero-padded card's file number (`07`) is the
+        # page's canonical `7`, so the inbox opens the card's own slot
+        self.assertEqual(attention._card_id({"number": "07", "file": "07-export.md"}), "7")
+        self.assertEqual(attention._card_id({"number": None, "file": "notes.md"}), "notes")
+        task = {"file": "07-export.md", "number": "07", "title": "Export", "stage": "to-do",
+                "body": '"kind": "ask"'}
+        conv = {"id": "k-07", "title": "Why?", "exchanges": [
+            {"ask": {"id": "a-1", "at": "2026-11-26T10:00:00Z"},
+             "replies": [{"status": "valid", "at": "2026-11-26T10:01:00Z"}]}]}
+        with mock.patch.object(decisions, "board_conversations", return_value=[]), \
+                mock.patch.object(decisions, "read_text", return_value={"conversations": [conv]}), \
+                mock.patch.object(reasoning, "for_ask", return_value=[]):
+            item = attention._ask_items([task])[0]
+        self.assertEqual(item["open"]["target"], {"kind": "card", "card": "7"})
+        self.assertEqual(item["href"], "/orchestrator/ask?card=7")
+
     def test_a_refinement_proposal_leaves_the_brief_unchanged(self):
         jobs = [{"id": "rf-1", "task": "7-export.md", "status": "proposed", "created": 1},
                 {"id": "rf-2", "task": "7-export.md", "status": "discarded", "created": 2,

@@ -67,7 +67,11 @@ function panelOpen() { return P.open; }
 function openAgent(purpose, target, opts = {}) {
   const ad = adapters[purpose];
   if (!ad) return null;
-  const key = ad.key(target);
+  // an adapter may name a slot already holding this target under another
+  // key (a Brain request still in the composer it was asked from)
+  const held = ad.resolve ? ad.resolve(target, slotsOf(purpose)) : null;
+  if (held && P.slots[held]) target = P.slots[held].target;
+  const key = held && P.slots[held] ? held : ad.key(target);
   let s = P.slots[key];
   if (!s || (opts.fresh && ad.finished && ad.finished(s))) {
     s = { key, purpose, target, data: ad.create ? ad.create(target, opts) : {} };

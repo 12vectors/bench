@@ -1936,9 +1936,8 @@ function openComposer(target, revision, title, from) {
 }
 
 function openDraft(id, from) {
-  const have = slotsOf('brain').find(s => s.data.draftId === id);
-  if (have) openAgent('brain', have.target, { from });
-  else openAgent('brain', { draft: id }, { from });
+  // the adapter's resolve finds the slot already holding this request
+  openAgent('brain', { draft: id }, { from });
 }
 
 function currentDraft(a = ag) {
@@ -1955,6 +1954,14 @@ function registerBrainAgent() {
     capability: 'Drafts one entry from the project; writes nothing until you apply it.',
     key: (t) => t.draft ? `brain:d:${t.draft}` : t.entry ? `brain:e:${t.entry}` : 'brain:new',
     create: (t, opts) => t.draft ? draftAg(t.draft) : composerAg(t.entry, opts.revision, t.title || opts.title),
+    // a request asked in this tab stays in the slot it was composed in
+    // (`brain:new`, `brain:e:<entry>`): opening it by its id, from the
+    // list or from the Activity inbox, resumes that slot, never a second
+    resolve: (t, slots) => {
+      if (!t || !t.draft) return null;
+      const have = slots.find(s => s.data && s.data.draftId === t.draft);
+      return have ? have.key : null;
+    },
     // a request that has ended is history: asking again starts a new one
     finished: (s) => {
       const d = currentDraft(s.data);
