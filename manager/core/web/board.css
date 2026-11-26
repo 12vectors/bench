@@ -2492,7 +2492,9 @@
      as the way back. Its width is a wish the grip sets, clamped here.    */
   .agentpanel{flex:none;width:var(--ap-w,420px);max-width:min(60vw,1100px);min-width:320px;min-height:0;
     display:flex;position:relative;background:var(--canvas);border-left:1px solid var(--border);
-    animation:slidein .18s ease}
+    /* a fade, not a slide: a slide would carry the panel past the window's
+       edge while it animates, and the page would scroll sideways */
+    animation:fadein .18s ease}
   .agentpanel[hidden]{display:none}
   body.agent-wide .agentpanel{width:min(760px,70vw);max-width:none}
   body.agent-full .agentpanel{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:40;border-left:0}
