@@ -23,6 +23,10 @@ the disposable backend.
 - Desktop 1440 in the night theme and 390 (the list full screen) in
   daylight, by pointer and by keyboard.
 
+An Orchestrator answer and a Brain request waiting on its question, each
+asked through the page and opened from the inbox, are driven in
+case_task_questions (test_4e) and case_brain_agent (test_3d).
+
 Not covered here: the vendored, source-hosted and external layouts (the
 fixture is the standard disposable one), and a browser notification
 actually shown (the sandboxed container browser denies the permission).

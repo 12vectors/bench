@@ -29,6 +29,10 @@ everything it added afterwards:
 - A → B: an unsent question about #43 survives navigating to #44 and
   asking about #44; a question naming #44 offers a switch and never
   retargets by itself;
+- a question asked from a zero-padded card (`047`), left while it runs,
+  discovered answered in the Activity inbox and opened from there resumes
+  the card's own conversation — one slot, `orch:card:47` (task 207, the
+  phase 204 review);
 - hostile question text is shown as text; nothing on the board moves;
 - the controls are reachable by keyboard, Escape closes the panel and
   gives focus back; both themes at 1440 and 390 px (full screen) without
@@ -422,6 +426,78 @@ class Ask(unittest.TestCase):
         self.assertEqual(len(reasoning_jobs()), len(before) + 1, "a resend after a lost reply launched another run")
         self.assertEqual(exchanges + 1, sum(c["count"] for c in api("/api/ask?card=43")["conversations"]),
                          "one question was recorded once")
+
+    def test_4e_an_answer_found_in_the_activity_inbox_opens_its_own_conversation(self):
+        # The phase 204 review: ask from a card, leave while the answer is
+        # still coming, discover it in the Activity inbox and open it — the
+        # very conversation the card's Ask opened. The card's file number is
+        # zero-padded (`047`), the page names it `47`: one slot, not two.
+        backend = S["backend"]
+        padded = "047-ask-from-the-inbox.md"
+        card = backend.work / "tasks" / "to-do" / padded
+        card.write_text("# 047 — Ask from the inbox\n\n**Status:** To Do\n**Priority:** Low\n\n"
+                        "A disposable card for the inbox journey.\n", encoding="utf-8")
+        self.addCleanup(lambda: [(backend.work / "tasks" / s / padded).unlink(missing_ok=True)
+                                 for s in ("backlog", "to-do", "in-progress", "review", "done", "archive")])
+        deadline = time.time() + 15
+        while time.time() < deadline and padded not in stages():
+            time.sleep(0.3)
+        backend.ask_answers.write_text("1", encoding="utf-8")
+        backend.ask_hold.write_text("1", encoding="utf-8")
+        self.addCleanup(backend.ask_hold.unlink, True)
+        b = visit("/cards/47", "document.querySelector('#drawer a.o-asklink')", fresh=True)
+        theme(b, "dark")
+        b.click("#drawer a.o-asklink")
+        if not b.wait(f"{OPEN} && document.querySelector('#ap-otext')", 15):
+            raise bv.CheckFailed("Ask about this card did not open the panel")
+        self.assertIn("#47", b.eval("document.querySelector('#agentpanel .ap-chip').textContent"))
+        type_question(b, "Inbox journey: why is #47 waiting?")
+        double(b, SUBMIT)
+        if not b.wait("document.querySelector('#agentpanel .o-askactive')", 20):
+            raise bv.CheckFailed("the run in flight was not shown")
+        # — leave while it runs: close the panel and go to the Board —
+        b.click("#agentpanel [data-pact='close']")
+        b.goto("/board")
+        b.wait("!!document.querySelector('#attnbtn') && attentionState().loaded", 15)
+        backend.ask_hold.unlink()
+
+        def ours():
+            code, raw = backend.get("/api/attention")
+            items = json.loads(raw)["items"] if code == 200 else []
+            return next((i for i in items if i["id"].startswith("ask:") and "#47" in i["title"]), None)
+        deadline, item = time.time() + 60, None
+        while time.time() < deadline:
+            item = ours()
+            if item and item["state"] == "answer-ready" and item["unread"]:
+                break
+            time.sleep(0.5)
+        else:
+            raise bv.CheckFailed(f"the answer never reached the inbox as unread: {item}")
+        self.assertEqual({"kind": "card", "card": "47"}, item["open"]["target"],
+                         "the inbox names the card as the page does")
+        self.assertEqual("/board", b.eval("location.pathname"), "nothing navigated by itself")
+        if not b.wait("document.querySelector('#attnbtn').classList.contains('has-unread')", 20):
+            raise bv.CheckFailed("the Activity control never counted the answer")
+        # — discover and resume —
+        b.click("#attnbtn")
+        row = f"document.querySelector('#attnpop [data-item={json.dumps(item['id'])}]')"
+        if not b.wait(f"!document.querySelector('#attnpop').hidden && !!{row}", 10):
+            raise bv.CheckFailed("the answer is not in the activity list")
+        self.assertIn("nothing was executed", b.eval(f"{row}.innerText"))
+        b.eval(f"{row}.querySelector('[data-attn=\"open\"]').click()")
+        if not b.wait(f"{OPEN} && {THREAD} && /Answered/.test({THREAD}.textContent) && "
+                      f"/Inbox journey/.test({THREAD}.textContent)", 20):
+            raise bv.CheckFailed("Open did not resume the card's conversation: "
+                                 + str(b.eval(f"{PANEL}.innerText.slice(0, 600)")))
+        state = b.eval("panelState()")
+        self.assertEqual("orch:card:47", state["active"])
+        self.assertNotIn("orch:card:047", state["slots"], "the inbox opened a second conversation")
+        shot("ask-resumed-from-activity-1440-dark")
+        deadline = time.time() + 10
+        while time.time() < deadline and ours()["unread"]:
+            time.sleep(0.3)
+        self.assertFalse(ours()["unread"], "Open marked that answer read")
+        b.click("#agentpanel [data-pact='close']")
 
     def test_5_keyboard_themes_and_widths(self):
         before = reasoning_jobs()

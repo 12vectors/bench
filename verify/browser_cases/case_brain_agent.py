@@ -17,6 +17,10 @@ screenshots of each state to look at:
   nothing written; a running round **Cancelled**;
 - a revision that fails after a draft — the failure shown above the kept
   draft, the person's edit kept, and **Apply** still writing it;
+- a request waiting on its question, with an answer typed, found as
+  *Needs your answer* in the Activity inbox after leaving for the Board,
+  and **Open** resuming the conversation it was asked in, answer intact
+  (task 207, the phase 204 review);
 - the draft at 390px and in both themes, with nothing overflowing;
 - and nothing else moved: the application and the cards are unchanged.
 """
@@ -389,6 +393,60 @@ class BrainAgent(unittest.TestCase):
         self.armed_click(b, "ag-generate")
         self.wait_text(b, ["Waiting for your answers"])
         self.assertEqual(len(self.drafts()), before + 1, "a resend after a lost reply launched another request")
+        self.armed_click(b, "ag-discard")
+        self.wait_text(b, ["Discarded"])
+
+    def test_3d_a_question_found_in_the_activity_inbox_resumes_its_conversation(self):
+        # The phase 204 review: a request asked from New entry waits on a
+        # question; the person types an answer, leaves for the Board, finds
+        # *Needs your answer* in the Activity inbox and opens it — the very
+        # conversation it was asked in (`brain:new`), answer intact, not a
+        # second one keyed by the request's id.
+        b = self.open("/brain")
+        b.click('#bshell [data-bact="ag-new"]')
+        if not b.wait("!!document.querySelector('#agentpanel:not([hidden]) [data-ag=\"text\"]')", 5):
+            raise bv.CheckFailed("New entry opened no composer in the panel")
+        self.type(b, "data-ag", "text", "Explain who reviews a contributor's first change")
+        self.answer_with(block(reply("questions")))
+        self.armed_click(b, "ag-generate")
+        self.wait_text(b, ["Waiting for your answers", "Who is the guide for"])
+        draft = self.drafts()[0]["id"]
+        self.type(b, "data-agq", "q1", "Typed before leaving the Brain.")
+        b.goto("/board")
+        b.wait("!!document.querySelector('#attnbtn') && attentionState().loaded", 15)
+
+        def ours():
+            code, raw = self.backend.get("/api/attention")
+            items = json.loads(raw)["items"] if code == 200 else []
+            return next((i for i in items if i["id"] == f"brain:{draft}"), None)
+        deadline, item = time.time() + 30, None
+        while time.time() < deadline:
+            item = ours()
+            if item and item["state"] == "needs-answer" and item["unread"]:
+                break
+            time.sleep(0.4)
+        else:
+            raise bv.CheckFailed(f"the question never reached the inbox as unread: {item}")
+        if not b.wait("document.querySelector('#attnbtn').classList.contains('has-unread')", 20):
+            raise bv.CheckFailed("the Activity control never counted the question")
+        b.click("#attnbtn")
+        row = f"document.querySelector('#attnpop [data-item={json.dumps(item['id'])}]')"
+        if not b.wait(f"!document.querySelector('#attnpop').hidden && !!{row}", 10):
+            raise bv.CheckFailed("the question is not in the activity list")
+        self.assertIn("Needs your answer", b.eval(f"{row}.innerText"))
+        b.eval(f"{row}.querySelector('[data-attn=\"open\"]').click()")
+        if not b.wait("document.querySelector('#agentpanel:not([hidden]) [data-agq=\"q1\"]')?.value === "
+                      "'Typed before leaving the Brain.'", 15):
+            raise bv.CheckFailed("Open did not resume the conversation with its answer: "
+                                 + " | ".join(self.text(b).split("\n"))[:900])
+        state = b.eval("panelState()")
+        self.assertEqual("brain:new", state["active"], "the request's own slot was resumed")
+        self.assertNotIn(f"brain:d:{draft}", state["slots"], "the inbox opened a second conversation")
+        shot("brain-agent-resumed-from-activity-night")
+        deadline = time.time() + 10
+        while time.time() < deadline and ours()["unread"]:
+            time.sleep(0.3)
+        self.assertFalse(ours()["unread"], "Open marked that question read")
         self.armed_click(b, "ag-discard")
         self.wait_text(b, ["Discarded"])
 
