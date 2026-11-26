@@ -138,6 +138,9 @@ REPORT_RE = re.compile(
     r"^##\s+(.+?)\s+[—–-]\s+(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)(?:\s+\(([^)]*)\))?\s*$",
     re.MULTILINE)
 VERDICT_RE = re.compile(r"^PR REVIEW:\s*(APPROVE|REQUEST CHANGES)", re.MULTILINE)
+# an evidence id as bench writes one into a filed review's provenance line
+# (`ev:verification@0123abcd4567`) — the shape evidence ids have, no path
+EVIDENCE_REF_RE = re.compile(r"^ev:[a-z][a-z0-9-]{0,40}@[0-9a-f]{6,64}$")
 # `## Relevance review — 2026-11-08 08:11 (Hazel)` — the heading agents.py
 # files a relevance check under (task 84). Older boards wrote the date
 # alone, and sometimes no reviewer; those are read as legacy, never
@@ -821,11 +824,19 @@ def reports(text: str) -> list[dict]:
     out = []
     for index, head in enumerate(heads):
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        _prov, body = split_provenance(_report_body(history, head.end(), stop))
+        prov, body = split_provenance(_report_body(history, head.end(), stop))
         kind = head.group(1).strip()
         line = head.group(0)
         item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",
                 "text": body,
+                # the run that filed it, as bench recorded at filing (task
+                # 206) — the one way a run is matched to its report; None
+                # for a report filed before bench recorded it, never guessed
+                "agent": (prov or {}).get("agent"),
+                # the evidence ids bench recorded when it filed it (the
+                # checks a PR review asked for) — ids, never paths
+                "evidence": [e for e in ((prov or {}).get("evidence") or [])
+                             if isinstance(e, str) and EVIDENCE_REF_RE.match(e)][:20],
                 # the report's own first paragraph, verbatim and clipped at
                 # a sentence (task 149): what the Overview quotes as the
                 # last recorded result, labelled as the run's account

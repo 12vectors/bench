@@ -57,6 +57,8 @@ HARNESS = "\n".join([
     lift(r"^const JOB_WORD = \{.*?\n\};\n", "JOB_WORD"),
     lift(r"^const RELEVANCE_TONE = .*?\n", "RELEVANCE_TONE"),
     *(function(name) for name in (
+        # task 206: a review's entry point into the shared panel
+        "askAttrs",
         "actLabel", "ago", "whenOf", "stampOf", "cardSplit", "recordHtml",
         "evidenceOptions", "criterionHtml", "accActor", "acceptanceHtml",
         # task 190: outcome first, results the runs reported

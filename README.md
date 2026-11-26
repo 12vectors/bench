@@ -45,7 +45,13 @@ another without losing this one. The page stays in view, the conversation
 keeps its target and your unsent text while you move around, and a
 reload gives it back. Opening, reading and closing it launch nothing;
 only an explicit, armed Ask, Generate or Continue does ("The shared agent
-conversation" in `AGENTS.md`).
+conversation" in `AGENTS.md`). The same panel holds a card's refinement
+(comment, then Update card with agent, then Apply or Discard), a Brain
+seed or evaluation draft's progress beside the workspace its review and
+Apply stay in, and any implementation, repair or review run opened to
+inspect — what it reported, what bench observed, its report and exact
+records — without a composer, because a coding run takes no follow-up
+("Every agent purpose, and what it supports").
 
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this

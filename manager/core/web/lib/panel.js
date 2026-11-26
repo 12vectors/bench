@@ -411,6 +411,14 @@ function panelState() {
            slots: Object.fromEntries(Object.entries(P.slots).map(([k, s]) => [k, { purpose: s.purpose, target: s.target }])) };
 }
 
+/* For the suites and a person at the console: the markup a slot's adapter
+   would draw, without painting it. A read — it sends nothing. */
+function slotBody(key) {
+  const s = P.slots[key];
+  const ad = s && adapters[s.purpose];
+  return ad ? ad.body(s) : null;
+}
+
 /* A data-agent-ask attribute pair for an entry point's markup. */
 function askAttrs(purpose, target) {
   return ` data-agent-ask="${esc(purpose)}" data-agent-target="${esc(JSON.stringify(target))}"`;
@@ -418,5 +426,5 @@ function askAttrs(purpose, target) {
 
 export {
   activeSlot, askAttrs, closePanel, dropSlot, listenForAsks, mountPanel, openAgent, panelMounted, panelOpen, panelState,
-  registerAgent, renderPanel, restorePanel, save as savePanel, setSize, slot, slotsOf
+  registerAgent, renderPanel, restorePanel, save as savePanel, setSize, slot, slotBody, slotsOf
 };
