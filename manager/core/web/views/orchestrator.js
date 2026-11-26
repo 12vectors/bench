@@ -24,6 +24,7 @@ import { ARM_MS, arming } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { setHtml } from '../lib/keyed.js';
 import { md } from '../lib/md.js';
+import { activeSlot, askAttrs, openAgent, registerAgent, renderPanel, savePanel } from '../lib/panel.js';
 import { pressHold } from '../lib/press.js';
 import { admissionWords, ageWords, capacityWords, GROUP_WORDS, stepHere, orchHref, overall, RUN_WORDS, scopeName, SECTION_WORDS, SOURCE_WORDS, workGroup } from '../lib/orchwords.js';
 import { cardId, findCard, ORCH_SECTIONS } from '../lib/route.js';
@@ -294,13 +295,15 @@ function stripHtml(section) {
     : bench && bench.paused ? btn('resume:bench', 'Resume all new work', { act: 'scope', data: { scope: 'bench', action: 'resume' } })
       : btn('pause:bench', 'Pause all new work', { act: 'scope', data: { scope: 'bench', action: 'pause' } });
   const at = orch().at ? `read ${ago(orch().at / 1000)} ago` : 'not read yet';
+  // the shared conversation (task 205): asked about what this page shows
+  const ask = `<button type="button" class="o-btn" data-o="ask-open"${askAttrs('orch', pageTarget())}>Ask orchestrator</button>`;
   return `<section class="o-status ${esc(st.tone)}" aria-labelledby="o-status-h">` +
     `<div class="o-statustext"><p class="o-eyebrow">Orchestrator · ${esc(at)}</p>` +
     `<h2 id="o-status-h">${badge(st.label, st.tone)}</h2>` +
     `<p>${esc(st.sentence)}</p>` +
     (r ? `<p class="o-dim">Agreement ${esc(r.effective.revision)}` +
       ` · ${esc(identityWords(r.identity))}</p>` : '') +
-    `</div>${nextHtml || pause ? `<div class="o-acts">${nextHtml}${pause}</div>` : ''}` +
+    `</div><div class="o-acts">${nextHtml}${pause}${ask}</div>` +
     (pause ? `<p class="o-effect">${esc(bench && bench.paused ? EFFECTS.resumeBench : EFFECTS.pauseBench)}</p>` : '') +
     `</section>`;
 }
@@ -434,15 +437,11 @@ async function loadThread(id, force) {
   scheduleRender();
 }
 
-/* The context a new question is about: what the page chose, else the card
-   the address names, else the board. */
-function askScope() {
-  const a = askState();
-  if (a.item !== S.orchItem) { a.item = S.orchItem; a.scope = null; a.conv = null; }
-  if (a.scope) return a.scope;
+/* The target a page's question is about (task 205): the card or phase the
+   address names, else the board. Inferred, never a form to fill in. */
+function pageTarget() {
   const t = selected();
-  if (t) return { kind: t.isPhase ? 'phase' : 'card', card: String(idOf(t)) };
-  return { kind: 'board' };
+  return t ? { kind: t.isPhase ? 'phase' : 'card', card: String(idOf(t)) } : { kind: 'board' };
 }
 
 function scopeWords(scope) {
@@ -464,37 +463,11 @@ function scopeMatches(c, scope) {
   return !!t && (c.where || {}).file === t.file;
 }
 
-function cardOptions(phases) {
-  return tasks().filter(t => (phases ? t.isPhase : !t.isPhase) && t.stage !== 'archive')
-    .map(t => ({ id: String(idOf(t)), label: `${num(t)} · ${title(t)}`, stage: t.stage }));
-}
-
-function scopePickerHtml(scope) {
-  const a = askState();
-  const phases = cardOptions(true), cards = cardOptions(false);
-  const radio = (kind, label) => `<label class="o-askradio"><input type="radio" name="askscope" ` +
-    `data-ofield="ask-kind" data-o="askkind-${kind}" value="${kind}"${scope.kind === kind ? ' checked' : ''}` +
-    `${kind === 'phase' && !phases.length ? ' disabled' : ''}> ${esc(label)}</label>`;
-  const select = (kind, list) => scope.kind !== kind ? '' :
-    `<label class="o-askselect">${kind === 'phase' ? 'Phase' : 'Card'} ` +
-    `<select data-ofield="ask-card" data-o="askcard-${kind}">` +
-    (scope.card ? '' : `<option value="">Choose…</option>`) +
-    list.map(c => `<option value="${esc(c.id)}"${c.id === String(scope.card) ? ' selected' : ''}>` +
-      `${esc(c.label)}</option>`).join('') + `</select></label>`;
-  return `<fieldset class="o-askscope"><legend>Context — what the question is about</legend>` +
-    radio('board', 'Board') + radio('phase', 'Phase') + radio('card', 'Card') +
-    select('phase', phases) + select('card', cards) +
-    `<p class="o-dim">Changing the context starts a new conversation; ${a.conv ? 'this one stays where it is.' : 'nothing is asked until you submit.'}</p>` +
-    `</fieldset>`;
-}
-
 function preflightHtml(pre, follow) {
-  if (!pre) return `<p class="o-dim" aria-busy="true">Reading what asking would launch…</p>`;
+  if (!pre) return `<p class="o-dim">Reading what asking would launch…</p>`;
   const model = pre.model ? `${pre.model} (${pre.modelSource === 'default' ? 'default' : esc(pre.modelSetting || pre.modelSource)})`
     : 'the harness’s own default model';
-  return `<div class="o-askpre${pre.ready ? '' : ' alarm'}">` +
-    (pre.ready ? '' : `<p role="alert"><strong>Cannot ask here now:</strong> ${esc(pre.reason || pre.code)}` +
-      (pre.remedy ? ` <span class="o-dim">Fix: ${esc(pre.remedy)}</span>` : '') + `</p>`) +
+  return `<div class="o-askpre">` +
     `<p><strong>On submit:</strong> one read-only reasoning run through <strong>${esc(pre.harness)}</strong>` +
     ` · model ${model}. ${esc(pre.readOnly)}.</p>` +
     `<p class="o-dim">${esc(pre.accounting)} ${esc(pre.delegation)}</p>` +
@@ -503,26 +476,202 @@ function preflightHtml(pre, follow) {
     `</div>`;
 }
 
-function composerHtml(scope, thread) {
+/* What a question's text names besides its target (task 205): `#43`,
+   `card 43`, `phase 44`. A reference that resolves uniquely to another
+   card on this board is offered as an explicit switch — never applied by
+   itself; one that names two cards is said, so nobody guesses. */
+function referencesIn(text, target) {
+  const nums = new Set();
+  const re = /(?:#|\b(?:card|phase)\s+#?)(\d{1,5})\b/gi;
+  let m;
+  while ((m = re.exec(text || ''))) nums.add(String(parseInt(m[1], 10)));
+  const here = target && target.kind !== 'board' ? findCard(target.card, S.state).task : null;
+  const out = [];
+  for (const n of nums) {
+    const found = findCard(n, S.state);
+    if (found.ambiguous) out.push({ n, ambiguous: found.ambiguous });
+    else if (found.task && found.task !== here) out.push({ n, task: found.task });
+    else if (!found.task) out.push({ n, missing: true });
+  }
+  return out.slice(0, 4);
+}
+
+function referencesHtml(s) {
+  const refs = referencesIn(s.data.text, s.target);
+  if (!refs.length) return '';
+  return `<div class="ap-refs" role="note">` + refs.map(r => {
+    if (r.missing) return `<p>Your question mentions #${esc(r.n)}, which is not a card on this board. It is asked about ${esc(scopeWords(s.target))} as written.</p>`;
+    if (r.ambiguous) return `<p>#${esc(r.n)} names more than one card (${esc(r.ambiguous.join(', '))}); nothing is switched. Open the one you mean and ask from there.</p>`;
+    const kind = r.task.isPhase ? 'phase' : 'card';
+    return `<p>Your question mentions ${esc(num(r.task))} · ${esc(title(r.task))}. This conversation stays about ${esc(scopeWords(s.target))} unless you switch.</p>` +
+      `<button type="button" class="o-btn" data-oact="paskRetarget" data-o="pask-ref-${esc(r.n)}" data-kind="${kind}" data-card="${esc(idOf(r.task))}">` +
+      `Ask about ${esc(num(r.task))} instead</button>`;
+  }).join('') + `</div>`;
+}
+
+/* The panel's composer: the question, the one blocker that stops it (if
+   any), and Ask. What asking launches and counts is one fold away. */
+function panelComposerHtml(s, thread) {
   const a = askState();
+  const d = s.data;
   const pre = a.pre;
-  const follow = !!(thread && a.conv);
-  const busy = thread && ((thread.conversation || {}).exchanges || []).some(x => x.active);
-  const disabled = !pre || !pre.ready || busy || (scope.kind !== 'board' && !scope.card);
-  const why = busy ? 'a run is still answering this conversation; wait for it or cancel it'
-    : scope.kind !== 'board' && !scope.card ? 'choose the card first' : (pre && pre.reason) || '';
-  return `<div class="o-askcomposer">` +
-    `<label for="o-asktext" class="o-eyebrow">${follow ? 'Ask a follow-up' : `Ask about ${esc(scopeWords(scope))}`}</label>` +
-    `<textarea id="o-asktext" rows="3" maxlength="1000" data-ofield="ask-text" data-o="ask-text" ` +
-    `placeholder="${follow ? 'And what would unblock it?' : scope.kind === 'board' ? 'What is consuming capacity?' : 'Why is this card still in To Do?'}">` +
-    `${esc(a.text)}</textarea>` +
-    preflightHtml(pre, follow) +
-    `<div class="o-acts">` + btn('ask-submit', follow ? 'Ask follow-up' : 'Ask', {
-      act: 'ask', primary: true, disabled, why,
+  const follow = !!(thread && d.conv);
+  const busy = !!(thread && ((thread.conversation || {}).exchanges || []).some(x => x.active));
+  const disabled = !pre || !pre.ready || busy;
+  const why = busy ? 'a run is still answering this conversation; wait for it or cancel it' : (pre && pre.reason) || '';
+  const blocker = pre && !pre.ready
+    ? `<p class="ap-block" role="alert"><strong>Cannot ask here now:</strong> ${esc(pre.reason || pre.code)}` +
+      (pre.remedy ? ` <span class="o-dim">Fix: ${esc(pre.remedy)}</span>` : '') + `</p>` : '';
+  return `<div class="o-askcomposer ap-composer">` +
+    `<label for="ap-otext" class="o-eyebrow">${follow ? 'Ask a follow-up' : `Ask about ${esc(scopeWords(s.target))}`}</label>` +
+    `<textarea id="ap-otext" rows="3" maxlength="1000" data-ofield="pask-text" ` +
+    `placeholder="${follow ? 'And what would unblock it?' : s.target.kind === 'board' ? 'What is consuming capacity?' : 'Why is this card still in To Do?'}">` +
+    `${esc(d.text)}</textarea>` + referencesHtml(s) + blocker +
+    `<div class="o-acts">` + btn(`pask:${s.key}`, follow ? 'Ask follow-up' : 'Ask', {
+      act: 'pask', primary: true, disabled, why,
       confirm: 'Confirm: launch one read-only reasoning run' }) +
-    (a.conv ? `<button type="button" class="o-btn" data-oact="askNew" data-o="ask-new">New conversation</button>` : '') +
-    `</div><p class="o-effect">Asking explains; it acts on nothing. No card moves, no work starts or stops, no check runs, and no agreement, gate or budget changes. A suggestion in a reply is a link to where that control already lives.</p>` +
-    `</div>`;
+    (d.conv ? `<button type="button" class="o-btn" data-oact="paskNew" data-o="pask-new">New conversation</button>` : '') +
+    `</div>` +
+    `<details class="ap-tech" data-okeep="ap-tech"${keepOpen('ap-tech')}><summary>Technical details — model, access and accounting</summary>` +
+    preflightHtml(pre, follow) +
+    `<p class="o-effect">Asking explains; it acts on nothing. No card moves, no work starts or stops, no check runs, and no agreement, gate or budget changes. A suggestion in a reply is a link to where that control already lives.</p>` +
+    `</details></div>`;
+}
+
+/* The panel's body: the conversation about the slot's target, or a note
+   that there is none yet, then the composer. The newest conversation
+   about the target is resumed when the slot has not chosen one. */
+function panelBodyHtml(s) {
+  const a = askState();
+  loadAsk(false);
+  const d = s.data;
+  if (!d.conv && !d.chosen && a.list) {
+    const hit = a.list.filter(c => scopeMatches(c, s.target))
+      .sort((x, y) => String(y.updated || '').localeCompare(String(x.updated || '')))[0];
+    d.chosen = true;
+    if (hit) { d.conv = hit.id; savePanel(); }
+  }
+  if (d.conv) loadThread(d.conv, false);
+  const entry = d.conv ? (a.thread[d.conv] || null) : null;
+  const thread = entry && entry.data;
+  return (a.error ? `<p class="o-notice alarm" role="alert">${esc(a.error)}</p>` : '') +
+    (d.conv ? threadHtml(entry)
+      : !a.list ? `<p class="o-dim" aria-busy="true">Reading earlier conversations…</p>`
+        : `<p class="ap-empty">No conversation about ${esc(scopeWords(s.target))} yet. Ask below: one read-only reasoning run answers, from bench’s own records.</p>`) +
+    panelComposerHtml(s, thread);
+}
+
+function slotTargetOf(c) {
+  const w = c.where || {};
+  if ((c.scope || w.kind) === 'board') return { kind: 'board' };
+  return { kind: w.kind === 'phase' ? 'phase' : 'card', card: String(parseInt(w.card || c.subject, 10) || c.subject) };
+}
+
+function targetChoices(s) {
+  const cur = s.target;
+  const same = (t) => t.kind === cur.kind && String(t.card || '') === String(cur.card || '');
+  const list = [{ target: { kind: 'board' }, label: 'The whole board' }];
+  for (const t of tasks().filter(x => x.stage !== 'archive')) {
+    const target = { kind: t.isPhase ? 'phase' : 'card', card: String(idOf(t)) };
+    list.push({ target, label: `${t.isPhase ? 'Phase' : 'Card'} ${num(t)} · ${title(t)}` });
+  }
+  return list.slice(0, 400).map(x => ({ ...x, current: same(x.target) }));
+}
+
+/* The Orchestrator's adapter for the shared panel (task 205). Registered
+   by the composition root; it draws through the routes task 181 owns. */
+function registerOrchAgent() {
+  registerAgent('orch', {
+    label: 'Orchestrator',
+    capability: 'Answers questions about the work; does not change it.',
+    key: (t) => !t || t.kind === 'board' ? 'orch:board' : `orch:${t.kind}:${t.card}`,
+    create: () => ({ conv: null, text: '', req: null, chosen: false }),
+    about: (s) => scopeWords(s.target),
+    targets: targetChoices,
+    body: panelBodyHtml,
+    opened: (s) => { loadAsk(false); if (s.data.conv) loadThread(s.data.conv, false); },
+    persist: (s) => ({ conv: s.data.conv, text: s.data.text, req: s.data.req, chosen: s.data.chosen }),
+    revive: (d) => ({ conv: typeof d.conv === 'string' ? d.conv : null, text: typeof d.text === 'string' ? d.text : '',
+                      req: typeof d.req === 'string' ? d.req : null, chosen: !!d.chosen }),
+    wire: wirePanel,
+  });
+}
+
+/* The panel's own listeners: its buttons and its question field. Every
+   button that sends is armed and goes through the route that owns it. */
+function wirePanel(el) {
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-oact]');
+    if (!b || !el.contains(b) || b.disabled) return;
+    const s = activeSlot();
+    if (!s || s.purpose !== 'orch') return;
+    e.preventDefault();
+    panelAction(b, s);
+  });
+  const onField = (e) => {
+    const f = e.target;
+    if (!f.dataset || f.dataset.ofield !== 'pask-text') return;
+    const s = activeSlot();
+    if (!s || s.purpose !== 'orch') return;
+    // a changed question is a new submission; the same text resent is not
+    if (s.data.text !== f.value) s.data.req = null;
+    s.data.text = f.value;
+    if (e.type === 'change') { savePanel(); renderPanel(); }
+  };
+  el.addEventListener('input', onField);
+  el.addEventListener('change', onField);
+  el.addEventListener('toggle', (e) => {
+    const k = e.target && e.target.dataset && e.target.dataset.okeep;
+    if (k) orch().open[k] = e.target.open;
+  }, true);
+}
+
+function panelAction(b, s) {
+  const d = b.dataset;
+  const key = d.o || d.oact;
+  switch (d.oact) {
+    case 'pask':
+      return armed(key, () => submitPanel(s));
+    case 'askCancel':
+      return armed(key, async () => {
+        const res = await send('/api/ask/cancel', { operation: d.operation }, false);
+        if (s.data.conv) loadThread(s.data.conv, true);
+        return res.ok ? { said: 'cancel requested — the reply records it once the run is observed gone; nothing else is touched' } : res;
+      });
+    case 'askRetry':
+      return armed(key, async () => {
+        const res = await send('/api/ask/retry', { conversation: s.data.conv, ask: d.ask }, false);
+        if (s.data.conv) loadThread(s.data.conv, true);
+        loadAsk(true);
+        return res.ok ? { said: res.data.duplicate ? 'the inputs are unchanged — the earlier outcome stands' : 'asked again — one read-only reasoning run' }
+          : { ok: false, error: res.error + (res.data && res.data.remedy ? ` — ${res.data.remedy}` : '') };
+      });
+    case 'paskNew':
+      // a new conversation about the same target; the old one stays listed
+      s.data.conv = null;
+      s.data.chosen = true;
+      s.data.req = null;
+      savePanel();
+      renderPanel(true);
+      document.querySelector('#ap-otext')?.focus();
+      return;
+    case 'paskRetarget': {
+      // an explicit switch: the question moves to the other target's
+      // conversation, and this one is kept as it was
+      const text = s.data.text;
+      const to = openAgent('orch', { kind: d.kind, card: String(d.card) }, { focus: 'composer' });
+      // moved only into an empty composer: text already typed there is
+      // never written over, and then this one keeps its own
+      if (to && to !== s && !to.data.text) {
+        to.data.text = text; to.data.req = null;
+        s.data.text = ''; s.data.req = null;
+        savePanel(); renderPanel(true);
+      }
+      toast(`asking about ${scopeWords(to ? to.target : {})} — the conversation about ${scopeWords(s.target)} is kept`);
+      return;
+    }
+    default:
+  }
 }
 
 function refHref(ref, reply) {
@@ -644,58 +793,62 @@ function threadHtml(entry) {
     html + `</div>${rail}</div>`;
 }
 
+/* The Ask section (task 205): the conversations kept on this board, each
+   opened in the shared panel, and one way to ask about what the address
+   names. An address naming a card (`/orchestrator/ask?card=43`, kept from
+   task 181) opens that card's conversation in the panel once per arrival:
+   reading, never asking. */
 function askHtml() {
   const a = askState();
   loadAsk(false);
-  const scope = askScope();
-  if (a.conv) loadThread(a.conv, false);
+  const here = pageTarget();
+  if (S.orchItem && a.linked !== S.orchItem && S.state) {
+    a.linked = S.orchItem;
+    setTimeout(() => openAgent('orch', here, { focus: 'composer' }), 0);
+  } else if (!S.orchItem) a.linked = null;
   const list = a.list || [];
   const listHtml = !a.list ? `<p class="o-dim" aria-busy="true">Reading conversations…</p>`
     : !list.length ? `<p class="o-dim">No conversations yet. Ask the first question.</p>`
-    : `<ul class="o-asklist">` + list.map(c => `<li><button type="button" class="o-askconv${c.id === a.conv ? ' on' : ''}${scopeMatches(c, scope) ? ' here' : ''}"` +
-        ` data-oact="askConv" data-conv="${esc(c.id)}" data-o="conv-${esc(c.id)}"${c.id === a.conv ? ' aria-current="true"' : ''}>` +
+    : `<ul class="o-asklist">` + list.map(c => `<li><button type="button" class="o-askconv${scopeMatches(c, here) ? ' here' : ''}"` +
+        ` data-oact="askConv" data-conv="${esc(c.id)}" data-o="conv-${esc(c.id)}">` +
         `<span>${esc(c.title || '(no question)')}</span><small>${esc(convWhereWords(c))} · ${esc(c.count)} question${c.count === 1 ? '' : 's'}` +
         ` · ${esc((ASK_STATUS[c.status] || [c.status || ''])[0])} · ${esc(when(c.updated))}</small></button></li>`).join('') + `</ul>`;
-  const thread = a.conv ? (a.thread[a.conv] || null) : null;
-  return `<p class="o-lead">Ask why work is or is not moving. A question launches one read-only reasoning run on your request; the answer explains, from bench’s own records, and changes nothing.</p>` +
+  return `<p class="o-lead">Ask why work is or is not moving. A question launches one read-only reasoning run on your request; the answer explains, from bench’s own records, and changes nothing. Conversations open in the panel beside the page, so the work stays in view.</p>` +
     (a.error ? `<p class="o-notice alarm" role="alert">${esc(a.error)}</p>` : '') +
-    `<div class="o-asklayout"><aside class="o-asksidebar" aria-label="Conversations"><p class="o-eyebrow">Conversations</p>${listHtml}</aside>` +
-    `<div class="o-askbody">` +
-    (a.conv ? `<p class="o-dim">Conversation ${esc(a.conv)} · about ${esc(thread && thread.data ? scopeWordsOf(thread.data.where) : '…')}</p>`
-      : scopePickerHtml(scope)) +
-    (a.conv ? threadHtml(thread) : '') +
-    composerHtml(a.conv ? ((thread && thread.data && whereScope(thread.data.where)) || scope) : scope,
-                 thread && thread.data) +
-    `</div></div>`;
+    `<div class="o-acts"><button type="button" class="o-btn primary" data-o="ask-here"${askAttrs('orch', here)}>Ask about ${esc(scopeWords(here))}</button></div>` +
+    `<section class="o-askhistory" aria-labelledby="o-askhist-h"><h2 id="o-askhist-h" class="o-eyebrow">Conversations on this board</h2>${listHtml}</section>`;
 }
 
-function whereScope(where) {
-  if (!where || where.kind === 'board') return { kind: 'board' };
-  return { kind: where.kind, card: String(where.subject) };
-}
-
-function scopeWordsOf(where) { return scopeWords(whereScope(where)); }
-
-async function submitAsk() {
-  const a = askState();
-  const text = (a.text || '').trim();
+/* One submission from a panel slot. Its request identity is kept with the
+   slot — in this tab's storage too — before it is sent, so a resend after
+   a lost reply, a double click or a reload is the same submission and the
+   server answers it with the first outcome. */
+async function submitPanel(s) {
+  const d = s.data;
+  const text = (d.text || '').trim();
   if (text.length < 3) return { ok: false, error: 'write a question first — nothing was sent' };
-  a.req = a.req || newRequest('ask');
-  const body = { text, request: a.req };
-  if (a.conv) body.conversation = a.conv;
-  else body.scope = askScope();
-  const res = await send('/api/ask', body, false);
+  d.req = d.req || newRequest('ask');
+  savePanel();
+  const body = { text, request: d.req };
+  if (d.conv) body.conversation = d.conv;
+  else body.scope = s.target.kind === 'board' ? { kind: 'board' } : { kind: s.target.kind, card: String(s.target.card) };
+  let res = await send('/api/ask', body, false);
+  // no answer at all: the same identity once more is answered from the record
+  if (res.status === 0) res = await send('/api/ask', body, false);
   if (!res.ok) {
-    if (res.data && res.data.code === 'not-launched') { a.text = ''; a.req = null; }
+    if (res.data && res.data.code === 'not-launched') { d.text = ''; d.req = null; }
+    savePanel();
     loadAsk(true);
-    if (a.conv) loadThread(a.conv, true);
+    if (d.conv) loadThread(d.conv, true);
     return { ok: false, error: res.error + (res.data && res.data.remedy ? ` — ${res.data.remedy}` : '') };
   }
-  a.text = '';
-  a.req = null;
-  a.conv = res.data.conversation;
+  d.text = '';
+  d.req = null;
+  d.conv = res.data.conversation;
+  d.chosen = true;
+  savePanel();
   loadAsk(true);
-  loadThread(a.conv, true);
+  loadThread(d.conv, true);
   return { said: res.data.duplicate ? 'already asked — the first submission stands' : 'asked — one read-only reasoning run is answering' };
 }
 
@@ -2041,39 +2194,13 @@ async function doAction(el) {
     case 'answer':
     case 'withdraw':
       return armed(key, () => answer(d.file, d.q, d.oact));
-    case 'ask':
-      return armed(key, submitAsk);
-    case 'askCancel':
-      return armed(key, async () => {
-        const res = await send('/api/ask/cancel', { operation: d.operation }, false);
-        const a = askState();
-        if (a.conv) loadThread(a.conv, true);
-        return res.ok ? { said: 'cancel requested — the reply records it once the run is observed gone; nothing else is touched' } : res;
-      });
-    case 'askRetry':
-      return armed(key, async () => {
-        const a = askState();
-        const res = await send('/api/ask/retry', { conversation: a.conv, ask: d.ask }, false);
-        if (a.conv) loadThread(a.conv, true);
-        loadAsk(true);
-        return res.ok ? { said: res.data.duplicate ? 'the inputs are unchanged — the earlier outcome stands' : 'asked again — one read-only reasoning run' }
-          : { ok: false, error: res.error + (res.data && res.data.remedy ? ` — ${res.data.remedy}` : '') };
-      });
     case 'askConv': {
-      const a = askState();
-      a.conv = d.conv;
-      a.text = '';
-      a.req = null;
-      loadThread(a.conv, true);
-      paintNow();
-      return;
-    }
-    case 'askNew': {
-      const a = askState();
-      a.conv = null;
-      a.text = '';
-      a.req = null;
-      paintNow();
+      // an earlier conversation opens in the shared panel (task 205): a
+      // read. Its target's slot keeps any question typed there
+      const c = (askState().list || []).find(x => x.id === d.conv);
+      if (!c) return;
+      openAgent('orch', slotTargetOf(c), { from: el, data: { conv: c.id, chosen: true }, focus: 'composer' });
+      loadThread(c.id, true);
       return;
     }
     case 'startDraft':
@@ -2217,6 +2344,8 @@ function paint(root, html) {
 function paintNow() {
   const root = $('#oshell');
   if (root && S.view === 'orchestrator') paint(root, shellHtml());
+  // an armed button in the shared panel is drawn there (task 205)
+  renderPanel();
 }
 
 function wire(root) {
@@ -2250,26 +2379,6 @@ function wire(root) {
       traceState().draft[el.dataset.k] = el.value;
     } else if (f === 'newphase') {
       o.newPhase = el.value;
-    } else if (f === 'ask-text') {
-      const a = askState();
-      // a changed question is a new submission; the same text resent is not
-      if (a.text !== el.value) a.req = null;
-      a.text = el.value;
-    } else if (f === 'ask-kind' && e.type === 'change') {
-      const a = askState();
-      const now = askScope();
-      const kind = el.value;
-      a.scope = { kind, card: kind === 'board' ? null
-        : kind === now.kind ? now.card : (cardOptions(kind === 'phase')[0] || {}).id || null };
-      a.conv = null;
-      a.req = null;
-      paintNow();
-    } else if (f === 'ask-card' && e.type === 'change') {
-      const a = askState();
-      a.scope = { kind: askScope().kind, card: el.value || null };
-      a.conv = null;
-      a.req = null;
-      paintNow();
     } else if (f === 'keeplimits') {
       o.keepLimits = !!el.checked;
       o.migration = null;           // a new choice needs a new preview
@@ -2366,6 +2475,6 @@ function renderOrchTab() {
 }
 
 export {
-  closedQuestionHtml, loadOrch, renderOrchestrator, renderOrchStrip, renderOrchTab,
-  setPath
+  closedQuestionHtml, loadOrch, referencesIn, registerOrchAgent, renderOrchestrator, renderOrchStrip,
+  renderOrchTab, setPath
 };
