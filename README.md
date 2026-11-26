@@ -53,6 +53,16 @@ inspect — what it reported, what bench observed, its report and exact
 records — without a composer, because a coding run takes no follow-up
 ("Every agent purpose, and what it supports").
 
+Closing the panel does not lose what an agent does next. The header's
+**Activity** control, on every view, counts unread agent results and
+questions and opens a list of them — runs, Orchestrator answers, Brain
+drafts, card refinements and owner questions, each with its state in
+words (a proposal is never *applied*, a run a restart cut short reads
+*interrupted*) — and **Open** takes you to the exact conversation,
+proposal or run. Unread survives navigation, reload and restart; nothing
+is marked read by looking. Browser notifications are off until you turn
+them on with a click ("Agent activity and the inbox" in `AGENTS.md`).
+
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this
 repository's own markdown, so what the docs say and what bench does

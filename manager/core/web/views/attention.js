@@ -224,7 +224,7 @@ function paintControl() {
   btn.title = words;
   btn.setAttribute('aria-expanded', String(A.open));
   btn.classList.toggle('has-unread', unread > 0);
-  btn.innerHTML = `<span class="attn-glyph" aria-hidden="true">◎</span><span class="attn-lab">Activity</span>` +
+  btn.innerHTML = `<span class="attn-glyph" aria-hidden="true">○</span><span class="attn-lab">Activity</span>` +
     (running ? `<span class="dot live" aria-hidden="true"></span>` : '') +
     (unread ? `<span class="attn-count" aria-hidden="true">${unread > 99 ? '99+' : unread}</span>` : '');
 }
