@@ -267,7 +267,9 @@ function listHtml() {
     : prefOn ? `<button type="button" class="attn-link" data-attn="notify-off">Turn off</button>`
     : `<button type="button" class="attn-link" data-attn="notify-on">Turn on browser notifications</button>`;
   const bounds = d ? `Kept on this installation: at most ${d.bounds.max} items, each for ${d.bounds.retentionDays} days after it last changed` +
-    ((d.pruned.expired || d.pruned.overflow) ? ` (${d.pruned.expired} expired, ${d.pruned.overflow} past the limit so far)` : '') + '.' : '';
+    ((d.pruned.expired || d.pruned.overflow) ? ` (${d.pruned.expired} expired, ${d.pruned.overflow} past the limit so far)` : '') + '.' +
+    (d.held && (d.held.retention || d.held.cap)
+      ? ` ${(d.held.retention || 0) + (d.held.cap || 0)} older results are held back and not listed.` : '') : '';
   return `<div class="attn-head"><h2 id="attn-title" tabindex="-1">Agent activity</h2>` +
     `<button type="button" class="ap-icon" data-attn="close" aria-label="Close agent activity" title="Close (Escape)">✕</button></div>` +
     `<p class="attn-sum" role="status">${unread} unread · ${running} running</p>` +

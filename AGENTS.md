@@ -9897,7 +9897,8 @@ acknowledging an older key never hides a newer one (the reply names it,
 and it stays unread). Running, discarded and superseded are never
 unread. The first time an installation reads its sources, what is
 already over is recorded as read, so turning this on does not raise
-every old result.
+every old result; what still waits on you — an open owner question, a
+proposal to review — stays unread.
 
 **Nothing is marked read by looking.** Opening the list, filtering it,
 closing it, opening the panel or visiting a card mark nothing. Only a
@@ -9944,9 +9945,17 @@ wrote, or one that cannot be read, is set aside beside it
 again from a baseline, saying so.
 
 **Bounds, said.** At most `BOARD_ATTENTION_MAX` items (200), each
-removed `BOARD_ATTENTION_RETENTION_DAYS` (30) after it last changed, the
-oldest first past the cap; the list's footer says both and how many each
-has removed. A running item is never expired.
+removed `BOARD_ATTENTION_RETENTION_DAYS` (30) after it last changed —
+here or in its source — the oldest by their source's own time first past
+the cap; the list's footer says both and how many each has removed. A
+running item is never expired. The sources are not bounded (every run
+record on disk, say), so the same bounds decide what is listed: an item
+whose source dates it past retention, or that would be the first to go
+past the cap, is not listed, and the footer counts those as held back.
+So a removed result never returns as new and unread while its source
+still holds it, and **Mark all read** stays read. A source that cannot
+be read on a beat marks none of its items gone: they keep what they last
+said until a reading succeeds.
 
 **When it is read.** The beat reads the sources at start-up — after the
 restart recoveries, so an ending they closed is read at once — then when a

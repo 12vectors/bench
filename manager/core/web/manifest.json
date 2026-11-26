@@ -286,8 +286,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/attention.js": {
-   "bytes": 19522,
-   "sha256": "cb02e8173438589797c3823f43dff3859e8dd35456058105f0c808cb3377a380",
+   "bytes": 19680,
+   "sha256": "f392666075e912977a8dd7037becf52f8af41abadceba1a54119e3ff7dde10f6",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {

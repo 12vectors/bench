@@ -89,8 +89,8 @@ class Isolated(unittest.TestCase):
     def sent(self, payload):
         self.frames.append(payload)
 
-    def observe_items(self, items, now=None):
-        with mock.patch.object(attention, "project", return_value=items):
+    def observe_items(self, items, now=None, skipped=()):
+        with mock.patch.object(attention, "_project", return_value=(items, set(skipped))):
             return attention.observe(board=BOARD, now=now)
 
     def items(self):
@@ -103,6 +103,15 @@ class UnreadIsATransitionNobodyAcknowledged(Isolated):
         self.assertFalse(self.items()["run:old"]["unread"],
                          "what was over before the inbox existed is not news")
         self.assertEqual(attention.reading()["unread"], 0)
+
+    def test_the_baseline_leaves_what_still_waits_on_a_person_unread(self):
+        self.observe_items([item("question:7:q1", "needs-answer", kind="question"),
+                            item("brain:bd-1", "proposal-ready", kind="brain-draft"),
+                            item("run:old", "failed")])
+        found = self.items()
+        self.assertTrue(found["question:7:q1"]["unread"], "an open question is not over")
+        self.assertTrue(found["brain:bd-1"]["unread"], "a proposal waits on your review")
+        self.assertFalse(found["run:old"]["unread"], "an old failure is over")
 
     def test_a_new_result_is_unread_once_however_often_it_is_seen(self):
         self.observe_items([])
@@ -161,6 +170,18 @@ class UnreadIsATransitionNobodyAcknowledged(Isolated):
         out = attention.acknowledge({"items": [{"id": "run:gone", "key": "failed:1"}]})
         self.assertEqual(out["missing"], ["run:gone"])
 
+    def test_one_odd_id_does_not_refuse_the_whole_batch(self):
+        self.observe_items([])
+        odd = "question:12-naïve ~draft:q1"     # a card stem with a space, ~ and non-ASCII
+        self.observe_items([item("run:a", "failed"),
+                            item(odd, "needs-answer", key="needs-answer:b1", kind="question")])
+        out = attention.acknowledge({"items": [{"id": "run:a", "key": "failed:1"},
+                                               {"id": odd, "key": "needs-answer:b1"},
+                                               {"id": "run:b", "key": "bad key!"}]})
+        self.assertEqual(sorted(out["changed"]), sorted(["run:a", odd]))
+        self.assertEqual(out["invalid"], ["run:b"])
+        self.assertEqual(attention.reading()["unread"], 0)
+
 
 class WhatASourceNoLongerHolds(Isolated):
     def test_an_item_that_left_its_source_says_so_and_a_question_stops_asking(self):
@@ -178,6 +199,37 @@ class WhatASourceNoLongerHolds(Isolated):
         self.assertEqual(found["brain:bd-2"]["state"], "unknown",
                          "a run whose record went is unknown, never a success")
 
+    def test_a_source_that_could_not_be_read_marks_nothing_gone(self):
+        self.observe_items([])
+        held = [item("run:a1", "running", key="running:0"),
+                item("question:7-export:q1", "needs-answer", kind="question",
+                     card={"file": "7-export.md"}),
+                item("ask:k-1", "answer-ready", kind="ask", card={"file": "7-export.md"})]
+        self.observe_items(held)
+        before = self.items()
+        frames = len(self.frames)
+        # the run source raised; the card's records did not parse
+        self.assertFalse(self.observe_items([], skipped={"run", "card:7-export.md"}))
+        self.assertEqual(self.items(), before)
+        self.assertEqual(len(self.frames), frames)
+        self.assertEqual(self.items()["run:a1"]["state"], "running",
+                         "a failed reading is not an unknown outcome")
+        self.assertEqual(self.items()["question:7-export:q1"]["state"], "needs-answer")
+        # one item whose own reading failed
+        self.assertFalse(self.observe_items([held[0], held[1]], skipped={"id:ask:k-1"}))
+        # and once the sources read again and do not hold them, they are gone
+        self.observe_items([])
+        self.assertEqual(self.items()["run:a1"]["state"], "unknown")
+
+    def test_project_names_the_source_that_raised(self):
+        with mock.patch.object(progress, "summaries", side_effect=OSError("disk")), \
+                mock.patch.object(braindraft, "listing", side_effect=OSError("disk")), \
+                mock.patch.object(refine, "listing", return_value=[]), \
+                mock.patch.object(decisions, "board_conversations", return_value=[]):
+            items, skipped = attention._project(BOARD)
+        self.assertEqual(items, [])
+        self.assertEqual(skipped, {"run", "brain"})
+
 
 class Bounds(Isolated):
     def test_retention_and_the_cap_both_remove_and_both_are_counted(self):
@@ -190,11 +242,73 @@ class Bounds(Isolated):
         self.assertNotIn("run:old", self.items())
         self.assertEqual(attention.reading()["pruned"]["expired"], 1)
         with mock.patch.object(config, "ATTENTION_MAX", 20):
-            self.observe_items([item(f"run:n{i}", "failed") for i in range(25)], now=now + 1)
+            first = [item(f"run:n{i:02}", "failed", at=attention._iso(now - 100 + i))
+                     for i in range(20)]
+            self.observe_items(first, now=now + 1)
+            newer = [item(f"run:m{i}", "failed", at=attention._iso(now + i)) for i in range(5)]
+            self.observe_items(newer, now=now + 2)
         self.assertEqual(len(self.items()), 20)
-        self.assertEqual(attention.reading()["pruned"]["overflow"], 5)
+        self.assertEqual(attention.reading()["pruned"]["overflow"], 5,
+                         "the five oldest records made way for five newer results")
+        self.assertTrue(all(f"run:m{i}" in self.items() for i in range(5)))
         self.assertEqual(attention.reading()["bounds"]["retentionDays"],
                          config.ATTENTION_RETENTION_DAYS)
+
+    def test_a_source_larger_than_the_cap_settles_and_stays_read(self):
+        # the sources are unbounded (every run record on disk); the record
+        # is not. Repeated readings must not re-admit what the cap removed
+        now = time.time()
+        source = [item(f"run:r{i:03}", "finished", key=f"finished:{i}",
+                       at=attention._iso(now - 10_000 + i)) for i in range(30)]
+        with mock.patch.object(config, "ATTENTION_MAX", 20):
+            self.observe_items(source, now=now)          # the baseline
+            self.assertEqual(attention.reading()["unread"], 0)
+            self.assertEqual(attention.reading()["held"]["cap"], 10)
+            frames, record = len(self.frames), attention.path().read_bytes()
+            for beat in range(1, 6):
+                self.assertFalse(self.observe_items(source, now=now + beat),
+                                 "an unchanged source changes nothing")
+            self.assertEqual(len(self.frames), frames, "and announces nothing")
+            self.assertEqual(attention.path().read_bytes(), record, "and writes nothing")
+            self.assertEqual(attention.reading()["unread"], 0)
+            self.assertEqual(attention.reading()["pruned"]["overflow"], 0)
+            kept = set(self.items())
+            self.assertEqual(kept, {f"run:r{i:03}" for i in range(10, 30)},
+                             "the newest by their own source time are the ones kept")
+            # a new result arrives: it is listed, unread, and the oldest goes
+            self.observe_items(source + [item("run:new", "failed", at=attention._iso(now + 9))],
+                               now=now + 9)
+            self.assertTrue(self.items()["run:new"]["unread"])
+            self.assertEqual(attention.reading()["unread"], 1)
+            self.assertNotIn("run:r010", self.items())
+            # Mark all read stays read on the next beats
+            attention.acknowledge({"items": [{"id": "run:new", "key": "failed:1"}]})
+            for beat in range(10, 14):
+                self.observe_items(source + [item("run:new", "failed",
+                                                  at=attention._iso(now + 9))], now=now + beat)
+            self.assertEqual(attention.reading()["unread"], 0)
+            self.assertNotIn("run:r010", self.items(), "a removed item never comes back")
+
+    def test_retention_does_not_bring_back_what_its_source_still_holds(self):
+        day = 86400
+        t0 = time.time() - 100 * day
+        source = [item(f"run:o{i}", "finished", key=f"finished:{i}",
+                       at=attention._iso(t0 - day)) for i in range(5)]
+        self.observe_items(source, now=t0)                   # the baseline
+        self.assertEqual(attention.reading()["unread"], 0)
+        later = t0 + (config.ATTENTION_RETENTION_DAYS + 1) * day
+        self.observe_items(source, now=later)                # expired together
+        self.assertEqual(self.items(), {})
+        self.assertEqual(attention.reading()["pruned"]["expired"], 5)
+        self.observe_items(source, now=later + 1)            # now said as held back
+        self.assertEqual(attention.reading()["held"]["retention"], 5)
+        frames = len(self.frames)
+        for k in range(1, 4):
+            self.assertFalse(self.observe_items(source, now=later + k * day))
+        self.assertEqual(len(self.frames), frames)
+        self.assertEqual((self.items(), attention.reading()["unread"]), ({}, 0),
+                         "nothing returns unread every thirty days")
+        self.assertEqual(attention.reading()["pruned"]["expired"], 5)
 
     def test_a_record_this_version_cannot_read_is_set_aside_not_overwritten(self):
         config.ATTENTION_DIR.mkdir(parents=True)

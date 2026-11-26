@@ -39,8 +39,17 @@ acknowledge one inbox. It is not synchronized to any other installation or
 device, and nothing claims it is.
 
 **Bounds.** At most `config.ATTENTION_MAX` items; an item is removed
-`config.ATTENTION_RETENTION_DAYS` after it last changed; the oldest go
-first past the cap. Both counts are kept (`pruned`) and shown.
+`config.ATTENTION_RETENTION_DAYS` after it last changed, here or in its
+source; the oldest by their source's time go first past the cap. Both
+counts are kept (`pruned`) and shown. The sources are not bounded, so the
+bounds also decide what is *admitted*: an item whose source time is past
+the retention horizon, or that would be the first to go past the cap, is
+not listed (`held` counts them now), so a removed item never comes back
+as new and unread while its source still holds it.
+
+**A source that cannot be read is not a source that holds nothing.** Its
+items keep what they last said; none is marked gone because the reading
+failed.
 
 **When it is read.** `observe()` — the beat's only act — reads the sources,
 merges them over the record, writes it when something changed and sends
@@ -51,8 +60,9 @@ returns the record and writes nothing. `acknowledge()` is the one write a
 person makes, bound to the key they saw.
 
 The first observation on an installation that has no record yet is a
-baseline: everything already finished is recorded as read, so turning the
-inbox on does not raise every old result at once.
+baseline: everything already over is recorded as read, so turning the
+inbox on does not raise every old result at once; what still waits on a
+person (`WAITING`: a question, a proposal to review) stays unread.
 """
 
 from __future__ import annotations
@@ -98,11 +108,15 @@ WORDS = {
     "closed": "Closed",
     "resolved": "Answered or withdrawn",
 }
+# what still waits on a person: the baseline leaves these unread
+WAITING = {"needs-answer", "proposal-ready"}
 WAKE_TYPES = {"board", "agents", "progress", "brain"}
 
 MAX_TITLE = 140
 MAX_ACK = 400
-_ID = re.compile(r"^[a-z]+:[A-Za-z0-9._:\-]{1,200}$")
+# an item's id carries a card file's stem, which may hold any printable
+# character; only control characters and path separators are refused
+_ID = re.compile(r"^[a-z]+:[^\x00-\x1f\x7f/\\]{1,300}$")
 _KEY = re.compile(r"^[A-Za-z0-9._:\-]{1,200}$")
 
 LOCK = threading.RLock()
@@ -125,7 +139,8 @@ def path():
 
 def _blank() -> dict:
     return {"v": VERSION, "kind": KIND, "started": None, "rev": 0,
-            "items": {}, "pruned": {"expired": 0, "overflow": 0}, "note": None}
+            "items": {}, "pruned": {"expired": 0, "overflow": 0},
+            "held": {"retention": 0, "cap": 0}, "note": None}
 
 
 def _load() -> dict:
@@ -140,6 +155,7 @@ def _load() -> dict:
             and isinstance(found.get("items"), dict):
         found.setdefault("pruned", {"expired": 0, "overflow": 0})
         found.setdefault("rev", 0)
+        found.setdefault("held", {"retention": 0, "cap": 0})
         STORE = found
         return STORE
     STORE = _blank()
@@ -258,7 +274,8 @@ def _runs(tasks: dict, live: dict) -> list[dict]:
     return out
 
 
-def _ask_items(tasks: list[dict]) -> list[dict]:
+def _ask_items(tasks: list[dict], skipped: set | None = None) -> list[dict]:
+    skipped = set() if skipped is None else skipped
     found = []
     for conv in decisions.board_conversations():
         found.append((conv, {"kind": "board"}, None))
@@ -269,6 +286,7 @@ def _ask_items(tasks: list[dict]) -> list[dict]:
         try:
             convs = decisions.read_text(body, task["file"])["conversations"]
         except (ValueError, KeyError):
+            skipped.add(f"card:{task['file']}")
             continue
         kind = "phase" if task.get("isPhase") else "card"
         for conv in convs:
@@ -284,8 +302,9 @@ def _ask_items(tasks: list[dict]) -> list[dict]:
         reply = replies[-1] if replies else None
         try:
             jobs = reasoning.for_ask(conv["id"], ask_id)
-        except Exception:     # noqa: BLE001 — a reading that fails says unknown
-            jobs = []
+        except Exception:     # noqa: BLE001 — a reading that fails says nothing
+            skipped.add(f"id:ask:{conv['id']}")
+            continue
         live = jobs[-1] if jobs and jobs[-1].get("status") in reasoning.ACTIVE else None
         status = reply.get("status") if reply else None
         label = None
@@ -325,10 +344,7 @@ _DRAFT_STATES = {
 
 
 def _drafts() -> list[dict]:
-    try:
-        found = braindraft.listing()
-    except Exception:     # noqa: BLE001
-        return []
+    found = braindraft.listing()     # a failure is the caller's: the source is skipped
     out = []
     groups = (("drafts", "brain", "brain-draft", "Brain Agent draft"),
               ("seeds", "brainjob", "brain-seed", "Brain seed draft"),
@@ -375,11 +391,7 @@ _REFINE_STATES = {
 
 def _refinements(tasks: dict) -> list[dict]:
     out = []
-    try:
-        jobs = refine.listing()
-    except Exception:     # noqa: BLE001
-        return []
-    for j in jobs:
+    for j in refine.listing():     # a failure is the caller's: the source is skipped
         st = _REFINE_STATES.get(j.get("status"), "unknown")
         task = tasks.get(j.get("task") or "")
         card = _card(task) or {"file": j.get("task"), "stage": j.get("stage"),
@@ -406,7 +418,8 @@ def _refinements(tasks: dict) -> list[dict]:
     return out
 
 
-def _questions(tasks: list[dict]) -> list[dict]:
+def _questions(tasks: list[dict], skipped: set | None = None) -> list[dict]:
+    skipped = set() if skipped is None else skipped
     out = []
     for task in tasks:
         body = task.get("body") or ""
@@ -415,6 +428,7 @@ def _questions(tasks: list[dict]) -> list[dict]:
         try:
             found = decisions.read_text(body, task["file"])["questions"]
         except (ValueError, KeyError):
+            skipped.add(f"card:{task['file']}")
             continue
         card = _card(task)
         for q in found:
@@ -440,21 +454,32 @@ def project(board: dict | None = None) -> list[dict]:
     """Every item the sources hold now. A read of records already kept —
     except that reading the Brain's drafts removes a private seed draft's
     text past its retention, as every reading of them does."""
-    board = taskfiles.collect() if board is None else board
+    return _project(board)[0]
+
+
+def _project(board: dict | None = None) -> tuple[list[dict], set]:
+    """The items, and what could not be read: a whole source (`run`,
+    `ask`, `brain`, `refine`, `question`), one card's records
+    (`card:<file>`) or one item (`id:<item id>`). Nothing a reading could
+    not reach is marked gone."""
+    board =taskfiles.collect() if board is None else board
     every = [t for group in board.get("stages") or [] for t in group.get("tasks") or []]
     by_file = {t["file"]: t for t in every}
     with state.LOCK:
         live = {a["id"]: {"name": a.get("name"), "session": a.get("session"),
                           "review": bool(a.get("review"))}
                 for a in state.AGENTS.values() if a.get("id")}
-    out = []
-    for part in (lambda: _runs(by_file, live), lambda: _ask_items(every), _drafts,
-                 lambda: _refinements(by_file), lambda: _questions(every)):
+    out, skipped = [], set()
+    for name, part in (("run", lambda: _runs(by_file, live)),
+                       ("ask", lambda: _ask_items(every, skipped)),
+                       ("brain", _drafts),
+                       ("refine", lambda: _refinements(by_file)),
+                       ("question", lambda: _questions(every, skipped))):
         try:
             out.extend(part())
         except Exception:     # noqa: BLE001 — one source failing hides only itself
-            continue
-    return out
+            skipped.add(name)
+    return out, skipped
 
 
 # ── merging the projection over the record ─────────────────────────────
@@ -464,23 +489,73 @@ FIELDS = ("kind", "purpose", "state", "label", "key", "title", "card", "owner",
           "open", "href", "note", "at")
 
 
-def _merge(store: dict, live: list[dict], now: float) -> bool:
+def _age(rec: dict, now: float) -> float:
+    """Where an item stands in the cap's order: its source's own time (a
+    run's ending, a reply, a draft's update), else when it changed here,
+    else now. A source time is what keeps an old result old however often
+    it is seen again."""
+    return _epoch(rec.get("at")) or _epoch(rec.get("changed")) or now
+
+
+def _last(rec: dict) -> float:
+    """When an item last changed, here or in its source: what retention
+    counts from."""
+    return max(_epoch(rec.get("at")), _epoch(rec.get("changed")))
+
+
+def _merge(store: dict, live: list[dict], now: float,
+           skipped: set | None = None) -> bool:
     """Fold what the sources say now into the record. Returns whether
-    anything a reader would see changed."""
+    anything a reader would see changed.
+
+    The sources are unbounded and the record is not, so admission is held
+    to the same bounds pruning is: an item with no record is listed only
+    if retention and the cap would keep it. Otherwise a removed item would
+    come back, new and unread, on every reading while its source holds it."""
+    skipped = skipped or set()
     items = store["items"]
     baseline = store.get("started") is None
     changed = baseline
     if baseline:
         store["started"] = _iso(now)
-    seen = set()
+    started = _epoch(store.get("started"))
+    horizon = now - config.ATTENTION_RETENTION_DAYS * 86400
+    held = {"retention": 0, "cap": 0}
+    seen, fresh = set(), []
     for item in live:
         seen.add(item["id"])
+        if item["id"] in items:
+            continue
+        if item["state"] != "running" and item.get("at") and _epoch(item["at"]) < horizon:
+            held["retention"] += 1      # past retention in its source: never listed
+            continue
+        fresh.append(item)
+    if fresh and len(items) + len(fresh) > config.ATTENTION_MAX:
+        # the cap's order over what is kept and what would be admitted: a
+        # candidate that would be first to go is not admitted at all
+        order = sorted([(r, False) for r in items.values()] + [(i, True) for i in fresh],
+                       key=lambda p: (p[0].get("state") == "running",
+                                      _age(p[0], now), p[0]["id"]))
+        out = {p[0]["id"] for p in order[: len(items) + len(fresh) - config.ATTENTION_MAX]
+               if p[1]}
+        held["cap"] = len(out)
+        fresh = [i for i in fresh if i["id"] not in out]
+    admit = {i["id"] for i in fresh}
+    if store.get("held") != held:
+        store["held"] = held
+        changed = True
+    for item in live:
         rec = items.get(item["id"])
         if rec is None:
+            if item["id"] not in admit:
+                continue
             rec = {"id": item["id"], "first": _iso(now), "ack": None}
-            # what was already over before the inbox existed is not news;
-            # nor is an item whose state nobody needs to notice
-            if baseline or item["state"] not in NOTABLE:
+            # what was already over before the inbox existed is not news —
+            # at the baseline, or an item whose source dates it before the
+            # baseline; nor is an item whose state nobody needs to notice.
+            # What still waits on a person stays unread.
+            early = baseline or (item.get("at") and started and _epoch(item["at"]) < started)
+            if item["state"] not in NOTABLE or (early and item["state"] not in WAITING):
                 rec["ack"] = item["key"]
             items[item["id"]] = rec
             changed = True
@@ -498,6 +573,11 @@ def _merge(store: dict, live: list[dict], now: float) -> bool:
     for rec in items.values():
         if rec["id"] in seen or rec.get("gone"):
             continue
+        source = rec["id"].split(":", 1)[0]
+        if source in skipped or f"id:{rec['id']}" in skipped or (
+                source in ("ask", "question") and (rec.get("card") or {}).get("file")
+                and f"card:{rec['card']['file']}" in skipped):
+            continue    # its source could not be read: that is not "gone"
         rec["gone"] = True
         rec["changed"] = _iso(now)
         if rec.get("state") in ("needs-answer", "running"):
@@ -518,13 +598,13 @@ def _prune(store: dict, now: float) -> bool:
     horizon = now - config.ATTENTION_RETENTION_DAYS * 86400
     changed = False
     for key in [k for k, r in items.items()
-                if r.get("state") != "running" and _epoch(r.get("changed")) < horizon]:
+                if r.get("state") != "running" and _last(r) < horizon]:
         del items[key]
         store["pruned"]["expired"] += 1
         changed = True
     if len(items) > config.ATTENTION_MAX:
         order = sorted(items.values(), key=lambda r: (r.get("state") == "running",
-                                                      _epoch(r.get("changed"))))
+                                                      _age(r, now), r["id"]))
         for rec in order[: len(items) - config.ATTENTION_MAX]:
             del items[rec["id"]]
             store["pruned"]["overflow"] += 1
@@ -536,10 +616,10 @@ def observe(board: dict | None = None, now: float | None = None) -> bool:
     """Read the sources, fold them over the record, and write and announce
     it when something changed. The beat's one act; also called by tests."""
     now = time.time() if now is None else now
-    live = project(board)
+    live, skipped = _project(board)
     with LOCK:
         store = _load()
-        if not _merge(store, live, now):
+        if not _merge(store, live, now, skipped):
             return False
         store["rev"] = int(store.get("rev") or 0) + 1
         store["observed"] = _iso(now)
@@ -577,7 +657,9 @@ def reading() -> dict:
         out = {"v": VERSION, "kind": KIND, "rev": store.get("rev") or 0,
                "boot": state.BOOT, "started": store.get("started"),
                "observed": store.get("observed"),
-               "pruned": dict(store.get("pruned") or {}), "note": store.get("note")}
+               "pruned": dict(store.get("pruned") or {}),
+               "held": dict(store.get("held") or {"retention": 0, "cap": 0}),
+               "note": store.get("note")}
     items.sort(key=lambda r: (r["state"] != "running", -_epoch(r.get("changed"))))
     out["items"] = items
     out["unread"] = sum(1 for r in items if r["unread"])
@@ -602,16 +684,18 @@ def acknowledge(raw) -> dict:
     if not isinstance(pairs, list) or not pairs or len(pairs) > MAX_ACK:
         raise Refused(f"name between 1 and {MAX_ACK} items, each with its key", "invalid")
     back = bool(raw.get("unread"))
-    done, stale, missing = [], [], []
+    if any(not isinstance(pair, dict) for pair in pairs):
+        raise Refused("each item is {id, key}", "invalid")
+    done, stale, missing, invalid = [], [], [], []
     with LOCK:
         store = _load()
         for pair in pairs:
-            if not isinstance(pair, dict):
-                raise Refused("each item is {id, key}", "invalid")
             iid, key = pair.get("id"), pair.get("key")
             if not isinstance(iid, str) or not _ID.match(iid) or \
                     not isinstance(key, str) or not _KEY.match(key):
-                raise Refused("each item is {id, key} as the inbox named them", "invalid")
+                # one malformed pair is refused alone; the rest still stand
+                invalid.append(_clip(iid, 80) if isinstance(iid, str) else None)
+                continue
             rec = store["items"].get(iid)
             if rec is None:
                 missing.append(iid)
@@ -633,7 +717,10 @@ def acknowledge(raw) -> dict:
         rev = store.get("rev") or 0
     if done:
         state.broadcast({"type": "attention", "rev": rev})
-    return {"ok": True, "changed": done, "stale": stale, "missing": missing, "rev": rev,
+    if len(invalid) == len(pairs):     # nothing in the request could be read
+        raise Refused("each item is {id, key} as the inbox named them", "invalid")
+    return {"ok": True, "changed": done, "stale": stale, "missing": missing,
+            "invalid": invalid, "rev": rev,
             "said": ("a newer transition arrived for " + ", ".join(stale) +
                      "; it stays unread") if stale else None}
 
