@@ -3475,7 +3475,25 @@ typed source) or its card (`#168`) are listed under **Cited by**; a
 reads **Unclassified**, and nothing is written to say so: the list is
 rebuilt from the cards and the records on every reading, so a rebuild can
 lose no reason. **Classify** and **Set override** / **Clear override**
-write one small file per review under `brain/reviews/`:
+write one small file per review under `brain/reviews/`.
+
+**A closed ticket's PR reviews read Historical** (task 201). A PR review
+round on a card in `done/` or the archive, with no record, reads
+**Historical** in the list, the filters and counts and on its page,
+marked *closed ticket* / *from the closed ticket*. It is derived on every
+reading from where the card is — nothing is written, no model is asked,
+and it holds the same for a card closed long ago, a review filed after
+closing, a move by hand or one a sync brought. It is a lifecycle default:
+not a person's decision, not an agent's assessment, and not a claim that
+the review failed, was superseded or that its code was merged or
+deployed. A record always wins (a person's classification, an override
+with it; an override set on an unrecorded closed review fixes
+Historical). Reopening the card — out of Done or the archive — stops the
+default: an unrecorded review reads Unclassified again, never Current,
+and every record and its history stay as they were. Relevance reviews and
+maintained entries are not touched by the rule; the report, its verdict,
+its bindings, its identity and its address never change. A record looks
+like this:
 
 ```markdown
 # Review classification: #168 rl-0a1b2c3d4e

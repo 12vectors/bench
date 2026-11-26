@@ -375,7 +375,9 @@ function rowHtml(e) {
     : entryLink(e);
   return `<li class="b-row${e.tombstone ? ' b-tomb' : ''}${e.review ? ' b-reviewrow' : ''}"><div class="b-rowhead">${link}` +
     classChip(e.classification) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
-    (e.review && !e.review.classified ? chip('b-note', 'not yet classified', 'no classification is recorded for this review') : '') +
+    (e.review && !e.review.classified ? (e.review.classificationSource === 'closed-ticket'
+      ? chip('b-note', 'closed ticket', 'Historical because its card is in Done or the archive — a lifecycle default, not a person\'s decision')
+      : chip('b-note', 'not yet classified', 'no classification is recorded for this review')) : '') +
     (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
     (e.review && e.review.indexed === false ? chip('b-note', 'not indexed',
       'on its card and listed here; this board\'s review index does not list it yet') : '') +
@@ -1682,9 +1684,16 @@ function reviewClassHtml(v) {
     ? '<ol class="b-history">' + c.history.slice().reverse().map(h =>
         `<li><span class="mono">${esc(h.at)}</span> ${classChip(h.classification)} ` +
         `<span>${esc(h.actor)}</span> — ${esc(h.reason)}</li>`).join('') + '</ol>'
-    : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
-      'and nothing was written to say so.</p>';
+    : c.source === 'closed-ticket'
+      ? '<p class="b-none" data-closed-default>Nobody has classified this review. It reads Historical because ' +
+        'its card is closed — in Done or the archive. That is a lifecycle default, not a person\'s decision or ' +
+        'an agent\'s assessment, and it does not mean the review failed, was superseded or that its code was ' +
+        'merged or deployed. Nothing was written to say so; reopening the card returns it to Unclassified, and ' +
+        'a classification you record here takes precedence.</p>'
+      : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
+        'and nothing was written to say so.</p>';
   return `<div class="b-panel"><h2>Classification</h2><p>${classChip(c.classification)} ` +
+    (c.source === 'closed-ticket' ? chip('b-note', 'from the closed ticket') + ' ' : '') +
     `<span class="b-note">${esc(ABOUT[c.classification] || '')}</span></p>` +
     (c.override ? `<p class="b-note">Manual override: ${esc(c.override)}</p>` : '') +
     (c.supersededBy ? `<p class="b-note">Superseded by <a href="${esc(entryHref(c.supersededBy))}" data-route>${esc(c.supersededBy)}</a></p>` : '') +
