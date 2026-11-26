@@ -1,8 +1,8 @@
 {
  "assets": {
   "app/data.js": {
-   "bytes": 19442,
-   "sha256": "970d937eedf3b1f1ed9da9a995a320ce30ed28715c4038fb4e0fa045bda5d605",
+   "bytes": 19722,
+   "sha256": "5bac9eddb1b48b85f60bea56927fd18103c932ae35fd8252f59b6676a4705f35",
    "type": "text/javascript; charset=utf-8"
   },
   "app/state.js": {
@@ -16,8 +16,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "board.css": {
-   "bytes": 163275,
-   "sha256": "c820669ddc271008275cf1450f1d7b5353841df3e78a4a433d79e1d04e0cd5bc",
+   "bytes": 166889,
+   "sha256": "485548a20aaee749c988ebbde018e02bfa43b9febc231c498b9d5d3b7ab79380",
    "type": "text/css; charset=utf-8"
   },
   "fonts/-F63fjptAgt5VM-kVkqdyU8n1i8q131nj-o.woff2": {
@@ -271,8 +271,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "main.js": {
-   "bytes": 25131,
-   "sha256": "94b86b860b2d0433f6e8f7d23f86c469f1f6014782d171aabc8b7c600674c6f1",
+   "bytes": 25457,
+   "sha256": "7c4d087074ed3424adbccb365de9716eadce459b6f129a567b39dcc8b023914b",
    "type": "text/javascript; charset=utf-8"
   },
   "views/activity.js": {
@@ -283,6 +283,11 @@
   "views/archiveall.js": {
    "bytes": 11422,
    "sha256": "f2f8486f843c51cef103d6970e0682086c05d42d664a56ae4f5b72e04a5d2ea2",
+   "type": "text/javascript; charset=utf-8"
+  },
+  "views/attention.js": {
+   "bytes": 19462,
+   "sha256": "0290e67adc7a9eb5ab339c1307e80751362e76b21eb9f6083c1ca8fa26d19faf",
    "type": "text/javascript; charset=utf-8"
   },
   "views/board.js": {

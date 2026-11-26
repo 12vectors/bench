@@ -18,6 +18,7 @@ import { onRender } from './lib/schedule.js';
 import { ago } from './lib/time.js';
 import { toast } from './lib/toast.js';
 import { archiveCard, renderBar, renderLog, unarchiveLast } from './views/activity.js';
+import { attentionState, loadAttention, mountAttention } from './views/attention.js';
 import { openArchiveAll } from './views/archiveall.js';
 import { STACK_SHEETS } from './views/board.js';
 import { registerBrainAgent } from './views/brain.js';
@@ -533,7 +534,11 @@ loadState().then(() => {
   // `/orchestrator/ask?card=<card>`): opened in the panel, a read
   openAskAddress();
   render();
-  connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); } });
+  // agent activity and its inbox (task 207): mounted once the panel is,
+  // since an item opens its conversation there; re-read on its frame
+  mountAttention();
+  loadAttention();
+  connectStream({ onBoard: () => { if (S.setup) fetchSetup(true); }, onAttention: loadAttention });
 });
 // the setup guide is read once on load for the header's invitation; the
 // terminal handoff names `#setup`, which opens the guide itself
@@ -543,4 +548,4 @@ fetchSetup().then(() => { if (setupAlias) openSetupGuide(); });
    name a global; modules make none. The browser suite (and a person
    at the console) reaches the page through these names and no
    others. Replacing one here does not replace it inside a module. */
-Object.assign(globalThis, { ago, applyTheme, checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, holdReadings, isolated, loadState, move, pageSettled, panelState, readingsHeld, releaseReadings, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast, whenSettled });
+Object.assign(globalThis, { ago, applyTheme, attentionState, loadAttention,checkbox, closeSheet, deliveryOf, ensureDraft, FACE_WORDS, fetchSetup, field, findTask, fold, gateSheet, holdReadings, isolated, loadState, move, pageSettled, panelState, readingsHeld, releaseReadings, paintDoctorSheet, rawMove, render, renderChip, renderDoctor, renderDrawer, renderFocus, renderSettings, requiredSheet, routeOf, routeWrites, S, scheduleRender, SETTINGS_HEADERS, setView, toast, whenSettled });
