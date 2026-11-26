@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask / attention < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -497,6 +497,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   conversations read back from cards and the work state's
   `orchestration/conversations/`. It executes nothing an answer suggests
   (see "Asking the orchestrator")
+- `attention.py` — agent activity and its inbox (task 207): one list
+  projected from records other modules keep (runs' progress records,
+  Orchestrator questions and replies, Brain drafts, card refinements,
+  open owner questions), each with one state word, and the one thing
+  none of them keeps — which transition a person on this installation
+  acknowledged — in a bounded, machine-local record. Its beat wakes on
+  the frames that announce a change; it launches, retries and schedules
+  nothing (see "Agent activity and the inbox")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request

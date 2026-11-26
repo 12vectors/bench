@@ -266,6 +266,15 @@ def for_card(filename: str, stage: str) -> dict:
     }
 
 
+def listing(limit: int = 200) -> list[dict]:
+    """Every refinement job this board holds, newest first, public — what
+    the agent activity list projects (task 207). A read."""
+    with LOCK:
+        _load()
+        found = sorted(JOBS.values(), key=lambda j: j.get("created") or 0, reverse=True)
+        return [public(j) for j in found[:limit]]
+
+
 def board() -> dict:
     """Per card, the newest undecided job — what the card face needs to
     say a refinement is running or a proposal is waiting. Empty on a board
