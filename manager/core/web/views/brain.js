@@ -1929,7 +1929,9 @@ function currentDraft(a = ag) {
   return a && a.draftId && drafts.one[a.draftId] ? drafts.one[a.draftId].data : null;
 }
 
-const AG_DONE = ['applied', 'cancelled', 'discarded'];
+// a request in one of these is history: asking again starts a new one (a
+// failed one stays listed under Brain Agent requests, to retry or discard)
+const AG_DONE = ['applied', 'cancelled', 'discarded', 'failed'];
 
 function registerBrainAgent() {
   registerAgent('brain', {
