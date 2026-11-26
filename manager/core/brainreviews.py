@@ -267,7 +267,7 @@ def parse_record(name: str, data: bytes) -> dict:
         if match:
             history.append({"at": match.group(1), "classification": match.group(2),
                             "actor": _clean(match.group(3), 80),
-                            "reason": _clean(match.group(4), 500)})
+                            "reason": _clean(match.group(4) or "", 500)})
     rec.update(state="invalid" if rec["problems"] else "record",
                classification=klass if klass in brain.CLASSIFICATIONS else None,
                override=(_clean(seen["Override"], 500) or None) if "Override" in seen else None,

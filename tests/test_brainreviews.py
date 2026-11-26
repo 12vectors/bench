@@ -339,6 +339,47 @@ class Classification(_Layout):
         history = brainreviews.review("7", rv)["classification"]["history"]
         self.assertEqual([h["classification"] for h in history], ["Current", "Historical"])
 
+    def test_a_reason_is_optional_and_the_override_reason_is_not(self):
+        """Task 202: a review is classified, and corrected, with no reason,
+        an empty one or whitespace; a short comment is kept as given; the
+        history says who and when either way and invents no reason. An
+        override still needs its reason, and the record stays guarded."""
+        rv = self.ids(self.card7)["pr"][0]
+        expected = None
+        for klass, reason in (("Current", None), ("Historical", ""),
+                              ("Unclassified", "   "), ("Current", "ok")):
+            if reason is None:   # the field left out altogether
+                brainwrite.write("review-classify", {
+                    "request": self.req(), "card": "7", "review": rv,
+                    "classification": klass, "expected": expected})
+            else:
+                self.classify(rv, classification=klass, reason=reason, expected=expected)
+            expected = brainreviews.review("7", rv)["classification"]["revision"]
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual([h["classification"] for h in got["history"]],
+                         ["Current", "Historical", "Unclassified", "Current"])
+        self.assertEqual([h["reason"] for h in got["history"]], ["", "", "", "ok"])
+        self.assertEqual({h["actor"] for h in got["history"]}, {"ronald"})
+        text = (self.work / "brain" / "reviews" / f"c7-{rv}.md").read_text(encoding="utf-8")
+        self.assertNotIn("—", text.split("## Classification history")[1].splitlines()[2])
+        # Superseded still needs its structure, not a reason
+        e = brainwrite.write("create", {"request": self.req(), "title": "Replacement",
+                                        "kind": "Guide"})
+        self.classify(rv, classification="Superseded", supersededBy=e["id"], reason="",
+                      expected=expected)
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual(got["supersededBy"], e["id"])
+        self.assertEqual(got["history"][-1]["reason"], f"superseded by {e['id']}")
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Superseded", "reason": ""}, 400)
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Current", "reason": 5}, 400)
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Current", "reason": "x" * 501}, 400)
+        for reason in ("", "  ", None):
+            self.refused("review-override", {"card": "7", "review": rv, "action": "set",
+                                             "expected": got["revision"], "reason": reason}, 400)
+
     def test_override_set_and_clear(self):
         rel = self.ids(self.card7)["rel"][0]
         brainwrite.write("review-override", {"request": self.req(), "card": 7, "review": rel,

@@ -2045,23 +2045,30 @@ git has none), never to a name in the request.
 **The workflow.** On the Brain's list, **New entry** opens a form: title,
 kind, a one-line summary, sources (one per line), related entries (ids),
 the body in Markdown with **Write** and **Preview**, and the starting
-classification with its reason. **Save** writes the file and opens the
+classification with an optional reason. **Save** writes the file and opens the
 entry at its new address; **Cancel** writes nothing. On an entry:
 
 - **Edit** — title, kind, summary, sources, related entries and body.
   The id, the classification and its history are kept, and so are header
   fields this version does not read.
-- **Classify** — Current, Historical, Superseded or Unclassified, with a
-  required reason. Each classification, and each correction of one, adds
-  a line to the entry's `## Classification history` with who, when and
-  why; the earlier lines stay. **Current** may mean an accepted
+- **Classify** — Current, Historical, Superseded or Unclassified, with
+  an optional reason (task 202): leaving it out, empty or blank is never
+  refused, and a short comment is kept as written. Each classification,
+  and each correction of one, adds a line to the entry's
+  `## Classification history` with who and when — and why, only when a
+  reason was given: a line without one ends at the actor
+  (`- <when> · <class> · <who>`) and reads *no reason given*, never a
+  filler explanation. Earlier lines stay, and lines written before this
+  still read as they did. **Current** may mean an accepted
   investigation that is not built yet — it is never a claim that the work
   shipped. **Superseded** needs the replacing entry, which must exist, not
   be retired, not be this entry and not lead back to it through its own
   **Superseded by:** chain; or an explicit **invalidated, with no
-  replacing entry** decision and its reason. Choosing any other
-  classification clears both.
-- **Set override** / **Clear override** — records, with a reason, that a
+  replacing entry** decision saying why its claims no longer hold. That
+  structure is what Superseded needs — no further reason. Choosing any
+  other classification clears both.
+- **Set override** / **Clear override** — records, with a required
+  reason, that a
   person decided this entry's classification (`**Override:**`). Agent
   classification is later work; when it comes it must leave an entry with
   an override alone until a person clears it. The override grants nothing
@@ -2132,7 +2139,7 @@ nothing in an entry grants a run any permission.
 | --- | --- |
 | `POST /api/brain/create` | `{request, title, kind, summary?, sources?, related?, body?, classification?, reason?}` — a new id, and `brain/` if it is missing |
 | `POST /api/brain/edit` | `{request, id, expected, title, kind, summary?, sources?, related?, body?}` |
-| `POST /api/brain/classify` | `{request, id, expected, classification, reason, supersededBy? \| invalidation?}` |
+| `POST /api/brain/classify` | `{request, id, expected, classification, reason?, supersededBy? \| invalidation?}` |
 | `POST /api/brain/override` | `{request, id, expected, action: set \| clear, reason}` |
 | `POST /api/brain/retire` | `{request, id, expected, reason, replacedBy?}` |
 | `POST /api/brain/retry` | `{request, action: commit \| push}` — the half that did not happen |
@@ -3246,7 +3253,8 @@ Writes go through the Brain's one writer with everything a maintained
 entry's write has: the record's exact revision (or its absence) as
 `expected`, a request identity journalled before the file is touched,
 this board's identity as the actor, a scoped work-state commit and sync,
-and the reason rules (one line, no markup). Superseded names the
+and the reason rules (one line, no markup). A classification's reason is
+optional, as for an entry (task 202); an override's is required. Superseded names the
 maintained entry that replaces the review's conclusions, or an explicit
 invalidation. A write naming a report field (`body`, `report`, `title`, a
 file) is refused, as is a review not on this board, a card with no number
@@ -3261,7 +3269,7 @@ review.
 | --- | --- |
 | `GET /api/brain/reviews` | every filed review with its classification, the records whose source is missing, and the records that could not be read |
 | `GET /api/brain/review?card=&id=` | one review: `200`, `404` (`no-card` or `no-review`), `409` (`ambiguous`, naming the files) or `400` (not an address) |
-| `POST /api/brain/review/classify` | `{request, card, review, expected, classification, reason, supersededBy? \| invalidation?}` |
+| `POST /api/brain/review/classify` | `{request, card, review, expected, classification, reason?, supersededBy? \| invalidation?}` |
 | `POST /api/brain/review/override` | `{request, card, review, expected, action: set \| clear, reason}` |
 
 The reads list the stage and archive directories, read the card files and

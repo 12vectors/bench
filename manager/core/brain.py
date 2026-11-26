@@ -95,7 +95,9 @@ HISTORY_HEADING = "## Classification history"
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 HISTORY_RE = re.compile(
     r"^-\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?Z?)?)\s+·\s+"
-    r"(" + "|".join(CLASSIFICATIONS) + r")\s+·\s+([^—]{1,80}?)\s+—\s+(.+?)\s*$")
+    # the `— reason` tail is optional: a person may classify without a
+    # comment (task 202), and every line written before then carries one
+    r"(" + "|".join(CLASSIFICATIONS) + r")\s+·\s+([^—]{1,80}?)(?:\s+—\s+(.+?))?\s*$")
 CARD_REF_RE = re.compile(r"^#?(\d{1,6})$")
 # one filed review on a card, named as the Brain addresses it (task 168):
 # `#168/rl-0a1b2c3d4e` — the card's number and the review's identity
@@ -275,7 +277,7 @@ def _history(body_lines: list[str]) -> tuple[list[str], list[dict], list[str]]:
         records.append({"at": match.group(1),
                         "classification": match.group(2),
                         "actor": _clean(match.group(3), 80),
-                        "reason": _clean(match.group(4))})
+                        "reason": _clean(match.group(4) or "")})
     return body_lines[:start], records, unread
 
 

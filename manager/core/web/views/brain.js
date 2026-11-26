@@ -1416,15 +1416,16 @@ function formHtml(e) {
     if (ed.mode === 'create') {
       body += classifyFields(d, null).replace(/<input type="radio" name="bf-classification" data-bf="classification" value="Superseded"[^>]*>/,
         '<input type="radio" name="bf-classification" data-bf="classification" value="Superseded" disabled>') +
-        field('reason', 'Why this classification', input('reason', d.reason),
-          'Required unless it stays Unclassified. Kept with your name in its history.');
+        field('reason', 'Reason (optional)', input('reason', d.reason, { help: true }),
+          'Optional. Leave it empty if you have nothing to add; your name and the time are ' +
+          'recorded in its history either way.');
     }
   } else if (ed.mode === 'classify') {
     body = `<p>Now ${classChip(e.classification)}.${e.override ? ' A manual override is recorded.' : ''}</p>` +
       classifyFields(d, e.id) +
-      field('reason', 'Reason', input('reason', d.reason, { required: true }),
-        'Required. Recorded with your name and the time in the classification history; a ' +
-        'correction is a new line, the earlier ones stay.');
+      field('reason', 'Reason (optional)', input('reason', d.reason, { help: true }),
+        'Optional. Your name and the time are recorded in the classification history whether ' +
+        'or not you add one; a correction is a new line, the earlier ones stay.');
   } else if (ed.mode === 'override') {
     body = `<p class="b-note">A manual override records that a person decided this entry's classification. ` +
       'Later automation must respect it until a person clears it. It changes no other authority.</p>' +
@@ -1579,10 +1580,8 @@ function entryHtml(slot, id) {
     `<dt>Revision</dt><dd class="mono" title="a digest of the file's bytes as read">${esc(e.revision)}</dd>` +
     '</dl>';
   const history = e.history.length
-    ? '<ol class="b-history">' + e.history.slice().reverse().map(h =>
-        `<li><span class="mono">${esc(h.at)}</span> ${classChip(h.classification)} ` +
-        `<span>${esc(h.actor)}</span> — ${esc(h.reason)}</li>`).join('') + '</ol>'
-    : '<p class="b-none">No classification reason is recorded.</p>';
+    ? '<ol class="b-history">' + e.history.slice().reverse().map(historyItem).join('') + '</ol>'
+    : '<p class="b-none">No classification history is recorded.</p>';
   const warnings = e.warnings.length
     ? `<details class="b-panel b-diag"><summary>${e.warnings.length} note${e.warnings.length === 1 ? '' : 's'} ` +
       'about this entry\'s format</summary><ul>' + e.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul></details>'
@@ -1675,12 +1674,19 @@ function reviewFacts(v) {
   return `<dl class="b-facts">${rows.join('')}</dl>`;
 }
 
+// one classification history line: when, what, who and — only when one
+// was given — the reason. A line without one says so, plainly, rather
+// than reading as an empty quotation (task 202)
+function historyItem(h) {
+  return `<li><span class="mono">${esc(h.at)}</span> ${classChip(h.classification)} ` +
+    `<span>${esc(h.actor)}</span>` +
+    (h.reason ? ` — ${esc(h.reason)}` : ' <span class="b-note b-noreason">· no reason given</span>') + '</li>';
+}
+
 function reviewClassHtml(v) {
   const c = v.classification;
   const history = c.history.length
-    ? '<ol class="b-history">' + c.history.slice().reverse().map(h =>
-        `<li><span class="mono">${esc(h.at)}</span> ${classChip(h.classification)} ` +
-        `<span>${esc(h.actor)}</span> — ${esc(h.reason)}</li>`).join('') + '</ol>'
+    ? '<ol class="b-history">' + c.history.slice().reverse().map(historyItem).join('') + '</ol>'
     : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
       'and nothing was written to say so.</p>';
   return `<div class="b-panel"><h2>Classification</h2><p>${classChip(c.classification)} ` +
@@ -1709,8 +1715,12 @@ function reviewFormHtml(v) {
       }
     }
   }
-  fields += `<label class="b-field"><span>Reason</span><input type="text" data-rvf="reason" value="${esc(d.reason || '')}" ` +
-    'maxlength="500" required></label>';
+  // a classification's reason is optional; an override's stays required
+  fields += red.mode === 'classify'
+    ? `<label class="b-field"><span>Reason (optional)</span><input type="text" data-rvf="reason" value="${esc(d.reason || '')}" ` +
+      'maxlength="500"></label><p class="b-note">Optional. Your name and the time are recorded either way.</p>'
+    : `<label class="b-field"><span>Reason</span><input type="text" data-rvf="reason" value="${esc(d.reason || '')}" ` +
+      'maxlength="500" required></label>';
   const title = red.mode === 'classify' ? 'Classify this review'
     : (v.classification.override ? 'Clear the manual override' : 'Set a manual override');
   return `<section class="b-panel b-form" aria-label="${esc(title)}"><h2>${esc(title)}</h2>` +
