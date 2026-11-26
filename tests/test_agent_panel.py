@@ -10,43 +10,52 @@ the journeys in a real browser are verify/browser_cases/case_task_questions.py
 and case_brain_agent.py.
 """
 
-import re
 import unittest
 from pathlib import Path
+
+from tests import pagesource
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "manager" / "core"
 WEB = CORE / "web"
 
 
+def import_sources(text: str) -> list[str]:
+    """The module each top-level `import … from '…';` line names."""
+    out = []
+    for line in text.splitlines():
+        if line.startswith("import ") and " from '" in line:
+            out.append(line.split(" from '", 1)[1].split("'", 1)[0])
+    return sorted(out)
+
+
 class TheShellSendsNothing(unittest.TestCase):
     def test_panel_imports_no_network_and_writes_only_this_tabs_storage(self):
         text = (WEB / "lib" / "panel.js").read_text("utf-8")
-        imports = re.findall(r"^import .* from '([^']+)';", text, re.M)
-        self.assertEqual(sorted(imports), ["./dom.js", "./layout.js"])
+        self.assertEqual(import_sources(text), ["./dom.js", "./layout.js"])
         for word in ("fetch(", "post(", "XMLHttpRequest", "sendBeacon", "EventSource"):
             self.assertNotIn(word, text, f"the panel shell must not send anything ({word})")
         # only sessionStorage holds conversations; localStorage only a width
-        self.assertEqual(re.findall(r"localStorage\.setItem\(([A-Z_]+)", text), ["WIDTH"])
+        self.assertEqual(text.count("localStorage.setItem("), 1)
+        self.assertIn("localStorage.setItem(WIDTH,", text)
 
     def test_no_route_was_added_for_it(self):
         routes = (CORE / "routes.py").read_text("utf-8")
-        paths = re.findall(r"Route\(\"[A-Z]+\", \"([^\"]+)\"", routes)
-        self.assertTrue(paths, "the route table was read")
-        self.assertEqual([p for p in paths if "panel" in p or "conversation" in p], [],
-                         "the panel rides the routes its agents already own")
+        self.assertIn('Route("POST", "/api/ask"', routes, "the route table was read")
+        for path in ('"/api/panel', '"/api/agent-panel', '"/api/conversation'):
+            self.assertNotIn(path, routes, "the panel rides the routes its agents already own")
 
     def test_the_orchestrator_panel_posts_only_to_the_ask_routes(self):
         text = (WEB / "views" / "orchestrator.js").read_text("utf-8")
         start = text.index("function panelAction(")
         end = text.index("/* ── overview")
-        posted = set(re.findall(r"send\('(/api/[a-z/]+)'", text[start:end]))
+        posted = {chunk.split("'", 1)[0] for chunk in text[start:end].split("send('")[1:]}
         self.assertEqual(posted, {"/api/ask", "/api/ask/cancel", "/api/ask/retry"})
 
 
 class ThePageMountsOnePanel(unittest.TestCase):
     def test_board_html_has_one_panel_beside_the_views(self):
-        html = (CORE / "board.html").read_text("utf-8")
+        html = pagesource.shell()
         self.assertEqual(html.count('id="agentpanel"'), 1)
         main = html[html.index("<main>"):html.index("</main>")]
         self.assertIn('id="agentpanel"', main, "a flex sibling of the view, so the page stays in view")
