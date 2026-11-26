@@ -112,7 +112,8 @@ class Refinement(unittest.TestCase):
         deadline = time.time() + 15
         while time.time() < deadline:
             code, body = backend.get("/api/state")
-            if code == 200 and FILE in body:
+            text = body.decode("utf-8", "replace") if isinstance(body, bytes) else body
+            if code == 200 and FILE in text:
                 break
             time.sleep(0.3)
 
