@@ -18,7 +18,7 @@ what is held here is what they rest on and what they must never become:
   `lib/agentpurposes.js`, and every one that takes no follow-up says so.
 
 The behaviour of the adapters as code is `tests/node/agent_purposes.test.mjs`;
-the page journeys are `verify/browser_cases/case_agent_surfaces.py`.
+the page journeys are `verify/browser_cases/case_task_surfaces.py`.
 """
 from __future__ import annotations
 
