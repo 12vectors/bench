@@ -127,13 +127,16 @@ class Refinement(unittest.TestCase):
 
     def open_panel(self, width=1440, height=900, scheme=None):
         b = S["browser"]
+        # the theme is switched on the Board at desktop width, before a
+        # phone-width card view and a full-screen panel cover the header
+        if scheme:
+            b.viewport(1440, 900)
+            b.goto("/board")
+            b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15)
+            theme(b, scheme)
         b.viewport(width, height)
         b.eval("(() => { try { sessionStorage.removeItem('bench-agent-panel'); } catch (e) {} return true; })()")
         b.goto("/cards/46?tab=brief")
-        # the theme is switched before a full-screen panel covers the header
-        if scheme:
-            b.wait("!!document.querySelector('#disc-live')", 15)
-            theme(b, scheme)
         if not b.wait("!!document.querySelector('#disc-live') && !!document.querySelector('.discussion .ap-open')", 15):
             raise bv.CheckFailed("the card's Discussion never offered the conversation panel")
         b.click(".discussion .ap-open")
@@ -237,6 +240,9 @@ class Refinement(unittest.TestCase):
         shot("agent-refine-panel-390-light")
         b.click("#agentpanel [data-pact='close']")
         b.wait(f"{PANEL}.hidden", 5)
+        b.viewport(1440, 900)
+        b.goto("/board")
+        b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15)
         theme(b, "dark")
 
 
