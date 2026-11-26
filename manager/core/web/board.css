@@ -2552,7 +2552,7 @@
   /* on a phone it shares the views' own row, so the header keeps its
      height: the views scroll sideways beside it */
   @media (max-width:760px){
-    header .views{flex:1 1 calc(100% - 60px)}
+    header .views{flex:1 1 calc(100% - 96px)}
     header .attnbtn{order:11;flex:none;min-height:40px;min-width:44px;justify-content:center}
     .attn-act,.attn-filter,.attn-link{min-height:44px}
   }
