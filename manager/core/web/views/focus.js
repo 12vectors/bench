@@ -73,7 +73,7 @@ function permissionsPanel(agent) {
   return head(esc(`${found.intent} · ${found.cwd.policy}`)) +
     reviewRows(found) +
     grantRows(found) +
-    inputRows(found) +
+    inputRows(found, { handbook: true, now: cached.handbookNow }) +
     `<div class="check-row"><span class="glyph">↑</span>` +
     `<span class="name">may</span>` +
     `<span class="state">${esc(may.join(', ') || 'change nothing')}</span></div>` +

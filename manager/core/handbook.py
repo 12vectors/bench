@@ -916,14 +916,17 @@ def since_implementation(card: str, now: dict) -> dict:
 
 
 def attach(found: dict, intent: str, *, card: str | None = None,
-           supply: bool = True, why_not: str | None = None) -> dict:
+           supply: bool = True, why_not: str | None = None,
+           preview: bool = False) -> dict:
     """Add the handbook to a resolved manifest, before its pin: one
     optional context input (never required, so it can block nothing) and
     the run's handbook summary under `found["handbook"]`. Writes nothing;
     `profiles.pin` copies the compiled bytes with the run's other inputs.
 
     `supply=False` records why this kind of run is not given it (a seed
-    draft, which is generated from exactly the approved sources)."""
+    draft, which is generated from exactly the approved sources).
+    `preview=True` is the launch check's reading: the same answer, with
+    nothing held for a pin."""
     if not supply:
         found["handbook"] = {"kind": "bench-agent-handbook", "v": 1, "intent": intent,
                              "state": "not-supplied", "label": AGENT_STATES["not-supplied"],
@@ -947,7 +950,9 @@ def attach(found: dict, intent: str, *, card: str | None = None,
     if intent == "review" and card:
         selection["sinceImplementation"] = since_implementation(card, selection)
     if document:
-        sha = profiles.stage_generated(document.encode("utf-8"))
+        data = document.encode("utf-8")
+        sha = (hashlib.sha256(data).hexdigest() if preview
+               else profiles.stage_generated(data))
         found.setdefault("context", []).append({
             "name": AGENT_INPUT_NAME, "source": AGENT_SOURCE, "root": "work",
             "required": False, "readable": True, "status": "resolved",
@@ -958,6 +963,15 @@ def attach(found: dict, intent: str, *, card: str | None = None,
             "access": "read-only", "kind": "handbook", "suffix": ".md"})
     found["handbook"] = selection
     return found
+
+
+def agent_now() -> dict:
+    """The handbook as a run would be given it today, without the text:
+    for a frozen run's page, so the selection it rode and the one
+    available now are never read as one."""
+    selection = agent_selection()
+    selection.pop("document", None)
+    return selection
 
 
 __all__ = ["SECTIONS", "SECTION_IDS", "parse", "render", "read_record", "reading",

@@ -444,6 +444,83 @@ class LaunchPaths(_Context):
                 self.assertNotIn("pin_inputs=True", text)
 
 
+class Inspection(_Context):
+
+    def test_the_launch_checks_reading_holds_nothing_for_a_pin(self):
+        self.populated()
+        profiles._GENERATED.clear()
+        found = profiles.manifest("work", "07-a-card.md", "review")
+        handbook.attach(found, "work", preview=True)
+        self.assertEqual(profiles._GENERATED, {})
+        self.assertEqual(found["handbook"]["state"], "supplied")
+        self.assertEqual(self.item(found)["status"], "resolved")
+        self.assertFalse(config.CONTEXT_DIR.exists(), "an inspection made a bundle")
+        # the same answer the launch gets
+        launched = self.launch()
+        self.assertEqual(self.item(launched)["sha256"], self.item(found)["sha256"])
+
+    def test_agent_now_carries_no_text(self):
+        self.populated()
+        now = handbook.agent_now()
+        self.assertNotIn("document", now)
+        self.assertNotIn("Two reviewers.", json.dumps(now))
+
+
+class OverHttp(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_settings_security import Board
+
+        class _Cleanup:
+            def __init__(self):
+                self.fns = []
+
+            def addCleanup(self, fn, *a):
+                self.fns.append((fn, a))
+        cls.cleanup = _Cleanup()
+        cls.board = Board(cls.cleanup)
+
+    @classmethod
+    def tearDownClass(cls):
+        for fn, a in reversed(cls.cleanup.fns):
+            fn(*a)
+
+    def post(self, path, body):
+        import urllib.request
+        request = urllib.request.Request(
+            self.board.url + path, data=json.dumps(body).encode(), method="POST",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=20) as res:
+            return json.loads(res.read())
+
+    def get(self, path):
+        import urllib.request
+        with urllib.request.urlopen(self.board.url + path, timeout=20) as res:
+            return json.loads(res.read())
+
+    def test_the_launch_check_shows_the_selection_without_its_text(self):
+        made = self.post("/api/brain/create", {
+            "request": "hb203-0001", "title": "What the project is", "kind": "Guide",
+            "classification": "Current", "reason": "assessed",
+            "body": "A very particular sentence."})
+        entry_id = made["operation"]["id"]
+        self.post("/api/brain/handbook", {"request": "hb203-0002", "expected": "none",
+                                          "section": "overview", "entries": [entry_id],
+                                          "reason": "first link"})
+        out = self.get("/api/profile?file=99-none.md&stage=backlog&intent=work")
+        hb = out["profile"]["handbook"]
+        self.assertEqual(hb["state"], "supplied")
+        self.assertEqual(hb["sections"][0]["items"][0]["id"], entry_id)
+        self.assertNotIn("A very particular sentence.", json.dumps(out))
+
+    def test_an_unknown_run_is_404(self):
+        import urllib.error
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get("/api/manifest?agent=nobody")
+        self.assertEqual(caught.exception.code, 404)
+
+
 class Layouts(unittest.TestCase):
     """The selection reads the work root's brain/ whatever layout put it
     there: vendored (inside the application's checkout), source-hosted

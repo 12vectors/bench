@@ -661,6 +661,10 @@ def get_profile(req) -> None:
                   if intent == "review" else None)
         found = profiles.manifest(intent, name, stage,
                                   review=pinned, review_record=held)
+        # the handbook selection the launch would add (task 203), read from
+        # brain/ and held for no pin
+        handbook.attach(found, intent, preview=True,
+                        card=name if intent == "review" and pinned else None)
         req.reply(200, {"profile": profiles.public(found),
                         "policy": policy_payload()})
     except (ValueError, OSError) as exc:
@@ -679,6 +683,9 @@ def get_manifest(req) -> None:
     else:
         req.reply(200, {"manifest": profiles.public(frozen),
                         "freshness": profiles.freshness(frozen),
+                        # what the handbook reads today, apart from what the
+                        # run was given (task 203)
+                        "handbookNow": handbook.agent_now(),
                         "policy": policy_payload()})
 
 
