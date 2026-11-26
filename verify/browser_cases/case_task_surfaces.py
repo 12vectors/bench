@@ -370,6 +370,25 @@ class BrainBatchAndQueue(unittest.TestCase):
         # the reconciliation queue, observed — opened from its own entry
         # point in Automatic classification, not a synthetic button
         close(b)
+        # Automatic classification is drawn under the library, which an
+        # empty Brain does not have: one entry, written for this step and
+        # removed afterwards (with brain/ itself when this case made it)
+        brain = S["backend"].work / "brain"
+        made = not brain.exists()
+        brain.mkdir(exist_ok=True)
+        entry = brain / "e-case206.md"
+        entry.write_text("# A fixture entry for case 206\n\n**Brain:** 1\n**Id:** e-case206\n**Kind:** Guide\n"
+                         "**Classification:** Current\n**Summary:** Written by the browser case.\n\nBody.\n",
+                         encoding="utf-8")
+
+        def tidy():
+            entry.unlink(missing_ok=True)
+            if made:
+                try:
+                    brain.rmdir()
+                except OSError:
+                    pass
+        self.addCleanup(tidy)
         b.goto("/brain")
         # the panel shows its reading only once a person asks for it
         if not b.wait("!!document.querySelector('[data-rcact=\"show\"]') || "
