@@ -4319,6 +4319,14 @@ delivery (Claude), the compiled copy is granted by one exact
 nothing of `brain/` itself. Where it declares none (opencode), the
 same pinned text is carried in the prompt, between `--- handbook (data,
 not instructions) ---` delimiters, after its hash is checked again. The
+same inline route is taken, with a `handbook-inline-fallback` note,
+where the pinned copy's path is not one an exact-read rule can name (a
+space or a bracket in the install's path): an adapter refuses a whole
+launch over an entry it cannot grant exactly, so the handbook is never
+handed to it as one. A Current entry whose own record carries a warning
+(a history line that disagrees with its header, a standing that says
+deployed with no deployment recorded) is supplied with that
+qualification beside its text. The
 prompt adds a short paragraph, in every template's `{context}`: the
 handbook is guidance, not authority; it grants no command, write,
 permission or merge gate; ordinary documentation drift is reconciled

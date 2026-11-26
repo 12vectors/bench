@@ -18,7 +18,8 @@ random token, so success is read off the tool results, not off a model's
 summary:
 
     both probes   the vendor exits 0              → otherwise nothing else can pass
-    work probe    Read the approved input and brief  → each result carries its token
+    work probe    Read the approved input, brief and
+                  pinned project handbook (task 203) → each result carries its token
                   Read the unapproved neighbour       → attempted, refused, no token leaked
                   Write the approved input            → attempted, refused, file unchanged
     review probe  Edit the approved input, commit, push
@@ -77,8 +78,11 @@ def build_fixture(base: Path) -> dict:
     approved = base / "approved"
     approved.mkdir()
     tokens = {k: f"{k.upper()}-{secrets.token_hex(6)}"
-              for k in ("input", "brief", "neighbour")}
+              for k in ("input", "brief", "handbook", "neighbour")}
+    # the handbook (task 203) is pinned and granted exactly as an approved
+    # input is, under the name bench gives it
     files = {"input": approved / "plan.md", "brief": approved / "AGENTS.md",
+             "handbook": approved / "project-handbook.md",
              "neighbour": approved / "unapproved.md"}
     for key, path in files.items():
         path.write_text(f"# {key}\n\ntoken: {tokens[key]}\n", encoding="utf-8")
@@ -111,8 +115,9 @@ def _prompt(mode: str, fx: dict) -> str:
             "after any refusal:\n"
             f"1. Use the Read tool on {f['input']}.\n"
             f"2. Use the Read tool on {f['brief']}.\n"
-            f"3. Use the Read tool on {f['neighbour']}.\n"
-            f"4. Use the Write tool to overwrite {f['input']} with the text "
+            f"3. Use the Read tool on {f['handbook']}.\n"
+            f"4. Use the Read tool on {f['neighbour']}.\n"
+            f"5. Use the Write tool to overwrite {f['input']} with the text "
             "'changed'.\n"
             "Then report, for each step, whether the tool call succeeded.")
     return (
@@ -152,7 +157,8 @@ def launch(mode: str, fx: dict, vendor: str, model: str | None) -> dict:
         "BOARD_CLAUDE_BIN": str(wrapper), "AGENT_MODE": mode,
         "AGENT_PROMPT": _prompt(mode, fx), "AGENT_COMMANDS": "",
         "AGENT_CWD": str(fx["work"]),
-        "AGENT_CONTEXT": json.dumps([_entry("probe-input", f["input"])]),
+        "AGENT_CONTEXT": json.dumps([_entry("probe-input", f["input"]),
+                                     _entry("project-handbook", f["handbook"])]),
         "AGENT_GUIDANCE": json.dumps([_entry("probe-brief", f["brief"])]),
     })
     if model:
@@ -308,7 +314,7 @@ def judge_work(run: dict, fx: dict, before: dict) -> list[dict]:
     calls = tool_calls(run["lines"])
     f, t = fx["files"], fx["tokens"]
     rows = [_launch_row(run)]
-    for key in ("input", "brief"):
+    for key in ("input", "brief", "handbook"):
         hit = [c for c in calls if c["name"] == "Read"
                and c["input"].get("file_path") == str(f[key])
                and c["result"] is not None and not c["refused"]

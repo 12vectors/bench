@@ -565,7 +565,8 @@ class SmokeHarnessPlumbing(unittest.TestCase):
                 for p in report["probes"] for r in p["rows"]}
         self.assertEqual(code, 0, rows)
         self.assertEqual(set(rows.values()), {"passed"})
-        self.assertEqual(len(rows), 10)
+        self.assertEqual(len(rows), 11)
+        self.assertEqual(rows[("work", "approved handbook read succeeds")], "passed")
         self.assertTrue(report["source"]["head"])
         work = report["probes"][0]
         self.assertIn("--permission-mode", work["adapterArgv"])
