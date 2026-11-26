@@ -2552,8 +2552,9 @@
   /* on a phone it shares the views' own row, so the header keeps its
      height: the views scroll sideways beside it */
   @media (max-width:760px){
-    header .views{flex:1 1 calc(100% - 96px)}
-    header .attnbtn{order:11;flex:none;min-height:40px;min-width:44px;justify-content:center}
+    header .views{flex:1 1 calc(100% - 104px)}
+    header .attnbtn{order:11;flex:none;min-height:40px;min-width:44px;max-width:88px;justify-content:center;overflow:hidden}
+    header .attnbtn.has-unread .attn-glyph{display:none}
     .attn-act,.attn-filter,.attn-link{min-height:44px}
   }
   /* a card's detail view and the panel can be read side by side */
