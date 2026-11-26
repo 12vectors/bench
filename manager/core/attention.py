@@ -386,7 +386,7 @@ def _refinements(tasks: dict) -> list[dict]:
                                "number": None, "title": j.get("task")}
         label = None
         if st == "proposal-ready":
-            label = "Proposal ready — the brief is unchanged until you apply it"
+            label = "Proposal ready — not applied; the brief is unchanged until you apply it"
         elif st == "applied":
             label = "Applied — the brief was changed"
         target = {"card": j.get("task")}

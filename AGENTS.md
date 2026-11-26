@@ -9967,9 +9967,11 @@ record, a read that writes nothing), `tests/node/attention.test.mjs` (no
 announcement or permission prompt on a first reading, one announcement
 across replays and tabs, bounded notification words, a gone item opening
 nothing, Open acknowledging exactly its transition) and
-`verify/browser_cases/case_agent_activity.py` (the control and list by
-pointer and keyboard on every view, at 1280 and 390 pixels in both
-themes).
+`verify/browser_cases/case_task_attention.py` (a refinement's result
+arriving with the panel closed, counted on every top-level view and
+across a reload and a board restart, the list by pointer and keyboard,
+Open reaching the exact conversation, no permission prompt, at 1440
+pixels in the night theme and 390 in daylight).
 
 **Not in this version:** cross-device unread synchronization, per-person
 inboxes (there is no identity to key them by), push, email or chat
