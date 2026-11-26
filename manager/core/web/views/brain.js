@@ -1915,8 +1915,13 @@ function draftAg(id) {
 }
 
 function openComposer(target, revision, title, from) {
-  openAgent('brain', target ? { entry: target, title: title || null } : { entry: null },
-            { fresh: true, revision, title, from });
+  const s = openAgent('brain', target ? { entry: target, title: title || null } : { entry: null },
+                      { fresh: true, revision, title, from });
+  // a resumed, unsent request is held to the entry as it reads now
+  if (s && s.data.mode === 'compose' && target && revision && s.data.expected !== revision) {
+    s.data.expected = revision;
+    savePanel();
+  }
 }
 
 function openDraft(id, from) {

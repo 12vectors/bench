@@ -93,10 +93,13 @@ function openAgent(purpose, target, opts = {}) {
 function dropSlot(key) {
   delete P.slots[key];
   P.order = P.order.filter(k => k !== key);
-  if (P.active === key) P.active = P.order.find(k => P.slots[k]) || null;
+  // the panel closes with the conversation it showed; the others stay
+  if (P.active === key) { P.active = P.order.find(k => P.slots[k]) || null; P.open = false; }
   if (!P.active) P.open = false;
   save();
   renderPanel(true);
+  if (!P.open && P.back && P.back.isConnected && typeof P.back.focus === 'function') P.back.focus();
+  if (!P.open) P.back = null;
 }
 
 function closePanel() {

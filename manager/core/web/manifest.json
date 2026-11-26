@@ -221,8 +221,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/panel.js": {
-   "bytes": 17831,
-   "sha256": "0e3c930f9e4b487fc023d2baf87bde95fbfb3a0191613f2b219ba69552b93ed8",
+   "bytes": 18053,
+   "sha256": "6569ca310372be22048fee7fd4cc4e5c291dd55d08d56625aa29ccf7e1e7b3ea",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/press.js": {
@@ -281,8 +281,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 165878,
-   "sha256": "a736693fef10258a95a63170da4667c3f1c1e44726461d03950065af416855f2",
+   "bytes": 166113,
+   "sha256": "8b403dc5f7eb1730bc6052662cc1ea4f02603fdc028facbffe899fe3754ca2fd",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
