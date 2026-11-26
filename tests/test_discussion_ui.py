@@ -53,6 +53,9 @@ HARNESS = "\n".join([
     function("decisionRowHtml"),
     function("commentRowHtml"),
     function("discussionPanel"),
+    # task 206: the entry point into the shared conversation panel
+    function("askAttrs"),
+    function("refinePanelButton"),
     function("md"),
     "const S = { state: {}, commentDraft: {}, disc: {} };",
     "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
@@ -197,13 +200,18 @@ class SourceInvariants(unittest.TestCase):
         self.assertIn("'/api/card/refine'", HTML)
 
     def test_the_token_spending_and_brief_writing_actions_arm_first(self):
-        body = function("wireDiscussion") + function("wireLive")
+        # task 206: the rows' actions live in wireRows, shared by the Brief's
+        # discussion, a review's thread and the conversation panel
+        body = function("wireDiscussion") + function("wireRows") + function("refinePainted")
         for label in ("Update card with agent", "Retry", "Apply"):
             self.assertRegex(body, rf"label: '{label}', confirm: true", label)
 
     def test_a_refinement_request_carries_a_request_key(self):
-        self.assertIn("request: key", function("wireDiscussion"))
-        self.assertIn("newRequestKey()", function("wireLive"))
+        # one asking path for the Brief's composer and the panel's
+        self.assertIn("askRefinement(t, box.value)", function("wireDiscussion"))
+        self.assertIn("askRefinement(t, text())", function("refinePainted"))
+        self.assertIn("request: key", function("askRefinement"))
+        self.assertIn("newRequestKey()", function("wireRows"))
 
     def test_the_drawer_draws_the_brief_without_the_discussion(self):
         # task 81: the Brief section draws the brief alone — the card's
