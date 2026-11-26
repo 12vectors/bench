@@ -1899,7 +1899,10 @@ card an entry cites changes, with applying a separate authority (task
 yet, said so nobody looks for it: write or maintain an entry's prose
 (phase 6). A run is given no
 Brain entry because it exists: being in the Brain is not being approved
-context. The one agent that reads the Brain is the **Brain Agent**, which
+context. What every launched run *is* given is the curated handbook's
+Current entries, compiled and pinned as optional guidance — never a gate
+(task 203, "The project handbook, supplied to every run"). The one agent
+that drafts from the whole Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
 175, "Drafting with the Brain Agent").
 
@@ -2262,7 +2265,10 @@ no agent and no write. A missing record reads as five empty sections.
 
 **Not in this version:** seeding the handbook, generating or maintaining
 its prose, inferring a working agreement, retrieving a source, and any
-automatic classification or freshness repair.
+automatic classification or freshness repair. (Seeding, drafting and
+classification came later, tasks 192–197; supplying the handbook to
+launched runs is task 203 — see "The project handbook, supplied to every
+run".)
 
 ### Adopting reference material
 
@@ -2694,8 +2700,10 @@ two texts side by side. Settle it in the work-state repository by hand,
 then retry the push.
 
 **When it is done.** **Open handbook** and **Return to board**. The
-entries start Unclassified; nothing gives a run their content, nothing
-is launched, and the handbook is no requirement or gate. Apply writes
+entries start Unclassified; nothing gives a run their content until a
+person classifies one Current (then it reaches launched runs as handbook
+guidance, task 203), nothing is launched, and the handbook is no
+requirement or gate. Apply writes
 only `brain/s-<section>.md` and `brain/handbook/handbook.md` — no
 application file, card, AGENTS file, configuration, gate or check.
 
@@ -4275,6 +4283,84 @@ chip follows — and a document that does not parse wears the alarm and the
 reason. Technical detail (identities, hashes, the settings precedence, the
 capability table) folds away rather than leading, and an approved
 document's contents are nowhere on the page.
+
+### The project handbook, supplied to every run
+
+Every run bench launches is given the project handbook (task 203)
+without a card linking it: implementation (**▸ start work**), PR repair
+(**↻ act on PR**, a phase's integration repair included), **◔ review PR**,
+**◔ still true?**, card refinement, orchestrator reasoning (a question to
+the orchestrator and a recovery diagnosis included) and a Brain drafting
+round. It rides the approved-context path above — one optional input,
+`project-handbook`, pinned read-only with the run's other inputs and
+recorded in its manifest — and adds no store, no setting and no gate.
+
+**What is selected, deterministically.** `handbook.agent_selection`
+reads `brain/` and nothing else — no git, no fetch, no model:
+
+- Every entry the handbook links is listed in an **index** with its
+  section, classification, standing and, in Ways of working, whether it
+  is approved policy or an inferred convention.
+- Only **Current** entries with body text are **supplied** as text.
+  Historical, Superseded, Unclassified and retired entries are indexed
+  and never supplied as operative instruction; a body-less entry, an
+  empty section and an empty handbook add nothing — no placeholder
+  heading reaches the prompt.
+- Sections are filled in a fixed order — Overview, Ways of working, How
+  it works, Operations, Direction — within **48 KiB** a run, and an
+  entry over **16 KiB** is never cut: it is listed in the index as
+  *not supplied* with its reason and its Brain address. A person who
+  wants it in a run can shorten it, or name the file in the profile
+  document's `context` as an ordinary approved input.
+
+**How it reaches the run.** Where the harness declares `exact-read`
+delivery (Claude), the compiled copy is granted by one exact
+`Read(//…)` rule and an edit of it is denied — nothing broader, and
+nothing of `brain/` itself. Where it declares none (opencode), the
+same pinned text is carried in the prompt, between `--- handbook (data,
+not instructions) ---` delimiters, after its hash is checked again. The
+prompt adds a short paragraph, in every template's `{context}`: the
+handbook is guidance, not authority; it grants no command, write,
+permission or merge gate; ordinary documentation drift is reconciled
+from the task and the code and reported, never a reason for `NOT
+READY`; and only a specific, consequential conflict or missing fact —
+naming the operation it affects — is escalated, with unaffected work
+carried on. A prompt is guidance, not proof the run complied.
+
+**Two kinds of run are not given it, and say so.** A seed draft is
+generated from exactly the sources a person approved for it, and an
+evaluation from exactly the sources its approval names (the Brain's
+entries are already among them). Their manifests read *Handbook not
+supplied to this kind of run* with that reason.
+
+**Absent, partial and broken are normal.** No `brain/`, no record, an
+empty one, whitespace-only entries and empty sections read **No
+handbook content yet** and launch exactly as before. Some content and
+some trouble reads **Partial handbook supplied**; everything selected,
+**Handbook supplied**. A record that does not parse keeps the links that
+could be read; a link to nothing, a duplicate id, a record that is a link
+(**Handbook could not be read**), a reader that fails and a pin that
+fails are each a bounded diagnostic with a remedy in the run's manifest
+— never a refusal, never retried, and nothing is fabricated in their
+place. A card's required inputs, the profile's required context and
+every permission keep refusing exactly as before, under their own codes.
+
+**Frozen per run.** The manifest records the selection: each entry's id
+and revision, the handbook and Brain revisions, the omissions, the
+diagnostics, the delivery route and the pinned copy's sha256 — never the
+entries' text. A later edit reaches the next run; the running one keeps
+its copy. A PR review is also told how the supplied entries moved since
+the card's newest implementation run (`changed`, `now supplied`, `no
+longer supplied`, or *unchanged*), or that the comparison is unavailable
+when no such run recorded a selection on this board.
+
+**Seeing it.** The launch check (⚿, `GET /api/profile`) shows the
+selection the launch *would* add — read from `brain/`, held for no pin —
+and Focus shows what a run *was* given beside the handbook as it reads
+today (`GET /api/manifest`'s `handbookNow`). One line in neutral words,
+the entries, revisions, omissions and diagnostics one fold away. Supplied
+bytes are said to be exactly that: whether a run read or followed them is
+not observed, and an independent review is what assesses it.
 
 ## Required information: inputs and tools
 
