@@ -416,6 +416,9 @@ async function loadAsk(force) {
     a.fetching = false;
   }
   scheduleRender();
+  // a reading arriving paints the panel even under the person's caret
+  // (kept): the composer has focus as soon as the panel opens (task 205)
+  renderPanel('live');
 }
 
 async function loadThread(id, force) {
@@ -435,6 +438,7 @@ async function loadThread(id, force) {
   clearTimeout(a.pollT);
   if (live.some(x => x.active)) a.pollT = setTimeout(() => { loadThread(id, true); loadAsk(true); }, 3000);
   scheduleRender();
+  renderPanel('live');
 }
 
 /* The target a page's question is about (task 205): the card or phase the
