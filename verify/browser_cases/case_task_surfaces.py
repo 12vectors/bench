@@ -371,6 +371,11 @@ class BrainBatchAndQueue(unittest.TestCase):
         # point in Automatic classification, not a synthetic button
         close(b)
         b.goto("/brain")
+        # the panel shows its reading only once a person asks for it
+        if not b.wait("!!document.querySelector('[data-rcact=\"show\"]') || "
+                      "!!document.querySelector('button.ap-open[data-agent-ask=\"reconcile\"]')", 20):
+            raise bv.CheckFailed("the Brain drew no Automatic classification panel")
+        b.eval("(() => { document.querySelector('[data-rcact=\"show\"]')?.click(); return true; })()")
         if not b.wait("!!document.querySelector('button.ap-open[data-agent-ask=\"reconcile\"]')", 20):
             raise bv.CheckFailed("Automatic classification offered no Observe in the conversation panel")
         b.eval("document.querySelector('button.ap-open[data-agent-ask=\"reconcile\"]').click()")
@@ -565,7 +570,9 @@ class ReviewRefinementAndEndedRuns(unittest.TestCase):
         text = panel_text(b)
         self.assertIn("PR review run", text)
         self.assertIn("No follow-up here", text)
-        href = lambda sel: b.eval(f"(document.querySelector('{sel}') || {{}}).getAttribute?.('href') || null")
+        def href(sel):
+            return b.eval(f"(() => {{ const a = document.querySelector({json.dumps(sel)}); "
+                          "return a ? a.getAttribute('href') : null; })()")
         self.assertEqual(f"/cards/46?tab=reviews&review={rv_id()}", href("#agentpanel a[href*='tab=reviews']"))
         self.assertEqual(f"/brain/r/46/{rv_id()}", href("#agentpanel a[href^='/brain/r/']"))
         self.assertEqual("/api/evidence/log?id=ev%3Averification%400123abcd4567",
