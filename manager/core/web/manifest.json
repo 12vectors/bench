@@ -231,8 +231,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/panel.js": {
-   "bytes": 19958,
-   "sha256": "f3ce86c565b46aafbb51acd3664608ea8b4667696f11b843837a73352c7b061c",
+   "bytes": 20263,
+   "sha256": "bccb5e05ba42038bae23e362f693cc4ab107f7217177372af411de71159c568c",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/press.js": {
@@ -296,8 +296,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 167690,
-   "sha256": "94c7f38bae47076c5c316935bf91a8fdf69cba869c574ee52979c2802c29ad40",
+   "bytes": 168039,
+   "sha256": "dc124bafbb3abb0784f176db6d862e64a2128bcdb1841eb94586eed25745a390",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
@@ -361,8 +361,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/orchestrator.js": {
-   "bytes": 151845,
-   "sha256": "e13823c4968ed01bc839e5208d42c955ad09c9528ac9f1d30735f7b89ef571bf",
+   "bytes": 152029,
+   "sha256": "6ff84a210ac1ced48262532d1aac2038a465328a5ad15794cbe49b4577419adc",
    "type": "text/javascript; charset=utf-8"
   },
   "views/phases.js": {
