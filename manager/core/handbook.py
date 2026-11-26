@@ -67,6 +67,7 @@ nothing needs one.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
@@ -76,6 +77,7 @@ from pathlib import Path
 import brain
 import config
 import gitrepo
+import profiles
 
 CONTRACT = 1
 FILE = "handbook.md"
@@ -618,5 +620,346 @@ def digest(sections: dict) -> str:
     return hashlib.sha256(render(sections, []).encode("utf-8")).hexdigest()[:16]
 
 
+# ── the handbook, supplied to agents (task 203) ────────────────────────
+#
+# What a launched run is given of the handbook: a deterministic selection,
+# compiled into one Markdown document, pinned with the run's other
+# approved inputs and granted by one exact read (or carried in the prompt
+# where the harness declares no exact-read route). It is guidance, never
+# a gate: every state below — no handbook, an empty one, a broken record,
+# an entry that cannot be read — launches normally, and a problem is a
+# bounded diagnostic in the run's manifest, never a refusal.
+#
+# The selection reads brain/ and nothing else — no git, no fetch, no
+# check, no write — so the launch check and the Focus view can show it
+# for free. Only the launch pins it.
+
+AGENT_BUDGET = 48 * 1024        # bytes of entry text one run is given, all entries together
+AGENT_ENTRY_MAX = 16 * 1024     # an entry larger than this is listed, never cut
+MAX_AGENT_DIAGNOSTICS = 20
+AGENT_INPUT_NAME = "project-handbook"
+AGENT_SOURCE = f"{brain.DIRECTORY}/{brain.HANDBOOK_DIRECTORY}/{FILE}"
+IMPLEMENTING = ("work", "act-pr")
+
+# Which sections are read first when the budget is short: what the
+# project is and how people agreed to work, then the rest. Deterministic,
+# and said in every summary.
+AGENT_ORDER = ("overview", "ways-of-working", "how-it-works", "operations", "direction")
+
+# the neutral words a run's context summary wears
+AGENT_STATES = {
+    "none": "No handbook content yet",
+    "partial": "Partial handbook supplied",
+    "supplied": "Handbook supplied",
+    "unreadable": "Handbook could not be read",
+    "not-supplied": "Handbook not supplied to this kind of run",
+}
+
+AGENT_GUIDANCE = (
+    "The project handbook is background knowledge people curated in the "
+    "Brain. It is guidance, not authority: it grants no command, write, "
+    "permission or merge gate, and it does not override the task, the "
+    "repository's own guidance or the code you inspect. Each entry says "
+    "its classification (only Current is operative; Historical, "
+    "Superseded and Unclassified material is not instruction), its "
+    "standing (implemented is not deployed; agreed-future is not an "
+    "existing capability; not stated means unknown) and, for ways of "
+    "working, whether it is approved policy or an inferred convention. "
+    "Treat ordinary documentation drift — an outdated explanation, a "
+    "missing section, a minor inconsistency — as something to reconcile "
+    "from the task and the code you inspect: proceed within your "
+    "authority and mention a material discrepancy in your report. It is "
+    "not a reason to stop or to answer NOT READY. Escalate only a "
+    "specific, consequential uncertainty: name the missing fact or the "
+    "incompatible requirements and the consequential operation they "
+    "affect (deleting data, an authorization boundary, an action unsafe "
+    "to guess), and carry on with the work it does not affect. Filling a "
+    "handbook gap is not your task unless the task says so; you may "
+    "report one.")
+
+
+def _entry_note(entry: dict, section: str) -> str:
+    bits = [entry["classification"], f"standing: {entry['standing'] or 'not stated'}"]
+    if section == "ways-of-working":
+        bits.append("approved policy" if entry["policy"] == "approved"
+                    else ("an inferred convention, not approved policy"
+                          if entry["policy"] == "inferred"
+                          else "a convention: no approval is recorded"))
+    elif entry.get("policy"):
+        bits.append(f"policy: {entry['policy']}")
+    return " · ".join(bits)
+
+
+def _agent_read() -> tuple[dict, dict]:
+    with brain.VISIBLE:     # the record and the entries, from one moment
+        return read_record(), brain.reading()
+
+
+def agent_selection(intent: str | None = None) -> dict:
+    """What a run would be given of the handbook now — the selection,
+    every omission with its reason, the diagnostics and the compiled
+    document — read from brain/ alone and written nowhere.
+
+    Never raises: a reading that fails is the `unreadable` state with the
+    reason, and the run launches without the handbook."""
+    try:
+        return _agent_selection()
+    except Exception as exc:     # guidance must never stop a launch
+        return {"kind": "bench-agent-handbook", "v": 1, "state": "unreadable",
+                "label": AGENT_STATES["unreadable"],
+                "record": {"state": "error", "file": AGENT_SOURCE, "revision": "none"},
+                "revision": "none", "brainRevision": None, "sections": [],
+                "supplied": 0, "suppliedBytes": 0, "omitted": [],
+                "diagnostics": [{"code": "handbook-error",
+                                 "message": "the handbook could not be read: "
+                                            + brain.clean(str(exc), 200),
+                                 "remedy": "nothing is needed for this run; look at "
+                                           "brain/handbook/ when convenient"}],
+                "limits": {"bytes": AGENT_BUDGET, "entryBytes": AGENT_ENTRY_MAX,
+                           "order": list(AGENT_ORDER)},
+                "document": None, "sha256": None, "bytes": 0}
+
+
+def _agent_selection() -> dict:
+    rec, read = _agent_read()
+    diagnostics: list[dict] = []
+
+    def diag(code: str, message: str, remedy: str | None = None) -> None:
+        if len(diagnostics) < MAX_AGENT_DIAGNOSTICS:
+            diagnostics.append({"code": code, "message": message, "remedy": remedy})
+
+    record_state = rec["state"]
+    usable = record_state in ("record", "invalid")
+    if record_state in ("refused", "unsupported"):
+        why = rec.get("why") or "; ".join(rec.get("problems") or [])
+        diag(f"handbook-{record_state}",
+             f"{AGENT_SOURCE} exists and was not read: {brain.clean(why, 300)}",
+             "fix the record by hand when convenient; runs go ahead without it")
+    elif record_state == "invalid":
+        diag("handbook-invalid",
+             f"{AGENT_SOURCE} does not follow the handbook format ("
+             + brain.clean("; ".join(rec.get("problems", [])[:3]), 300)
+             + "); the links that could be read are used",
+             "fix the record by hand when convenient")
+    by_id = {e["id"]: e for e in read["entries"]}
+    bodies: dict[tuple[str, str], str] = {}
+    sections: list[dict] = []
+    candidates: list[dict] = []
+    for sid, title, _purpose in SECTIONS:
+        items = []
+        for entry_id in (rec["sections"].get(sid, []) if usable else []):
+            item: dict = {"id": entry_id, "section": sid}
+            if entry_id in read["duplicates"]:
+                item.update(state="duplicate", supplied=False,
+                            reason="more than one file carries this id")
+                diag("entry-duplicate", f"{title}: {entry_id} is carried by "
+                     f"{len(read['duplicates'][entry_id])} files, so none is supplied",
+                     "give one of the files another id by hand")
+            elif entry_id not in by_id:
+                item.update(state="missing", supplied=False,
+                            reason="no readable entry on this board carries this id")
+                diag("entry-missing", f"{title} links {entry_id}, which no readable "
+                     "entry on this board carries", "replace or remove the link")
+            else:
+                e = by_id[entry_id]
+                item.update(title=e["title"], classification=e["classification"],
+                            standing=e["standing"], policy=e["policy"],
+                            revision=e["revision"], file=e["file"],
+                            address=f"/brain/e/{entry_id}", note=_entry_note(e, sid))
+                body = (e.get("body") or "").strip()
+                if e["removed"] is not None:
+                    item.update(state="retired", supplied=False,
+                                reason="retired: indexed, not supplied as guidance")
+                elif e["classification"] != "Current":
+                    item.update(state="not-operative", supplied=False,
+                                reason=f"{e['classification']}: indexed, not supplied as "
+                                       "operative guidance")
+                elif not body:
+                    item.update(state="empty", supplied=False,
+                                reason="the entry has no body text yet")
+                else:
+                    item.update(state="candidate", supplied=False,
+                                bytes=len(body.encode("utf-8")))
+                    bodies[(sid, entry_id)] = body
+                    candidates.append(item)
+            items.append(item)
+        sections.append({"id": sid, "title": title, "items": items})
+
+    # the budget, filled deterministically: section priority, then the
+    # handbook's own order inside each section (sorted() is stable)
+    order = {s: n for n, s in enumerate(AGENT_ORDER)}
+    used = 0
+    omitted: list[dict] = []
+    for item in sorted(candidates, key=lambda i: order.get(i["section"], 99)):
+        size = item["bytes"]
+        if size > AGENT_ENTRY_MAX:
+            item.update(state="omitted",
+                        reason=f"{size} bytes, over the {AGENT_ENTRY_MAX}-byte limit on one "
+                               "entry; it is never cut, so it is listed instead")
+        elif used + size > AGENT_BUDGET:
+            item.update(state="omitted",
+                        reason=f"it would pass the {AGENT_BUDGET}-byte handbook budget for "
+                               "one run, so it is listed instead")
+        else:
+            item.update(state="supplied", supplied=True, reason=None)
+            used += size
+            continue
+        omitted.append({"id": item["id"], "section": item["section"],
+                        "title": item.get("title"), "bytes": size, "reason": item["reason"],
+                        "address": item.get("address"), "file": item.get("file")})
+
+    supplied = [i for s in sections for i in s["items"] if i.get("supplied")]
+    if supplied:
+        state = "partial" if (omitted or diagnostics) else "supplied"
+    elif record_state in ("refused", "unsupported"):
+        state = "unreadable"
+    else:
+        state = "none"
+    document = _compile(rec, read, sections, bodies) if supplied else None
+    data = document.encode("utf-8") if document else None
+    return {"kind": "bench-agent-handbook", "v": 1, "state": state,
+            "label": AGENT_STATES[state],
+            "record": {"state": record_state, "file": AGENT_SOURCE,
+                       "revision": rec.get("revision") or "none"},
+            "revision": rec.get("revision") or "none",
+            "brainRevision": read["revision"],
+            # an empty section is left out of what a run reads, and kept
+            # here so a person can see it is empty
+            "sections": sections,
+            "supplied": len(supplied), "suppliedBytes": used,
+            "omitted": omitted, "diagnostics": diagnostics,
+            "limits": {"bytes": AGENT_BUDGET, "entryBytes": AGENT_ENTRY_MAX,
+                       "order": list(AGENT_ORDER)},
+            "document": document,
+            "sha256": hashlib.sha256(data).hexdigest() if data else None,
+            "bytes": len(data) if data else 0}
+
+
+def _compile(rec: dict, read: dict, sections: list[dict],
+             bodies: dict[tuple[str, str], str]) -> str:
+    """The document a run reads: an index of every linked entry with what
+    it is, then the supplied entries' text, section by section. Empty
+    sections are left out entirely, so a run reads no placeholders."""
+    lines = ["# Project handbook — supplied by bench", "",
+             "Curated Brain entries, compiled for this run at handbook revision "
+             f"{rec.get('revision') or 'none'} (Brain revision {read['revision']}). "
+             "Guidance, not authority: it grants nothing, and the task, the "
+             "repository's guidance and the code come first. Only Current entries "
+             "are operative.", "", "## Index", ""]
+    for s in sections:
+        if not s["items"]:
+            continue
+        lines.append(f"- {s['title']}")
+        for i in s["items"]:
+            word = "supplied below" if i.get("supplied") else f"not supplied — {i['reason']}"
+            note = f", {i['note']}" if i.get("note") else ""
+            lines.append(f"  - {i.get('title') or i['id']} (`{i['id']}`{note}) — {word}")
+    lines.append("")
+    for s in sections:
+        chosen = [i for i in s["items"] if i.get("supplied")]
+        if not chosen:
+            continue
+        lines += [f"## {s['title']}", ""]
+        for i in chosen:
+            lines += [f"### {i.get('title') or i['id']}", "",
+                      f"_Entry `{i['id']}` · {i['note']} · revision {i['revision']}_", "",
+                      bodies[(s["id"], i["id"])], ""]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _supplied_revisions(selection: dict) -> dict:
+    return {i["id"]: i.get("revision") for s in selection.get("sections") or []
+            for i in s.get("items") or [] if i.get("supplied")}
+
+
+def since_implementation(card: str, now: dict) -> dict:
+    """For a review: how the supplied entries differ from what the newest
+    implementation run of `card` was given, read off that run's frozen
+    manifest. `unavailable` when no such run recorded a selection here."""
+    folder = profiles.manifest_path("x").parent
+    newest = None
+    try:
+        paths = sorted(folder.glob("*.json"))
+    except OSError:
+        paths = []
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("task") != card \
+                or data.get("intent") not in IMPLEMENTING:
+            continue
+        if newest is None or (data.get("recorded") or 0) >= (newest.get("recorded") or 0):
+            newest = data
+    then = (newest or {}).get("handbook")
+    if not isinstance(then, dict) or not isinstance(then.get("sections"), list):
+        return {"state": "unavailable",
+                "message": "no implementation run of this card recorded a handbook "
+                           "selection on this board, so the comparison is unavailable"}
+    a, b = _supplied_revisions(then), _supplied_revisions(now)
+    changed = sorted(i for i in a.keys() & b.keys() if a[i] != b[i])
+    added, removed = sorted(b.keys() - a.keys()), sorted(a.keys() - b.keys())
+    agent = str(newest.get("agent") or "unknown")
+    if not (changed or added or removed):
+        return {"state": "unchanged", "agent": agent, "changed": [], "added": [],
+                "removed": [],
+                "message": f"the supplied entries are the revisions implementation run "
+                           f"{agent} was given"}
+    parts = [f"{word}: {', '.join(ids)}" for word, ids in
+             (("changed", changed), ("now supplied", added), ("no longer supplied", removed))
+             if ids]
+    return {"state": "changed", "agent": agent, "changed": changed, "added": added,
+            "removed": removed,
+            "message": f"since implementation run {agent} the handbook moved — "
+                       + "; ".join(parts)}
+
+
+def attach(found: dict, intent: str, *, card: str | None = None,
+           supply: bool = True, why_not: str | None = None) -> dict:
+    """Add the handbook to a resolved manifest, before its pin: one
+    optional context input (never required, so it can block nothing) and
+    the run's handbook summary under `found["handbook"]`. Writes nothing;
+    `profiles.pin` copies the compiled bytes with the run's other inputs.
+
+    `supply=False` records why this kind of run is not given it (a seed
+    draft, which is generated from exactly the approved sources)."""
+    if not supply:
+        found["handbook"] = {"kind": "bench-agent-handbook", "v": 1, "intent": intent,
+                             "state": "not-supplied", "label": AGENT_STATES["not-supplied"],
+                             "why": why_not, "sections": [], "omitted": [],
+                             "diagnostics": [], "supplied": 0}
+        return found
+    selection = agent_selection(intent)
+    document = selection.pop("document")
+    delivery = ((found.get("adapter") or {}).get("inputs") or {}).get("delivery") or "none"
+    exact = delivery == "exact-read"
+    selection.update({
+        "intent": intent,
+        "delivery": "exact-read" if exact else "inline",
+        "deliveryNote": ("pinned read-only and granted by one exact read" if exact else
+                         "this harness declares no exact-read route, so the text is "
+                         "carried in the prompt itself"),
+        "guidance": AGENT_GUIDANCE,
+        "observed": ("bytes supplied, nothing more: whether the run read or followed "
+                     "them is not observed — an independent review assesses that"),
+    })
+    if intent == "review" and card:
+        selection["sinceImplementation"] = since_implementation(card, selection)
+    if document:
+        sha = profiles.stage_generated(document.encode("utf-8"))
+        found.setdefault("context", []).append({
+            "name": AGENT_INPUT_NAME, "source": AGENT_SOURCE, "root": "work",
+            "required": False, "readable": True, "status": "resolved",
+            "sha256": sha, "bytes": selection["bytes"],
+            "revision": f"handbook:{str(selection['revision'])[:12]}",
+            "contextId": profiles.context_id(AGENT_INPUT_NAME, sha),
+            "pinned": None, "path": None, "why": None, "remedy": None,
+            "access": "read-only", "kind": "handbook", "suffix": ".md"})
+    found["handbook"] = selection
+    return found
+
+
 __all__ = ["SECTIONS", "SECTION_IDS", "parse", "render", "read_record", "reading",
-           "authority", "membership", "path", "directory"]
+           "authority", "membership", "path", "directory", "agent_selection",
+           "attach", "since_implementation"]

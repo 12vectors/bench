@@ -902,6 +902,9 @@ def _launch(draft: dict, *, continue_request: str) -> None:
     unsafe = deny_problems()
     if unsafe:
         raise Refused(_deny_refusal(unsafe), 409)
+    # the handbook's index and its supplied entries, as guidance (task 203):
+    # pinned in this round's own bundle, never a citable source
+    handbook.attach(found, INTENT)
     profiles.pin(found, base=pin_dir())
     pinned: dict[str, str] = {}
     expected = {s["ref"]: s["sha256"] for s in sel["sources"]}
@@ -937,7 +940,7 @@ def _launch(draft: dict, *, continue_request: str) -> None:
                else "") + ".") if sel["excluded"] else "",
         "contract": contract_text(draft, round_no),
         "guidance_read_only": config.prompt_guidance(checks=False),
-        "context": "",
+        "context": profiles.handbook_block(found),
     }
     if round_no >= config.BRAIN_DRAFT_ROUNDS:
         fields["conversation"] += ("\n\nThis is the LAST round: you must answer with a "
@@ -1979,6 +1982,11 @@ def _launch_seed(draft: dict, *, continue_request: str) -> None:
                 "contextId": profiles.context_id(name, item["sha256"]),
                 "pinned": None, "path": str(staged), "why": None, "remedy": None,
                 "access": "read-only", "kind": "seed-input", "seedItem": item["id"]})
+        # a seed draft is generated from exactly the approved sources (task
+        # 193), so the existing handbook is not added beside them (task 203)
+        handbook.attach(found, INTENT, supply=False,
+                        why_not="a seed draft is generated from exactly the sources a "
+                                "person approved for it")
         profiles.pin(found, base=pin_dir())
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -3446,6 +3454,12 @@ def _launch_evaluate(draft: dict, *, continue_request: str) -> None:
             "contextId": profiles.context_id(f"brain-src-{n}", s["sha256"]),
             "pinned": None, "path": s["path"], "why": None, "remedy": None,
             "access": "read-only", "kind": "brain-input"})
+    # an evaluation is held to exactly the sources its approval names, and
+    # the Brain entries are among them: the compiled handbook would be a
+    # second, unapproved copy (task 203)
+    handbook.attach(found, INTENT, supply=False,
+                    why_not="an evaluation reads exactly the sources its approval names; "
+                            "the Brain's entries are already among them")
     profiles.pin(found, base=pin_dir())
     pinned: dict[str, str] = {}
     expected = {s["ref"]: s["sha256"] for s in sel["sources"]}

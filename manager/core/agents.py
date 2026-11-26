@@ -52,6 +52,7 @@ import gatepolicy
 import gates
 import githost
 import gitrepo
+import handbook
 import inputs
 import operations
 import plans
@@ -548,6 +549,11 @@ def _profiled(intent: str, filename: str, stage: str, *,
         # input is. Refuses before the pin when anything required is not
         # usable by this run.
         inputs.attach(found, filename, stage)
+    # The project handbook (task 203): optional guidance, so it never adds
+    # a blocker — a missing or broken handbook is a diagnostic on the run.
+    # A PR review is told what moved since the card's implementation.
+    handbook.attach(found, intent,
+                    card=filename if intent == "review" and review is not None else None)
     found = profiles.require(found)
     profiles.pin(found)
     if information:
@@ -1183,9 +1189,10 @@ def start_pr_review(filename: str, stage: str) -> dict:
 
     pinned = reviews.provision(filename, stage, agent_id, found)
     try:
-        resolved = profiles.require(profiles.manifest(
+        resolved = profiles.require(handbook.attach(profiles.manifest(
             "review", filename, stage, review=checkout,
-            review_record=pinned, pin_inputs=True))
+            review_record=pinned), "review", card=filename))
+        profiles.pin(resolved)
         # The harness and model the preflight validated are the ones this
         # launch rides; a settings change landing in between refuses
         # rather than launching something nobody preflighted.
