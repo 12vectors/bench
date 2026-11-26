@@ -1878,7 +1878,9 @@ async function loadDraft(id) {
   try {
     const res = await fetch('/api/brain/drafts?id=' + encodeURIComponent(id));
     const data = await res.json().catch(() => ({}));
-    drafts.one[id] = { data: data.draft || null, error: data.error || null, at: Date.now() };
+    // a request this board does not have (a tab kept it from another board,
+    // or it expired) is gone for good: the poll stops asking for it
+    drafts.one[id] = { data: data.draft || null, error: data.error || null, gone: res.status === 404, at: Date.now() };
   } catch (e) {
     drafts.one[id] = { ...(drafts.one[id] || {}), error: 'the board could not be asked', at: Date.now() };
   }
@@ -2746,6 +2748,7 @@ function wireAgentPanel(el) {
       if (!s.data.draftId) continue;
       const slot = drafts.one[s.data.draftId];
       const d = slot && slot.data;
+      if (slot && slot.gone) continue;
       if (!d || ['running', 'applying'].includes(d.status)) loadDraft(s.data.draftId);
     }
   }, 2000);

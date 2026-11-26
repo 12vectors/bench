@@ -128,6 +128,23 @@ def type_question(b, text):
            "f.dispatchEvent(new Event('change', {bubbles: true})); f.blur(); })()")
 
 
+def key_in(b, selector, text):
+    """Text as typing leaves it: the field keeps focus, `input` fires and
+    `change` does not (the browser fires that on blur)."""
+    b.eval(f"(() => {{ const f = document.querySelector({json.dumps(selector)}); f.focus(); "
+           f"return document.execCommand('insertText', false, {json.dumps(text)}); }})()")
+
+
+def lose_replies(b, path, count):
+    """The next `count` POSTs to `path` reach the server and their replies
+    are lost on the way back, as a dropped connection loses them."""
+    b.eval("(() => { const real = window.fetch; window.__lost = %d; "
+           "window.fetch = async (url, opts) => { const r = await real(url, opts); "
+           "if (window.__lost > 0 && String(url) === %s && opts && opts.method === 'POST') "
+           "{ window.__lost--; throw new TypeError('the reply was lost'); } return r; }; "
+           "return true; })()" % (count, json.dumps(path)))
+
+
 def reasoning_jobs() -> list:
     local = S["backend"].tool / "manager" / "local" / "state" / "reasoning" / "jobs"
     return sorted(p.name for p in local.iterdir()) if local.is_dir() else []
@@ -367,6 +384,44 @@ class Ask(unittest.TestCase):
         self.assertEqual("Unsent: does phase #44 wait on this?", b.eval("document.querySelector('#ap-otext').value"))
         shot("ask-a-kept-after-b-1440-dark")
         self.assertEqual(before, reasoning_jobs(), "navigating and switching launched a run")
+
+    def test_4d_typed_text_survives_a_reload_and_a_lost_reply_launches_once(self):
+        S["backend"].ask_answers.write_text("1", encoding="utf-8")
+        b = visit("/cards/43", "document.querySelector('#drawer a.o-asklink')", fresh=True)
+        b.click("#drawer a.o-asklink")
+        b.wait(f"{OPEN} && document.querySelector('#ap-otext')", 15)
+        # typed with the caret still in the composer: no change, no blur
+        key_in(b, "#ap-otext", "Lost reply: why is this card waiting?")
+        self.assertEqual("ap-otext", b.eval("document.activeElement && document.activeElement.id"))
+        b.goto("/cards/43")
+        if not b.wait(f"{OPEN} && document.querySelector('#ap-otext')?.value === "
+                      "'Lost reply: why is this card waiting?'", 20):
+            raise bv.CheckFailed("text typed in the composer did not survive a reload")
+        before = reasoning_jobs()
+        exchanges = sum(c["count"] for c in api("/api/ask?card=43")["conversations"])
+        # the server receives the question and both replies are lost: the
+        # page's own resend, then the person's after a reload
+        lose_replies(b, "/api/ask", 2)
+        b.wait("!document.querySelector(\"#agentpanel [data-oact='pask']\")?.disabled", 15)
+        double(b, SUBMIT)
+        if not b.wait("window.__lost === 0", 20):
+            raise bv.CheckFailed("the submission was not sent twice")
+        time.sleep(1)
+        self.assertEqual(len(reasoning_jobs()), len(before) + 1, "the page's own resend launched a second run")
+        b.goto("/cards/43")
+        if not b.wait(f"{OPEN} && document.querySelector('#ap-otext')?.value === "
+                      "'Lost reply: why is this card waiting?'", 20):
+            raise bv.CheckFailed("a question whose reply was lost was not kept to resend")
+        b.wait("!document.querySelector(\"#agentpanel [data-oact='pask']\")?.disabled", 15)
+        double(b, SUBMIT)
+        if not b.wait(f"{THREAD} && /Lost reply: why is this card waiting/.test({THREAD}.textContent) && "
+                      "document.querySelector('#ap-otext')?.value === ''", 40):
+            raise bv.CheckFailed("the resent question was not answered from the record: "
+                                 + str(b.eval(f"{PANEL}.innerText.slice(0, 600)")))
+        time.sleep(1)
+        self.assertEqual(len(reasoning_jobs()), len(before) + 1, "a resend after a lost reply launched another run")
+        self.assertEqual(exchanges + 1, sum(c["count"] for c in api("/api/ask?card=43")["conversations"]),
+                         "one question was recorded once")
 
     def test_5_keyboard_themes_and_widths(self):
         before = reasoning_jobs()

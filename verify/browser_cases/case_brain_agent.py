@@ -354,6 +354,44 @@ class BrainAgent(unittest.TestCase):
         self.assertIn("Onboarding, as edited by a person", titles)
         self.assertEqual(len(titles), 2, "the kept draft applied as one entry")
 
+    def test_3c_typed_text_survives_a_reload_and_a_lost_reply_launches_once(self):
+        b = self.open("/brain")
+        b.click('#bshell [data-bact="ag-new"]')
+        if not b.wait("!!document.querySelector('#agentpanel:not([hidden]) [data-ag=\"text\"]')", 5):
+            raise bv.CheckFailed("New entry opened no composer in the panel")
+        words = "Explain what happens when a reply is lost"
+        # typed with the caret still in the composer: no change, no blur
+        sel = '#agentpanel [data-ag="text"]'
+        b.eval(f"(() => {{ const f = document.querySelector({json.dumps(sel)}); f.focus(); "
+               f"return document.execCommand('insertText', false, {json.dumps(words)}); }})()")
+        self.assertEqual(b.eval("document.activeElement?.dataset?.ag || null"), "text")
+        b.goto("/brain")
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.value === {json.dumps(words)}", 15):
+            raise bv.CheckFailed("text typed in the composer did not survive a reload")
+        before = len(self.drafts())
+        self.answer_with(block(reply("questions")))
+        # the server receives Generate and both replies are lost: the page's
+        # own resend, then the person's after a reload
+        b.eval("(() => { const real = window.fetch; window.__lost = 2; "
+               "window.fetch = async (url, opts) => { const r = await real(url, opts); "
+               "if (window.__lost > 0 && String(url) === '/api/brain/draft/start' && opts && opts.method === 'POST') "
+               "{ window.__lost--; throw new TypeError('the reply was lost'); } return r; }; return true; })()")
+        b.wait("!document.querySelector('#agentpanel [data-bact=\"ag-generate\"]')?.disabled", 15)
+        self.armed_click(b, "ag-generate")
+        if not b.wait("window.__lost === 0", 20):
+            raise bv.CheckFailed("Generate was not sent twice")
+        time.sleep(1)
+        self.assertEqual(len(self.drafts()), before + 1, "the page's own resend launched a second request")
+        b.goto("/brain")
+        if not b.wait(f"document.querySelector({json.dumps(sel)})?.value === {json.dumps(words)}", 15):
+            raise bv.CheckFailed("a request whose reply was lost was not kept to resend")
+        b.wait("!document.querySelector('#agentpanel [data-bact=\"ag-generate\"]')?.disabled", 15)
+        self.armed_click(b, "ag-generate")
+        self.wait_text(b, ["Waiting for your answers"])
+        self.assertEqual(len(self.drafts()), before + 1, "a resend after a lost reply launched another request")
+        self.armed_click(b, "ag-discard")
+        self.wait_text(b, ["Discarded"])
+
     def test_4_narrow_and_both_themes(self):
         for dark in (True, False):
             word = "night" if dark else "day"

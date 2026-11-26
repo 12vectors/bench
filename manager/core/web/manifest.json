@@ -221,8 +221,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "lib/panel.js": {
-   "bytes": 18745,
-   "sha256": "6c6e778c1429f104fb86bd6e642246b71d12f03db92a0df4f1704326ba156c09",
+   "bytes": 19447,
+   "sha256": "fde1d0b79b7379541b8c2e2a320aec91ac8bea5c08abce4170c7ff6b1c3cb8de",
    "type": "text/javascript; charset=utf-8"
   },
   "lib/press.js": {
@@ -281,8 +281,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 167479,
-   "sha256": "729a1e45b7821639c9a14ce992ffb2c534298758e9075e69fdc00856249bd493",
+   "bytes": 167690,
+   "sha256": "94c7f38bae47076c5c316935bf91a8fdf69cba869c574ee52979c2802c29ad40",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {

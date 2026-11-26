@@ -324,6 +324,18 @@ function mountPanel(el) {
   document.addEventListener('pointercancel', () => { P.pressed = false; });
   // a field left: the repaint it held may run now
   el.addEventListener('focusout', (e) => { if (isField(e.target)) setTimeout(() => renderPanel(), 0); });
+  // unsent text is kept as it is typed, not only when the field is left:
+  // the composer has the caret, so a reload usually comes before a blur.
+  // The adapters read the keystroke into their slot in their own `input`
+  // listeners; the save runs after them, and once more as the page goes.
+  el.addEventListener('input', (e) => {
+    if (!isField(e.target)) return;
+    clearTimeout(P.saveSoon);
+    P.saveSoon = setTimeout(save, 200);
+  });
+  const flush = () => { clearTimeout(P.saveSoon); save(); };
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
   wirePanelGrip(el);
   for (const ad of Object.values(adapters)) if (ad.wire) ad.wire(el);
   renderPanel(true);
