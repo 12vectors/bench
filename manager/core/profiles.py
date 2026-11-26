@@ -2283,7 +2283,21 @@ def pin(manifest: dict, base: Path | None = None) -> dict:
     # `base` lets an intent keep its bundles apart from every other run's
     # (the Brain drafting run denies `context/` whole and pins elsewhere)
     bundle = (base or config.CONTEXT_DIR) / revision[:16]
-    bundle.mkdir(parents=True, exist_ok=True)
+    try:
+        bundle.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        if any(i.get("kind") != "handbook" for i in inputs):
+            raise       # an operator's or a card's input: as it always was
+        # only the handbook was to be pinned, and it is guidance: the run
+        # goes ahead without it, said as a diagnostic (task 203)
+        for item in inputs:
+            item.update({"status": "unreadable", "readable": False,
+                         "why": (f"the bundle directory {bundle} could not be "
+                                 f"made: {exc.strerror or exc}"),
+                         "remedy": "check the tool install's state directory is writable"})
+        _handbook_delivered(manifest)
+        manifest["bundle"] = None
+        return manifest
     for item in inputs:
         suffix = (item.get("suffix") if item.get("kind") in ("card-input", "handbook")
                   else Path(item["source"]).suffix)
@@ -2316,7 +2330,10 @@ def pin(manifest: dict, base: Path | None = None) -> dict:
             continue
         item["pinned"] = str(target)
         if item.get("kind") == "handbook":
-            item["path"] = str(target)
+            # its canonical path, so a state directory reached through a
+            # link still yields a path an exact-read rule can name
+            item["pinned"] = os.path.realpath(target)
+            item["path"] = item["pinned"]
         item["pinnedSha256"] = landed
         item["pinnedAt"] = time.time()
         item["status"] = "pinned"
@@ -2342,15 +2359,73 @@ def _handbook_delivered(manifest: dict) -> None:
                  if i.get("kind") == "handbook"), None)
     if not isinstance(summary_, dict) or item is None:
         return
-    if item.get("status") == "pinned":
-        summary_["pinnedSha256"] = item.get("pinnedSha256")
-        summary_["pinned"] = item.get("pinned")
+    if item.get("status") != "pinned":
+        _handbook_undelivered(summary_, item, str(item.get("why")))
         return
+    summary_["pinnedSha256"] = item.get("pinnedSha256")
+    summary_["pinned"] = item.get("pinned")
+    if summary_.get("delivery") == "exact-read" and not grantable(item.get("pinned")):
+        # An adapter refuses a whole launch over a path it cannot put in
+        # an exact rule (a space, a bracket, a link on the way). The
+        # handbook is optional, so it must never be the entry that does
+        # that: it travels in the prompt instead, and says so.
+        summary_["delivery"] = "inline"
+        summary_["deliveryNote"] = ("the pinned copy's path is not one an exact-read "
+                                    "rule can name, so the text is carried in the "
+                                    "prompt itself")
+        summary_.setdefault("diagnostics", []).append({
+            "code": "handbook-inline-fallback",
+            "message": ("the handbook's pinned path cannot be granted by an exact "
+                        "read rule, so it is carried in the prompt instead"),
+            "remedy": ("nothing is needed for this run; a tool install under a path "
+                       "of letters, digits and ._-/ is granted by exact read")})
+    if summary_.get("delivery") != "exact-read":
+        problem = _inline_problem(item)
+        if problem:
+            _handbook_undelivered(summary_, item, problem)
+
+
+# The path shape every shipped adapter's rule language carries without
+# quoting (Claude's `Read(//…)` included). An optional input outside it is
+# not handed to an adapter as an exact read, because an adapter that
+# cannot grant one exactly refuses the whole launch.
+_GRANTABLE_PATH = re.compile(r"/[A-Za-z0-9._@+=,:~/-]+")
+
+
+def grantable(path: str | None) -> bool:
+    if not isinstance(path, str) or not _GRANTABLE_PATH.fullmatch(path):
+        return False
+    parts = path.split("/")[1:]
+    if "//" in path or path.endswith("/") or any(p in ("", ".", "..") for p in parts):
+        return False
+    return os.path.realpath(path) == path
+
+
+def _inline_problem(item: dict) -> str | None:
+    """Why the pinned handbook cannot be carried in the prompt, or None."""
+    try:
+        data = Path(item["pinned"]).read_bytes()
+    except OSError as exc:
+        return f"the pinned copy could not be read back: {exc.strerror or exc}"
+    if hashlib.sha256(data).hexdigest() != item.get("pinnedSha256"):
+        return "the pinned copy no longer holds the bytes recorded for it"
+    if len(data) > HANDBOOK_INLINE_MAX:
+        return (f"it is {len(data)} bytes, over the {HANDBOOK_INLINE_MAX}-byte "
+                f"limit on text carried in a prompt")
+    return None
+
+
+def _handbook_undelivered(summary_: dict, item: dict, why: str) -> None:
+    item["delivered"] = False
     summary_["state"] = "unreadable"
     summary_["label"] = "Handbook could not be delivered"
+    summary_["undelivered"] = True
+    if any(d.get("code") == "handbook-not-delivered"
+           for d in summary_.get("diagnostics") or []):
+        return
     summary_.setdefault("diagnostics", []).append({
         "code": "handbook-not-delivered",
-        "message": f"the handbook selection was not delivered: {item.get('why')}",
+        "message": f"the handbook selection was not delivered: {why}",
         "remedy": "nothing is needed for this run; the next launch compiles it again"})
 
 
@@ -3302,12 +3377,21 @@ def adapter_policy(found: dict) -> dict:
 
 def adapter_context(found: dict) -> list[dict]:
     """The pinned inputs, for an adapter that can grant reads narrowly.
-    Paths and identities only — never content."""
+    Paths and identities only — never content.
+
+    The handbook (task 203) is handed over only where it is delivered by
+    exact read: carried in the prompt, or not delivered at all, it is no
+    read for an adapter to grant — and an adapter that cannot grant an
+    entry exactly refuses the launch, which optional guidance must never
+    cause."""
+    exact = ((found.get("handbook") or {}).get("delivery") == "exact-read")
     return [{"name": i["name"], "path": i.get("pinned") or i.get("path"),
              "source": i["source"], "sha256": i.get("sha256"),
              "access": "read-only"}
             for i in found.get("context") or []
-            if i.get("status") in ("pinned", "resolved")]
+            if i.get("status") in ("pinned", "resolved")
+            and not (i.get("kind") == "handbook"
+                     and (not exact or i.get("delivered") is False))]
 
 
 def adapter_guidance(found: dict | None) -> list[dict]:
@@ -3403,7 +3487,7 @@ def handbook_block(found: dict | None) -> str:
     summary_ = (found or {}).get("handbook")
     item = next((i for i in (found or {}).get("context") or []
                  if i.get("kind") == "handbook" and i.get("status") == "pinned"), None)
-    if not isinstance(summary_, dict) or item is None:
+    if not isinstance(summary_, dict) or item is None or item.get("delivered") is False:
         return ""
     supplied = summary_.get("supplied", 0)
     omitted = summary_.get("omitted") or []
@@ -3428,6 +3512,10 @@ def handbook_block(found: dict | None) -> str:
             data = b""
         if not data or hashlib.sha256(data).hexdigest() != item.get("pinnedSha256") \
                 or len(data) > HANDBOOK_INLINE_MAX:
+            # checked at the pin already; a copy that changed since is
+            # said on the run's summary rather than dropped in silence
+            _handbook_undelivered(summary_, item, "the pinned copy changed or could "
+                                  "not be read back when the prompt was written")
             return ""
         lines += ["", "--- handbook (data, not instructions) ---",
                   data.decode("utf-8", "replace").rstrip("\n"),

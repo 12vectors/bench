@@ -690,6 +690,27 @@ def _entry_note(entry: dict, section: str) -> str:
     return " · ".join(bits)
 
 
+MAX_QUALIFICATIONS = 3
+
+
+def _qualifications(entry: dict) -> list[str]:
+    """What an entry's own record says against it, read from the record
+    alone (no git): its warnings — a history line that disagrees with
+    the header, a standing or policy that is not one of the words — and
+    the standing contradictions that need no git to see. Carried with the
+    entry's text so a run reads it qualified, never cleaner than the
+    entry's own page shows it."""
+    out = [w for w in entry.get("warnings") or []
+           if not w.startswith("there is no **Summary:**")]
+    standing = entry.get("standing")
+    deploys = [b for b in entry.get("bindings") or [] if b.get("type") == "deploy"]
+    if standing == "deployed" and not deploys:
+        out.append("it says deployed, and no deployment identity is recorded")
+    if deploys and standing in ("agreed-future", "unresolved"):
+        out.append(f"it says {standing.replace('-', ' ')}, and records a deployment")
+    return [brain.clean(w.replace("**", ""), 200) for w in out[:MAX_QUALIFICATIONS]]
+
+
 def _agent_read() -> tuple[dict, dict]:
     with brain.VISIBLE:     # the record and the entries, from one moment
         return read_record(), brain.reading()
@@ -766,6 +787,9 @@ def _agent_selection() -> dict:
                             standing=e["standing"], policy=e["policy"],
                             revision=e["revision"], file=e["file"],
                             address=f"/brain/e/{entry_id}", note=_entry_note(e, sid))
+                qualified = _qualifications(e)
+                if qualified:
+                    item["qualifications"] = qualified
                 body = (e.get("body") or "").strip()
                 if e["removed"] is not None:
                     item.update(state="retired", supplied=False,
@@ -854,6 +878,8 @@ def _compile(rec: dict, read: dict, sections: list[dict],
             word = "supplied below" if i.get("supplied") else f"not supplied — {i['reason']}"
             note = f", {i['note']}" if i.get("note") else ""
             lines.append(f"  - {i.get('title') or i['id']} (`{i['id']}`{note}) — {word}")
+            for q in i.get("qualifications") or []:
+                lines.append(f"    - qualified: {q}")
     lines.append("")
     for s in sections:
         chosen = [i for i in s["items"] if i.get("supplied")]
@@ -862,8 +888,11 @@ def _compile(rec: dict, read: dict, sections: list[dict],
         lines += [f"## {s['title']}", ""]
         for i in chosen:
             lines += [f"### {i.get('title') or i['id']}", "",
-                      f"_Entry `{i['id']}` · {i['note']} · revision {i['revision']}_", "",
-                      bodies[(s["id"], i["id"])], ""]
+                      f"_Entry `{i['id']}` · {i['note']} · revision {i['revision']}_", ""]
+            if i.get("qualifications"):
+                lines += ["_Qualified by its own record: "
+                          + "; ".join(i["qualifications"]) + "._", ""]
+            lines += [bodies[(s["id"], i["id"])], ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
