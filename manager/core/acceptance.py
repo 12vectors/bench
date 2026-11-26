@@ -821,11 +821,15 @@ def reports(text: str) -> list[dict]:
     out = []
     for index, head in enumerate(heads):
         stop = heads[index + 1].start() if index + 1 < len(heads) else len(history)
-        _prov, body = split_provenance(_report_body(history, head.end(), stop))
+        prov, body = split_provenance(_report_body(history, head.end(), stop))
         kind = head.group(1).strip()
         line = head.group(0)
         item = {"kind": kind, "at": head.group(2), "by": head.group(3) or "",
                 "text": body,
+                # the run that filed it, as bench recorded at filing (task
+                # 206) — the one way a run is matched to its report; None
+                # for a report filed before bench recorded it, never guessed
+                "agent": (prov or {}).get("agent"),
                 # the report's own first paragraph, verbatim and clipped at
                 # a sentence (task 149): what the Overview quotes as the
                 # last recorded result, labelled as the run's account

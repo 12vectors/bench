@@ -19,6 +19,7 @@
    Every string from the server goes through `esc`. */
 import { fetch, post } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
+import { askAttrs } from '../lib/panel.js';
 
 const SETTINGS_HEADERS = { 'Content-Type': 'application/json', 'X-Bench-Settings': '1' };
 const TONE = { queued: 'b-note', running: 'rc-work', waiting: 'rc-you', review: 'rc-you',
@@ -191,12 +192,15 @@ function bodyHtml() {
   const d = rc.data;
   if (!d) return `<p class="b-note" aria-busy="true">${rc.error ? esc(rc.error) : 'Reading…'}</p>`;
   const counts = Object.entries(d.counts).map(([k, n]) => `${n} ${esc(k)}`).join(' · ');
+  // the queue's activity observed in the shared panel (task 206): a read;
+  // its actions stay here
+  const observe = `<button type="button" class="b-btn ap-open"${askAttrs('reconcile', { kind: 'reconcile' })}>Observe in the conversation panel</button>`;
   const tools = d.effective.runs ? '<div class="sd-acts">' +
     `<button type="button" class="b-btn${armed('rebuild') ? ' armed' : ''}" data-rcact="rebuild"${rc.acting ? ' disabled' : ''}>` +
     `${armed('rebuild') ? 'Confirm: queue every entry again' : 'Rebuild'}</button>` +
     `<button type="button" class="b-btn" data-rcact="refresh-all"${rc.acting ? ' disabled' : ''}>Refresh sources for every entry</button>` +
-    '<button type="button" class="b-btn" data-rcact="read">Read again</button></div>'
-    : '<div class="sd-acts"><button type="button" class="b-btn" data-rcact="read">Read again</button></div>';
+    '<button type="button" class="b-btn" data-rcact="read">Read again</button>' + observe + '</div>'
+    : '<div class="sd-acts"><button type="button" class="b-btn" data-rcact="read">Read again</button>' + observe + '</div>';
   return headHtml(d) +
     (rc.actError ? `<p class="b-missing" role="alert">${esc(rc.actError)}</p>` : '') +
     (d.entries.length ? `<h3>Entries</h3><p class="b-note" role="status">${counts}</p>` +

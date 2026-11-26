@@ -11,6 +11,7 @@ import { fetch, onStalePage, post } from './lib/api.js';
 import { $ } from './lib/dom.js';
 import { holdRoute, linkFor, onCardLink, plainClick, replaceRoute, routeReady, routeWrites, setRouteSource, syncRoute } from './lib/nav.js';
 import { isNarrow, logOpenKey } from './lib/layout.js';
+import { registerBrainJobs } from './lib/agentshell.js';
 import { listenForAsks, mountPanel, panelState, restorePanel } from './lib/panel.js';
 import { CARD_VIEWS, findCard, parseRoute, routeOf } from './lib/route.js';
 import { onRender } from './lib/schedule.js';
@@ -22,6 +23,7 @@ import { STACK_SHEETS } from './views/board.js';
 import { registerBrainAgent } from './views/brain.js';
 import { acts, closeSheet, focusCard, move, rawMove, requiredSheet, showDetail } from './views/card.js';
 import { FACE_WORDS, deliveryOf } from './views/delivery.js';
+import { registerRefineAgent } from './views/detail/discussion.js';
 import { renderDrawer } from './views/detail/drawer.js';
 import { doctorSheet, paintDoctorSheet } from './views/doctor.js';
 import { findTask, renderFocus } from './views/focus.js';
@@ -30,6 +32,7 @@ import { gateSheet } from './views/gates.js';
 import { renderChip, renderDoctor } from './views/header.js';
 import { openAskAddress, registerOrchAgent } from './views/orchestrator.js';
 import { isolated } from './views/profile.js';
+import { registerRunAgent } from './views/progress.js';
 import { fold } from './views/sessions.js';
 import { ensureDraft } from './views/settings/draft.js';
 import { SETTINGS_HEADERS, checkbox, field } from './views/settings/policy.js';
@@ -500,6 +503,12 @@ applyTheme();
 // board has been read, since a conversation names cards
 registerOrchAgent();
 registerBrainAgent();
+// and since task 206 every other shipped purpose (lib/agentpurposes.js):
+// card and relevance-review refinement, a run inspected, a Brain seed or
+// evaluation draft, and the reconciliation queue observed
+registerRefineAgent();
+registerRunAgent();
+registerBrainJobs();
 restorePanel();
 listenForAsks();
 // The address the page was opened at, applied before the first reading so

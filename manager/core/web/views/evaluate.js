@@ -26,6 +26,7 @@
    data, never markup. */
 import { fetch, post } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
+import { askAttrs } from '../lib/panel.js';
 
 const MAX = 8;
 const CLASSES = ['Current', 'Historical', 'Superseded', 'Unclassified'];
@@ -349,6 +350,10 @@ function draftHtml() {
   return `<section class="b-panel" id="ev-draft" tabindex="-1" aria-labelledby="ev-h-draft">` +
     `<h3 id="ev-h-draft">Evaluation <code>${esc(d.id)}</code> — <span role="status">${esc(word)}</span></h3>` +
     progressHtml(d) + err + conflict + qs + note + refused + missing + acts +
+    // its conversation and progress follow in the shared panel (task 206);
+    // answers, the review and Apply stay here
+    `<p class="b-note"><button type="button" class="b-link ap-open"${askAttrs('brainjob', { draft: d.id, mode: 'evaluate' })}>` +
+    `Follow in the conversation panel</button> — its answers, review and Apply stay here.</p>` +
     `<p class="b-note">${esc(d.local || '')}</p></section>`;
 }
 

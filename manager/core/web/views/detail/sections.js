@@ -5,6 +5,7 @@ import { fetch, post } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
+import { askAttrs } from '../../lib/panel.js';
 import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
 import { cardId, formatRoute, stemOf } from '../../lib/route.js';
@@ -187,6 +188,17 @@ function progressFact(t) {
     (said ? ` It last said (history, not current): ${said}` : ' It sent no progress update.');
 }
 
+/* The latest run on the card, opened in the shared panel as a run to
+   inspect (task 206): its identity, what it reported, its ending and the
+   exact records — read, never relaunched. Absent where no run is known. */
+function inspectRunButton(t) {
+  const p = (S.state.progress || {})[t.file];
+  const agent = agentOnTask(t.file);
+  const id = (agent && agent.id) || (p && p.agent);
+  if (!id) return '';
+  return ` <button type="button" class="dlink ap-open"${askAttrs('run', { agent: id, card: t.file })}>Inspect this run</button>`;
+}
+
 function roundLine(r) {
   const word = { APPROVE: 'approved', 'REQUEST CHANGES': 'asked for changes' }[r.verdict] || 'gave no verdict';
   return `${r.reviewer || 'A reviewer'} ${word}${r.commit ? ' at ' + r.commit.slice(0, 12) : ''}, ${r.at}` +
@@ -333,7 +345,7 @@ function standsHtml(t, d, acc, failBlock) {
     deliveryStatusHtml(t, d, 'ov') + failBlock +
     `<dl class="dfacts ovfacts">` +
     ovFact('Stage', esc(STAGE_WORDS[t.stage] || t.stage) + (t.assignee ? ` · held by ${esc(t.assignee)}` : '')) +
-    ovFact('Progress', esc(progressFact(t))) +
+    ovFact('Progress', esc(progressFact(t)) + inspectRunButton(t)) +
     ovFact('Last result', lastResultHtml(t, acc)) +
     // the acceptance conclusion and who acts next — the very reading the
     // Acceptance section leads with (task 190), never worked out here
@@ -1614,7 +1626,8 @@ function relevanceHtml(t, r, open) {
     `<textarea id="rvbox-${esc(r.id)}" rows="3">${esc((S.commentDraft || {})[key] || '')}</textarea>` +
     `<div class="racts"><button class="dact" data-rvact="comment">Comment</button>` +
     `<button class="dact" data-rvact="refine"${cannot ? ' disabled' : ''}>` +
-    `${actLabel('✎ Update card from this review', 'click again — asks an agent', 'asking…')}</button></div>` +
+    `${actLabel('✎ Update card from this review', 'click again — asks an agent', 'asking…')}</button>` +
+    `<button type="button" class="dact ap-open"${askAttrs('refine', { card: t.file, review: r.id })}>Open in conversation panel</button></div>` +
     `<p class="dnote bad rvwhy" role="status">${reviewRefineWhy(d)}</p>` +
     `<p class="dnote">Comment only saves your note, linked to this review. Update card from this review ` +
     `sends this review and your instruction (or, if you leave it empty, “apply its recommendations”) ` +

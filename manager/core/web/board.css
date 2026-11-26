@@ -1140,38 +1140,38 @@
   /* the discussion: history beside the brief, never part of it. Words a
      person or an agent wrote are text (pre-wrap), mono marks what a
      machine wrote — ids, times — and colour only ever means state */
-  #drawer .discussion{display:flex;flex-direction:column;gap:8px;
+  :is(#drawer,#agentpanel) .discussion{display:flex;flex-direction:column;gap:8px;
     border-top:1px solid var(--border-soft);padding-top:12px}
-  #drawer .discussion .dentry{background:var(--sunken);border-radius:8px;
+  :is(#drawer,#agentpanel) .discussion .dentry{background:var(--sunken);border-radius:8px;
     padding:8px 10px;display:flex;flex-direction:column;gap:6px}
-  #drawer .discussion .dentry.decision{background:none;border:1px dashed var(--line)}
-  #drawer .discussion .dhead2{font-size:11.5px;color:var(--muted)}
-  #drawer .discussion .dhead2 .mono,#drawer .discussion .rhead .mono{
+  :is(#drawer,#agentpanel) .discussion .dentry.decision{background:none;border:1px dashed var(--line)}
+  :is(#drawer,#agentpanel) .discussion .dhead2{font-size:11.5px;color:var(--muted)}
+  :is(#drawer,#agentpanel) .discussion .dhead2 .mono,:is(#drawer,#agentpanel) .discussion .rhead .mono{
     font-family:var(--mono);font-size:10.5px;color:var(--dim)}
-  #drawer .discussion .cbody{font-size:12.5px;color:var(--text);white-space:pre-wrap;
+  :is(#drawer,#agentpanel) .discussion .cbody{font-size:12.5px;color:var(--text);white-space:pre-wrap;
     overflow-wrap:anywhere}
-  #drawer .discussion .dnote{font-size:11.5px;color:var(--dim);margin:0}
-  #drawer .discussion .dnote.bad{color:var(--alarm)}
-  #drawer .discussion .rjob{border-left:3px solid var(--accent);padding-left:8px;
+  :is(#drawer,#agentpanel) .discussion .dnote{font-size:11.5px;color:var(--dim);margin:0}
+  :is(#drawer,#agentpanel) .discussion .dnote.bad{color:var(--alarm)}
+  :is(#drawer,#agentpanel) .discussion .rjob{border-left:3px solid var(--accent);padding-left:8px;
     display:flex;flex-direction:column;gap:6px}
-  #drawer .discussion .rjob.bad{border-left-color:var(--alarm)}
-  #drawer .discussion .rjob.good{border-left-color:var(--calm)}
-  #drawer .discussion .rhead{display:flex;gap:8px;align-items:baseline;font-size:12px}
-  #drawer .discussion .rstate{font-weight:500}
-  #drawer .discussion .rexpl{font-size:12.5px;margin:0;white-space:pre-wrap}
-  #drawer .discussion p{margin:0;font-size:12px}
-  #drawer .discussion .racts{display:flex;gap:6px;flex-wrap:wrap}
-  #drawer .discussion button.dact{font-size:12px;padding:4px 10px}
-  #drawer .discussion .rdiff{font-family:var(--mono);font-size:11px;line-height:1.5;
+  :is(#drawer,#agentpanel) .discussion .rjob.bad{border-left-color:var(--alarm)}
+  :is(#drawer,#agentpanel) .discussion .rjob.good{border-left-color:var(--calm)}
+  :is(#drawer,#agentpanel) .discussion .rhead{display:flex;gap:8px;align-items:baseline;font-size:12px}
+  :is(#drawer,#agentpanel) .discussion .rstate{font-weight:500}
+  :is(#drawer,#agentpanel) .discussion .rexpl{font-size:12.5px;margin:0;white-space:pre-wrap}
+  :is(#drawer,#agentpanel) .discussion p{margin:0;font-size:12px}
+  :is(#drawer,#agentpanel) .discussion .racts{display:flex;gap:6px;flex-wrap:wrap}
+  :is(#drawer,#agentpanel) .discussion button.dact{font-size:12px;padding:4px 10px}
+  :is(#drawer,#agentpanel) .discussion .rdiff{font-family:var(--mono);font-size:11px;line-height:1.5;
     background:var(--bg);border:1px solid var(--line);border-radius:6px;
     padding:6px 8px;margin:0;overflow-x:auto;white-space:pre-wrap}
-  #drawer .discussion .rdiff .d{display:block}
-  #drawer .discussion .rdiff .dadd{color:var(--calm)}
-  #drawer .discussion .rdiff .ddel{color:var(--alarm);text-decoration:line-through}
-  #drawer .discussion .rdiff .deq{color:var(--muted)}
-  #drawer .discussion .rdiff .dgap{color:var(--dim);font-style:italic}
-  #drawer .discussion .composer{display:flex;flex-direction:column;gap:6px}
-  #drawer .discussion textarea{width:100%;box-sizing:border-box;resize:vertical;
+  :is(#drawer,#agentpanel) .discussion .rdiff .d{display:block}
+  :is(#drawer,#agentpanel) .discussion .rdiff .dadd{color:var(--calm)}
+  :is(#drawer,#agentpanel) .discussion .rdiff .ddel{color:var(--alarm);text-decoration:line-through}
+  :is(#drawer,#agentpanel) .discussion .rdiff .deq{color:var(--muted)}
+  :is(#drawer,#agentpanel) .discussion .rdiff .dgap{color:var(--dim);font-style:italic}
+  :is(#drawer,#agentpanel) .discussion .composer{display:flex;flex-direction:column;gap:6px}
+  :is(#drawer,#agentpanel) .discussion textarea{width:100%;box-sizing:border-box;resize:vertical;
     font:inherit;font-size:12.5px;padding:7px 9px;border-radius:7px;
     border:1px solid var(--border);background:var(--bg);color:var(--text)}
 
@@ -2541,7 +2541,30 @@
   .o-askhistory{margin-top:16px}
   .o-askhistory h2{margin:0 0 8px}
   .bn-act .bn-ask{color:var(--accent)}
+  /* the shared presentation every purpose draws the same way (task 206):
+     whose words, what bench observed, what you can do here */
+  .ap-body h3{margin:12px 0 4px;font-size:13px}
+  .ap-facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:6px 0}
+  .ap-facts dt{color:var(--muted);font-size:12px}
+  .ap-facts dd{margin:0;font-size:13px}
+  .ap-facts dd ul,.ap-transcript ol,.ap-queue,.ap-runlinks ul,.ap-questions ol{margin:0;padding-left:18px}
+  .ap-unknown{color:var(--dim);font-style:italic}
+  .ap-src{font-family:var(--mono);font-size:10.5px;color:var(--muted);font-weight:400;margin-left:6px}
+  .ap-line{margin:4px 0;font-size:13px}
+  .ap-at{font-size:10.5px;color:var(--dim)}
+  .ap-nofollow{border:1px dashed var(--border);border-radius:8px;padding:8px 10px;margin:12px 0}
+  .ap-nofollow p{margin:2px 0;font-size:13px}
+  .ap-limits{margin-top:10px}
+  .ap-limits summary{cursor:pointer;color:var(--muted);min-height:32px;display:flex;align-items:center}
+  .ap-workspace{margin:12px 0}
+  .ap-wsbtn{display:inline-block;padding:6px 12px;border:1px solid var(--accent);border-radius:7px;color:var(--text);text-decoration:none}
+  .ap-wsbtn:hover,.ap-wsbtn:focus-visible{background:var(--sunken)}
+  .ap-tail{white-space:pre-wrap;font-family:var(--mono);font-size:11.5px;margin:4px 0 0;max-height:12em;overflow:auto}
+  .ap-label{font-size:12px;color:var(--muted)}
+  #agentpanel .prog{margin:6px 0}
+  #agentpanel .discussion{display:flex;flex-direction:column;gap:8px}
   @media (max-width:760px){
+    .ap-facts{grid-template-columns:minmax(0,1fr)}
     .agentpanel{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:40;border-left:0}
     .ap-grip{display:none}
     .ap-head,.ap-about,.ap-body,.ap-change{padding-left:12px}

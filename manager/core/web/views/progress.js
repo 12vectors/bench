@@ -3,6 +3,10 @@ import { scheduleRender } from '../app/data.js';
 import { S } from '../app/state.js';
 import { fetch } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
+import { runPurpose } from '../lib/agentpurposes.js';
+import { limitsHtml, noComposerHtml } from '../lib/agentshell.js';
+import { panelOpen, registerAgent, renderPanel } from '../lib/panel.js';
+import { cardId } from '../lib/route.js';
 import { ago, fmtClock, fmtShort } from '../lib/time.js';
 import { gateState } from './gates.js';
 import { fold } from './sessions.js';
@@ -40,6 +44,8 @@ async function fetchProgress(agentId) {
     const data = res.ok ? (await res.json()).progress : null;
     S.progressFull[agentId] = { at: Date.now(), data };
     if (S.view === 'focus' || S.view === 'flight') scheduleRender();
+    // a run open in the shared panel reads the same record (task 206)
+    if (panelOpen()) renderPanel('live');
   } catch {
     S.progressFull[agentId] = { at: Date.now(), data: cached ? cached.data : null };
   }
@@ -362,8 +368,143 @@ async function fetchManifest(agentId) {
   }
 }
 
+/* ── a run, inspected in the shared panel (task 206) ───────────────────
+
+   An implementation, PR repair or review run opened as a conversation
+   about that run: who it is (agent, name, model, intent, card), what it
+   reported (the same progress section Focus draws, every claim labelled
+   the run's), what the board observed of its process, the report it filed
+   on the card — matched by the run identity bench recorded when it filed
+   it, never by name or time — and the exact records: Focus, the session,
+   the card, its review at its own address, and each evidence record as
+   bench reads it now.
+
+   Inspection only reads. It relaunches nothing, writes nothing, and a
+   coding run takes no follow-up: there is no composer, and the panel says
+   which existing control is the supported next step. */
+const runReports = {};
+
+async function readRunReports(t) {
+  const stamp = `${t.stage}:${t.mtime}`;
+  const have = runReports[t.file];
+  if (have && (have.reading || have.stamp === stamp)) return;
+  runReports[t.file] = { ...(have || {}), reading: true, stamp };
+  try {
+    const res = await fetch(`/api/card/acceptance?file=${encodeURIComponent(t.file)}&stage=${encodeURIComponent(t.stage)}`);
+    const data = res.ok ? await res.json() : null;
+    runReports[t.file] = { stamp, data: data && data.acceptance ? data.acceptance : (data || have?.data || null) };
+  } catch {
+    runReports[t.file] = { stamp, data: have ? have.data : null };
+  }
+  if (panelOpen()) renderPanel('live');
+}
+
+function runOf(id) {
+  const live = (S.state?.agents || []).find(a => a.id === id);
+  if (live) return live;
+  const meta = (S.state?.sessions || []).find(m => m.agentId === id);
+  return { id, name: meta ? meta.agentName : null, model: meta ? meta.agentModel : null,
+           session: meta ? meta.id : null, replayed: true };
+}
+
+function runTask(file) {
+  return (S.state?.board.stages || []).flatMap(s => s.tasks).find(x => x.file === file) || null;
+}
+
+/* The report the run filed on its card, by the identity bench recorded. */
+function runReport(id, file) {
+  const acc = ((S.acc || {})[file] || {}).data || (runReports[file] || {}).data;
+  if (!acc) return { reading: true };
+  const mine = (acc.reports || []).filter(r => r.agent === id);
+  return { report: mine[mine.length - 1] || null, any: (acc.reports || []).length };
+}
+
+function evidenceRefs(p) {
+  const seen = new Map();
+  for (const e of [p && p.current, ...((p && p.history) || [])]) {
+    for (const ref of (e && e.refs) || []) if (ref.kind !== 'commit' && !seen.has(ref.id)) seen.set(ref.id, ref);
+  }
+  return [...seen.values()];
+}
+
+function runBody(s) {
+  const { agent: id, card } = s.target;
+  const agent = runOf(id);
+  const t = runTask(card);
+  if (t) readRunReports(t);
+  fetchProgress(id);
+  const p = progressOf(id, card);
+  const pur = runPurpose(agent, p);
+  const meta = agent.session ? (S.state?.sessions || []).find(m => m.id === agent.session) : null;
+  const ref = t ? cardId(t, S.state) || t.file : null;
+  const live = !agent.replayed && agent.status === 'running';
+  const ended = !live && (p ? !p.active : true);
+  const links = [];
+  if (agent.session) {
+    links.push(`<a href="/focus/${encodeURIComponent(agent.session)}${ref ? `?card=${encodeURIComponent(ref)}` : ''}" data-route>Focus on this run</a>`);
+    links.push(`<a href="/sessions/${encodeURIComponent(agent.session)}${ref ? `?card=${encodeURIComponent(ref)}` : ''}" data-route>Its session</a>`);
+  }
+  if (ref) links.push(`<a href="/cards/${encodeURIComponent(ref)}" data-route>The card</a>`);
+  const rep = t ? runReport(id, card) : { report: null };
+  const r = rep.report;
+  if (r && r.review && ref) {
+    links.push(`<a href="/cards/${encodeURIComponent(ref)}?tab=reviews&amp;review=${encodeURIComponent(r.review)}" data-route>The review on the card</a>`);
+    links.push(`<a href="/brain/r/${encodeURIComponent(ref)}/${encodeURIComponent(r.review)}" data-route>The review in the Brain</a>`);
+  } else if (r && ref) {
+    links.push(`<a href="/cards/${encodeURIComponent(ref)}?tab=activity" data-route>The report in Activity</a>`);
+  }
+  const result = !t ? `<p class="ap-note">The card is not on the board now, so its report cannot be read here.</p>`
+    : rep.reading ? `<p class="ap-note" aria-busy="true">Reading the card’s reports…</p>`
+    : r ? `<p>${r.headline ? esc(r.headline.text) + (r.headline.clipped ? ' …' : '') : '<span class="ap-unknown">The report has no opening paragraph.</span>'}</p>` +
+      `<p class="ap-note">${esc(r.kind)}${r.by ? ' by ' + esc(r.by) : ''}, ${esc(r.at)} — the run’s own account, not a check result. ` +
+      `Matched by the run identity bench recorded when it filed the report.</p>`
+    : ended ? `<p class="ap-note">No report on this card is recorded as this run’s. ` +
+      `${rep.any ? 'The card holds other reports; one filed before bench recorded run identities is not claimed for this run.' : 'The card holds no report.'}</p>`
+    : `<p class="ap-note">The run has not ended; its report is filed when it does.</p>`;
+  const failure = agent.failure && agent.failure.excerpt
+    ? `<div class="ap-block" role="alert"><b>The run failed</b>${agent.rc != null ? ` (exit ${esc(String(agent.rc))})` : ''}: ` +
+      `<pre class="ap-tail">${esc(agent.failure.excerpt)}</pre></div>` : '';
+  const evid = evidenceRefs(p);
+  const evidence = evid.length
+    ? `<section aria-label="Evidence the run named"><h3>Evidence the run named</h3><p class="ap-note">Each as bench reads its record now — ` +
+      `not the run’s word for it.</p><div class="prog"><div class="prefs">${evid.map(progressRef).join('')}</div></div></section>`
+    : `<p class="ap-note">The run named no evidence record. What bench verified for the card is in its ◫ evidence and merge requirements, on the card.</p>`;
+  const next = live
+    ? `The run is working. ‖ hold on <a href="/cards/${encodeURIComponent(ref || '')}" data-route>the card</a> is the supported way to stop it.`
+    : `${esc(pur.followUp.how)}${ref ? ` <a href="/cards/${encodeURIComponent(ref)}" data-route>Open the card for its next step.</a>` : ''}`;
+  return `<dl class="ap-facts ap-ident">` +
+    `<dt>Run</dt><dd>${esc(agent.name || 'Agent')} <span class="mono">${esc(id)}</span>${agent.model ? ` · <span class="mono">${esc(agent.model)}</span>` : ''}</dd>` +
+    `<dt>Purpose</dt><dd>${esc(pur.label)}</dd>` +
+    `<dt>Card</dt><dd>${t ? esc(`${t.number ? '#' + parseInt(t.number, 10) + ' ' : ''}${t.title || t.file}`) : esc(card || 'not recorded')}</dd>` +
+    `<dt>Process</dt><dd>${esc(processWord(agent.replayed ? null : agent, p))} <span class="ap-src">observed by bench</span></dd></dl>` +
+    failure +
+    progressSection({ ...agent, status: agent.replayed ? undefined : agent.status }, meta, t) +
+    `<section aria-label="Result"><h3>Result</h3>${result}</section>` + evidence +
+    (links.length ? `<nav class="ap-runlinks" aria-label="Exact records"><h3>Records</h3><ul>${links.map(l => `<li>${l}</li>`).join('')}</ul></nav>` : '') +
+    noComposerHtml(pur, next) + limitsHtml(pur);
+}
+
+function registerRunAgent() {
+  registerAgent('run', {
+    label: 'Run inspection',
+    capability: 'Shows what a run reported and what bench observed; it takes no instructions.',
+    key: (t) => `run:${t.agent}`,
+    create: () => ({}),
+    about: (s) => {
+      const a = runOf(s.target.agent);
+      const t = runTask(s.target.card);
+      return `${a.name || 'Agent'} · ${runPurpose(a, progressOf(s.target.agent, s.target.card)).label}` +
+        (t && t.number ? ` · #${parseInt(t.number, 10)}` : '');
+    },
+    body: runBody,
+    opened: (s) => fetchProgress(s.target.agent),
+    persist: () => ({}),
+    revive: (d, target) => (target && typeof target.agent === 'string' ? {} : null),
+  });
+}
+
 export {
-  ENDED_WORDS, fetchDiff, fetchEvidence, fetchManifest, fetchProgress,
+  ENDED_WORDS, fetchDiff, registerRunAgent, fetchEvidence, fetchManifest, fetchProgress,
   fetchReadiness, focusGatePanel, PROCESS_WORDS, processWord, PROGRESS_QUIET,
   progressOf, progressRef, progressSection, progressSentence, progressWell,
   verificationPanel

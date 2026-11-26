@@ -3,7 +3,11 @@ import { agentOnTask, loadState } from '../../app/data.js';
 import { S } from '../../app/state.js';
 import { fetch, post } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
+import { purpose } from '../../lib/agentpurposes.js';
+import { limitsHtml } from '../../lib/agentshell.js';
+import { askAttrs, panelOpen, registerAgent, renderPanel, savePanel } from '../../lib/panel.js';
 import { resource, staleWords } from '../../lib/resource.js';
+import { cardId } from '../../lib/route.js';
 import { toast } from '../../lib/toast.js';
 import { REVIEW_LABELS, actLabel, wireAction } from '../card.js';
 import { deliveryOf, requirementsHeadline, shortSha } from '../delivery.js';
@@ -58,7 +62,11 @@ const discussion = resource({
 function loadDiscussion(t, force) {
   discussion.read(t.file, discStamp(t), {
     force, arg: t,
-    done: () => { if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected); },
+    done: () => {
+      if (S.selected && S.selected.file === t.file) renderDiscussion(S.selected);
+      // the panel's conversation about this card reads the same discussion
+      if (panelOpen()) renderPanel('live');
+    },
   });
 }
 
@@ -208,7 +216,8 @@ function discussionPanel(t) {
     `placeholder="A comment, or an instruction for the brief">${esc(S.commentDraft[t.file] || '')}</textarea>` +
     `<div class="racts"><button class="dact" id="addComment">Add comment</button>` +
     `<button class="dact" id="refineNew"${cannot ? ' disabled' : ''}>` +
-    `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}</button></div>` +
+    `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}</button>` +
+    refinePanelButton(t) + `</div>` +
     `<p class="dnote">Add comment only saves it. Update card with agent also asks an ` +
     `agent to propose a revised brief — it reads, it implements nothing, and the ` +
     `brief changes only when you apply the proposal.</p></div></section>`;
@@ -240,31 +249,141 @@ function wireDiscussion(t) {
     // a different text is a different request; the same text resent is not
     delete S.refineKey[t.file];
   });
-  $('#addComment').addEventListener('click', async () => {
-    const data = await postCard('/api/card/comment',
-      { file: t.file, stage: t.stage, body: box.value });
-    if (!data) return;
-    S.commentDraft[t.file] = '';
-    toast(`comment ${data.comment.id} saved` +
-          (data.comment.committed ? '' : ' — written to the card, not committed'));
-    afterCardWrite(t);
-  });
+  $('#addComment').addEventListener('click', () => saveComment(t, box.value));
   wireAction($('#refineNew'), `${t.file}::refine-new`, {
     label: 'Update card with agent', confirm: true,
-    run: async () => {
-      const key = S.refineKey[t.file] = S.refineKey[t.file] || newRequestKey();
-      const data = await postCard('/api/card/refine',
-        { file: t.file, stage: t.stage, text: box.value, request: key });
-      if (!data) return false;
-      S.commentDraft[t.file] = '';
-      delete S.refineKey[t.file];
-      toast(data.duplicate ? 'that refinement was already asked for'
-                           : `${data.job.name || 'an agent'} is refining ${t.file} — it proposes; nothing changes until you apply`);
-      afterCardWrite(t);
-      return true;
-    },
+    run: () => askRefinement(t, box.value),
   });
   wireLive(t);
+}
+
+/* Save a comment, starting nothing: the inline composer and the panel's. */
+async function saveComment(t, body) {
+  const data = await postCard('/api/card/comment', { file: t.file, stage: t.stage, body });
+  if (!data) return false;
+  S.commentDraft[t.file] = '';
+  savePanel();
+  toast(`comment ${data.comment.id} saved` +
+        (data.comment.committed ? '' : ' — written to the card, not committed'));
+  afterCardWrite(t);
+  return true;
+}
+
+/* Save the text as a comment and ask for one refinement of it. The request
+   identity is kept with the card until an answer arrives (and in the
+   panel's slot), so a resend after a lost reply is the same request. */
+async function askRefinement(t, text) {
+  const key = S.refineKey[t.file] = S.refineKey[t.file] || newRequestKey();
+  savePanel();
+  const data = await postCard('/api/card/refine',
+    { file: t.file, stage: t.stage, text, request: key });
+  if (!data) return false;
+  S.commentDraft[t.file] = '';
+  delete S.refineKey[t.file];
+  savePanel();
+  toast(data.duplicate ? 'that refinement was already asked for'
+                       : `${data.job.name || 'an agent'} is refining ${t.file} — it proposes; nothing changes until you apply`);
+  afterCardWrite(t);
+  return true;
+}
+
+/* ── card refinement in the shared panel (task 206) ─────────────────────
+
+   The same discussion, comment → propose → Apply/Discard contract and
+   routes as the Brief's own Discussion, drawn in the conversation panel
+   about one card. The panel's composer and the Brief's share the unsent
+   text and the request identity, and every row's buttons are wired by
+   `wireRows`, so the two cannot act differently. Add comment starts
+   nothing; Update card with agent is armed and asks for one proposal;
+   only an armed Apply changes the brief. The card's history — comments,
+   decisions, a review's link, attribution — is read from the card itself
+   (`/api/card/discussion`), so it survives a reload and an upgrade. */
+const REFINE = purpose('card-refine');
+
+function boardTask(file) {
+  return (S.state?.board.stages || []).flatMap(s => s.tasks).find(x => x.file === file) || null;
+}
+
+function refineBody(s) {
+  const t = boardTask(s.target.card);
+  if (!t) {
+    return `<p class="ap-note" role="status">This card is not on the board now — archived, renamed or on another board. ` +
+      `Its discussion and decisions stay in the card’s own history.</p>`;
+  }
+  loadDiscussion(t);
+  const c = (S.disc[t.file] || {}).data;
+  const cannot = !c || !!c.blocked || !c.refine.ready;
+  const review = s.target.review;
+  const ref = cardId(t, S.state) || t.file;
+  return `<section class="discussion ap-refine" data-pcard="${esc(t.file)}" aria-label="Card refinement">` +
+    `<p class="ap-note">The brief is the requirement; this conversation is the card’s history. ` +
+    `<a href="/cards/${encodeURIComponent(ref)}?tab=brief" data-route>Open the brief</a>` +
+    (review ? ` · <a href="/cards/${encodeURIComponent(ref)}?tab=reviews&amp;review=${encodeURIComponent(review)}" data-route>the relevance review</a>` : '') +
+    `</p><div class="ap-disc">${discussionLive(t)}</div>` +
+    `<div class="composer">` +
+    `<label for="ap-commentbox" class="ap-label">Comment or instruction</label>` +
+    `<textarea id="ap-commentbox" rows="3" data-pfile="${esc(t.file)}">${esc(S.commentDraft[t.file] || '')}</textarea>` +
+    `<div class="racts"><button type="button" class="dact" data-pref="comment">Add comment</button>` +
+    `<button type="button" class="dact" data-pref="refine"${cannot ? ' disabled' : ''}>` +
+    `${actLabel('✎ Update card with agent', 'click again — asks an agent', 'asking…')}</button></div>` +
+    `<p class="dnote">Add comment only saves it. Update card with agent also asks for one proposed brief; ` +
+    `it implements nothing, and the brief changes only when you apply it.</p></div>` +
+    limitsHtml(REFINE) + `</section>`;
+}
+
+function wireRefinePanel(el) {
+  el.addEventListener('input', (e) => {
+    const box = e.target;
+    if (box.id !== 'ap-commentbox' || !box.dataset.pfile) return;
+    S.commentDraft[box.dataset.pfile] = box.value;
+    // a different text is a different request; the same text resent is not
+    delete S.refineKey[box.dataset.pfile];
+  });
+}
+
+function refinePainted(el, s) {
+  const root = el.querySelector('.ap-refine');
+  const t = root && boardTask(root.dataset.pcard);
+  if (!t) return;
+  const disc = root.querySelector('.ap-disc');
+  if (disc) wireRows(disc, t);
+  const text = () => (el.querySelector('#ap-commentbox') || {}).value || '';
+  const add = root.querySelector('[data-pref="comment"]');
+  if (add) add.addEventListener('click', async () => { if (await saveComment(t, text())) renderPanel(true); });
+  const ask = root.querySelector('[data-pref="refine"]');
+  if (ask) wireAction(ask, `${t.file}::refine-new`, { label: 'Update card with agent', confirm: true,
+    run: async () => { const ok = await askRefinement(t, text()); if (ok) renderPanel(true); return ok; } });
+}
+
+function registerRefineAgent() {
+  registerAgent('refine', {
+    label: 'Card refinement',
+    capability: REFINE.capability,
+    key: (t) => `refine:${t.card}`,
+    create: () => ({}),
+    about: (s) => {
+      const t = boardTask(s.target.card);
+      return t ? `${t.number ? '#' + parseInt(t.number, 10) + ' ' : ''}${t.title || t.file}` : s.target.card;
+    },
+    body: refineBody,
+    opened: (s) => { const t = boardTask(s.target.card); if (t) loadDiscussion(t, true); },
+    // the unsent text and the request identity this tab keeps for the card
+    persist: (s) => ({ text: S.commentDraft[s.target.card] || '', request: S.refineKey[s.target.card] || null }),
+    revive: (d, target) => {
+      if (!target || typeof target.card !== 'string') return null;
+      if (d.text && !S.commentDraft[target.card]) S.commentDraft[target.card] = String(d.text);
+      if (d.request && !S.refineKey[target.card]) S.refineKey[target.card] = String(d.request);
+      return {};
+    },
+    painted: refinePainted,
+    wire: wireRefinePanel,
+  });
+}
+
+/* The entry point a card's Discussion and a review's composer carry. */
+function refinePanelButton(t, review) {
+  const target = review ? { card: t.file, review } : { card: t.file };
+  return `<button type="button" class="dact ap-open"${askAttrs('refine', target)}>Open in conversation panel</button>`;
 }
 
 /* Every comment row's job buttons — in the Brief's discussion and in each
@@ -273,8 +392,13 @@ function wireDiscussion(t) {
 function wireLive(t) {
   const roots = [$('#disc-live'), ...document.querySelectorAll('#drawerbody .rvthread')]
     .filter(Boolean);
-  for (const root of roots) wireRows(root);
-  function wireRows(root) {
+  for (const root of roots) wireRows(root, t);
+}
+
+/* One root's comment rows — the Brief's discussion, a review's thread, or
+   the shared panel's conversation (task 206): the same buttons, the same
+   routes and the same armed windows wherever the row is drawn. */
+function wireRows(root, t) {
   root.querySelectorAll('[data-goreview]').forEach(btn =>
     btn.addEventListener('click', () => openReview(t, btn.dataset.goreview)));
   root.querySelectorAll('.dentry.comment').forEach(row => {
@@ -313,7 +437,6 @@ function wireLive(t) {
       if (acts[act]) wireAction(btn, key, acts[act]);
     });
   });
-  }
 }
 
 function renderDiscussion(t) {
@@ -448,7 +571,7 @@ function signalsBlock(t) {
 export {
   afterCardWrite, commentRowHtml, decisionRowHtml, diffHtml, discStamp,
   DISCUSSION_SECTION, discussionLive, discussionPanel, JOB_WORD, jobHtml,
-  jobsByComment, loadDiscussion, newRequestKey, postCard, renderDiscussion,
-  REVIEW_WORD, reviewRef, reviewSignals, signalsBlock, wireDiscussion,
-  wireLive, withoutDiscussion
+  askRefinement, jobsByComment, loadDiscussion, newRequestKey, postCard, refinePanelButton,
+  registerRefineAgent, renderDiscussion, REVIEW_WORD, reviewRef, reviewSignals, saveComment,
+  signalsBlock, wireDiscussion, wireLive, wireRows, withoutDiscussion
 };
