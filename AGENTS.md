@@ -9685,9 +9685,13 @@ the installed CLI with a real model answers well is the opt-in, billable
 One right-hand conversation panel (task 205, `web/lib/panel.js`) holds
 every conversation a person has with an agent on this page: the
 Orchestrator's questions ("Asking the orchestrator") and the Brain
-Agent's single-entry drafts ("Drafting with the Brain Agent"). It is a
-presentation shell over the routes those already own — `/api/ask*` and
-`/api/brain/draft*` — with no agent, job, store or route of its own.
+Agent's single-entry drafts ("Drafting with the Brain Agent") — and,
+since task 206, card refinement, the Brain's seed and evaluation drafts,
+the reconciliation queue and implementation, repair and review runs to
+inspect (see "Every agent purpose, and what it supports", below). It is a
+presentation shell over the routes those already own — `/api/ask*`,
+`/api/brain/draft*`, `/api/card/discussion` and `/api/card/refine*`,
+`/api/progress` — with no agent, job, store or route of its own.
 
 **Where it opens, and about what.**
 
@@ -9753,9 +9757,86 @@ be read at once. Its repaint holds while a person types or presses in
 it, keeps the caret, and follows a new reply only for a reader already
 at the end of the conversation.
 
-**Not in this version:** card refinement, work and review runs and the
-background attention inbox (cards 206 and 207), and anchored comments
-and per-change navigation of Brain edits (phase 208).
+#### Every agent purpose, and what it supports
+
+Since task 206 every agent purpose this board ships meets the same panel,
+and `web/lib/agentpurposes.js` is the one matrix that says how — read by
+the adapters, the page and the tests, so a purpose cannot quietly gain a
+composer it does not have. Standardizing is presentation, not authority:
+no purpose gains a route, a grant or an action by it. The common pieces
+(`web/lib/agentshell.js`) own the layout and status words — **What you
+can do here**, progress as reported apart from tool activity and the
+observed process, the transcript, and the link to a workspace — and each
+purpose's adapter owns its truthful actions and identities.
+
+| purpose | in the panel | follow-up | cancel | live reporting |
+| --- | --- | --- | --- | --- |
+| Orchestrator question | a conversation (`orch`) | Ask follow-up | Cancel this question | no — the run is observed |
+| Brain Agent draft | a conversation (`brain`) | Continue: answers or a revision | Cancel a round; Discard | bench's observations |
+| Brain seed draft | its transcript and progress (`brainjob`); **Open the Seed Brain workspace** | answers and a redraft, in the workspace | in the workspace | bench's observations |
+| Brain classification evaluation | its transcript and progress (`brainjob`); **Open Evaluate classifications** | answers, in the workspace | in the workspace | bench's observations |
+| Automatic classification | observed activity (`reconcile`) | **not supported** — nobody converses with the queue | the queue's own Cancel, Retry, Rebuild on the Brain | each entry's queue state |
+| Card refinement | a conversation (`refine`) | another comment with Update card with agent | Cancel a running refinement | no — the refinement is observed |
+| Update card from a relevance review | the same conversation, linked to the review | another comment on the review | Cancel | no |
+| Implementation run | a run to inspect (`run`) | **not supported** — the card's next action continues the work | ‖ hold on the card | agent-reported, where the harness gives a channel |
+| PR repair run | a run to inspect (`run`) | **not supported** — ↻ act on PR asks for another | ‖ hold on the card | agent-reported |
+| PR review run | a run to inspect (`run`) | **not supported** — ◔ review PR asks for a new review | ‖ hold on the card | agent-reported |
+| Relevance review run | a run to inspect (`run`) | **not supported** — comment on it, or update the card from it | ‖ hold on the card | agent-reported |
+| Orchestrator reasoning and recovery | not a conversation: Orchestrator → Decisions and Recovery | an owner question is answered there | pause the scope, or mark an incident handled | observed |
+
+**Where each opens.** Card refinement: **Open in conversation panel** in
+a card's Discussion (Brief) and under each relevance review's composer.
+A run: **Inspect this run** beside the Overview's Progress fact, and
+**Inspect in panel** in Focus and in a session's header in Sessions. A
+seed or evaluation draft: **Follow in the conversation panel** in the
+draft's own section. The queue: **Observe in the conversation panel** in
+Automatic classification. Every address that opened them before opens
+what it always did (`/cards/<card>?tab=brief`, `…?tab=reviews&review=<id>`,
+`/focus/<session>`, `/sessions/<session>`, `/brain/seed`, `/brain`).
+
+**Card refinement in the panel** is the Discussion's own contract, drawn
+again: the same comments, decisions and proposals read from the card
+(`/api/card/discussion`), the same routes, and the same buttons wired by
+one function, so the panel and the Brief cannot act differently. **Add
+comment** saves and starts nothing; **Update card with agent** is armed
+and asks for one proposal; a proposal changes nothing; only an armed
+**Apply** changes the brief, and **Discard** keeps it. The panel's
+composer and the Brief's share the unsent text and the request identity,
+kept with the slot, so a reload or a resend after a lost reply is the
+same request. A relevance review stays exactly as it was filed; its
+comment and decision links and every attribution are the card's history,
+so they survive an upgrade and a re-open.
+
+**A run inspected** shows who it is (its name, id, model, purpose and
+card), its progress exactly as Focus draws it — agent-reported, apart
+from the last tool activity and the process bench observed — any
+failure's tail, the report it filed on the card, and the exact records:
+Focus, its session, the card, the review at its own address on the card
+and in the Brain, and each evidence record the run named, as bench reads
+that record now. The report is matched by the run identity bench wrote
+under the report's heading when it filed it (`acceptance.reports` returns
+it as `agent`); a report filed before that is never claimed for a run.
+There is no composer: a coding run takes no follow-up, and the panel says
+which existing control is the supported next step. Inspection relaunches
+nothing and writes nothing.
+
+**A seed or evaluation draft** shows its observed round, its transcript
+and progress, and any questions waiting — and a link to its workspace,
+because source approval, the frozen approval digest, the private draft,
+the section or proposal review and the all-or-none Apply keep their
+existing safety semantics there. The panel draws no answer, review or
+Apply control for them. **The queue** is shown as observed activity:
+evaluations the reconciliation policy launched, not the reader's.
+
+**Typing is never a command.** No composer in any purpose starts or stops
+work, runs a check, or changes a merge rule, a budget, an agreement or a
+grant; the only submissions are the armed, existing ones each purpose
+already had.
+
+**Not in this version:** the background attention inbox (card 207), and
+anchored comments and per-change navigation of Brain edits (phase 208).
+Live steering of a running coding job is not supported and is not
+planned by this phase.
 
 ### The Orchestrator view
 

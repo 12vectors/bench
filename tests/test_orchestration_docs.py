@@ -43,7 +43,10 @@ PAGES = {
                                   "Where replies are kept", "Asking needs no orchestration authority"),
     # task 205: the panel both agents talk in
     "/concepts/agent-conversation/": ("A conversation follows its target, never the page",
-                                      "Nothing starts by itself", "launches at most one run"),
+                                      "Nothing starts by itself", "launches at most one run",
+                                      # task 206: every purpose, and its limits
+                                      "Every agent purpose, and what it supports",
+                                      "Typing is never a command", "A run inspected"),
     "/concepts/orchestrator-view/": ("Nine sections",
                                      # task 184
                                      "The decision trace: why it acted",
