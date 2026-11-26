@@ -2089,6 +2089,12 @@ function composerHtml() {
 function progressHtml(d) {
   const p = d.progress || {};
   const tool = p.toolActivity;
+  // nothing reported is said as that, never as "nothing remaining" (task 205)
+  if (!p.doing && !p.blocked && !(p.done || []).length && !(p.remaining || []).length) {
+    return '<div class="b-progress" aria-live="polite"><p class="b-note">No progress reported for this request' +
+      (tool ? ` · last tool activity ${tool.last ? esc(new Date(tool.last * 1000).toLocaleTimeString()) : 'none yet'}` +
+        ' — activity, not progress' : '') + '.</p></div>';
+  }
   return '<div class="b-progress" aria-live="polite">' +
     (p.doing ? `<p><strong>Now:</strong> ${esc(p.doing)}</p>` : '') +
     (p.blocked ? `<p class="b-warn"><strong>Waiting on:</strong> ${esc(p.blocked)}</p>` : '') +
