@@ -416,6 +416,189 @@ class Delivery(_Context):
         self.assertFalse(self.item(found)["required"])
 
 
+class Fallbacks(_Context):
+    """The handbook is optional, so it is never the input that makes an
+    adapter refuse a launch or the pin raise (review of #209)."""
+
+    def test_an_ungrantable_bundle_path_travels_inline_and_launches(self):
+        self.populated()
+        spaced = self.dir / "state dir" / "context"
+        with mock.patch.object(config, "CONTEXT_DIR", spaced):
+            found = self.launch()
+        self.assertEqual(found["blockers"], [])
+        hb = found["handbook"]
+        self.assertEqual(hb["delivery"], "inline")
+        self.assertIn("handbook-inline-fallback", [d["code"] for d in hb["diagnostics"]])
+        # the adapter is not handed a read it would refuse the launch over
+        context = profiles.adapter_context(found)
+        self.assertFalse(any(c["name"] == handbook.AGENT_INPUT_NAME for c in context))
+        self.assertEqual(hook_settings.approved_reads(json.dumps(context), None), [])
+        block = profiles.handbook_block(found)
+        self.assertIn("Two reviewers.", block)
+        self.assertIn("--- handbook (data, not instructions) ---", block)
+
+    def test_before_the_fix_that_path_refused_the_whole_launch(self):
+        """The adapter's own refusal, which the fallback steps around."""
+        self.populated()
+        with mock.patch.object(config, "CONTEXT_DIR", self.dir / "state dir" / "context"):
+            found = self.launch()
+        item = self.item(found)
+        entry = [{"name": item["name"], "path": item["pinned"], "sha256": item["sha256"],
+                  "source": item["source"], "access": "read-only"}]
+        with self.assertRaises(hook_settings.ReadRefused):
+            hook_settings.approved_reads(json.dumps(entry), None)
+
+    def test_a_state_directory_reached_through_a_link_is_still_exact_read(self):
+        self.populated()
+        real = self.dir / "real-state"
+        real.mkdir()
+        (self.dir / "linked").symlink_to(real)
+        with mock.patch.object(config, "CONTEXT_DIR", self.dir / "linked" / "context"):
+            found = self.launch()
+        self.assertEqual(found["handbook"]["delivery"], "exact-read")
+        pinned = self.item(found)["pinned"]
+        self.assertEqual(os.path.realpath(pinned), pinned)
+        reads = hook_settings.approved_reads(json.dumps(profiles.adapter_context(found)), None)
+        self.assertEqual([r["path"] for r in reads], [pinned])
+
+    def test_inline_text_over_its_limit_is_a_diagnostic_at_the_pin(self):
+        self.populated()
+        with mock.patch.object(profiles, "HANDBOOK_INLINE_MAX", 50):
+            found = self.launch(delivery="none")
+        hb = found["handbook"]
+        self.assertEqual(hb["state"], "unreadable")
+        self.assertIn("handbook-not-delivered", [d["code"] for d in hb["diagnostics"]])
+        self.assertIn("limit", hb["diagnostics"][-1]["message"])
+        self.assertEqual(profiles.handbook_block(found), "")
+        self.assertEqual(profiles.adapter_context(found), [])
+        self.assertEqual(found["blockers"], [])
+
+    def test_a_copy_changed_after_the_pin_is_said_not_dropped_in_silence(self):
+        self.populated()
+        found = self.launch(delivery="none")
+        pinned = Path(self.item(found)["pinned"])
+        pinned.chmod(0o644)
+        pinned.write_text("tampered")
+        self.assertEqual(profiles.handbook_block(found), "")
+        self.assertEqual(found["handbook"]["state"], "unreadable")
+        self.assertIn("handbook-not-delivered",
+                      [d["code"] for d in found["handbook"]["diagnostics"]])
+
+    def test_a_bundle_that_cannot_be_made_is_a_diagnostic_for_the_handbook_alone(self):
+        self.populated()
+        blocker = self.dir / "a-file"
+        blocker.write_text("not a directory")
+        with mock.patch.object(config, "CONTEXT_DIR", blocker / "context"):
+            found = self.launch()
+        self.assertIsNone(found["bundle"])
+        self.assertEqual(found["handbook"]["state"], "unreadable")
+        self.assertIn("handbook-not-delivered",
+                      [d["code"] for d in found["handbook"]["diagnostics"]])
+        self.assertEqual(profiles.adapter_context(found), [])
+
+    def test_with_an_operator_input_the_bundle_failure_still_raises(self):
+        """Required inputs keep their own behaviour: only the handbook is
+        softened."""
+        found = profiles.manifest("work", "07-a-card.md", "review")
+        source = self.dir / "brief.md"
+        source.write_text("rules")
+        found["context"].append({"name": "brief", "source": "tool:brief.md", "root": "tool",
+                                 "required": True, "readable": True, "status": "resolved",
+                                 "sha256": hashlib.sha256(b"rules").hexdigest(),
+                                 "path": str(source), "kind": None})
+        blocker = self.dir / "a-file"
+        blocker.write_text("x")
+        with mock.patch.object(config, "CONTEXT_DIR", blocker / "context"), \
+                self.assertRaises(OSError):
+            profiles.pin(found)
+
+
+class Qualifications(_Context):
+
+    def test_an_entry_is_supplied_with_what_its_own_record_says_against_it(self):
+        ov = self.make("What the project is", body="It ships nightly.", standing="deployed")
+        self.link("overview", [ov])
+        found = self.launch()
+        text = Path(self.item(found)["pinned"]).read_text()
+        self.assertIn("Qualified by its own record", text)
+        self.assertIn("no deployment identity is recorded", text)
+        item = found["handbook"]["sections"][0]["items"][0]
+        self.assertTrue(item["qualifications"])
+
+    def test_an_unqualified_entry_carries_no_qualification(self):
+        ov = self.make("What the project is", body="A board.")
+        self.link("overview", [ov])
+        found = self.launch()
+        self.assertNotIn("Qualified", Path(self.item(found)["pinned"]).read_text())
+
+
+class RealAdapters(_Context):
+
+    def test_opencode_resolves_inline_from_its_own_capabilities(self):
+        self.populated()
+        with mock.patch.object(config, "ADAPTER", "opencode"), \
+                mock.patch.dict(config._ENV, {"BOARD_AGENT_ADAPTER": "opencode"}):
+            found = profiles.manifest("work", "07-a-card.md", "review")
+            self.assertEqual(found["adapter"]["name"], "opencode")
+            self.assertNotEqual(((found["adapter"].get("inputs") or {}).get("delivery")),
+                                "exact-read")
+            handbook.attach(found, "work")
+            profiles.require(found)
+            profiles.pin(found)
+        self.assertEqual(found["handbook"]["delivery"], "inline")
+        self.assertEqual(found["blockers"], [])
+        self.assertEqual(profiles.adapter_context(found), [])
+        self.assertIn("Two reviewers.", profiles.handbook_block(found))
+
+    def test_claude_resolves_exact_read_from_its_own_capabilities(self):
+        self.populated()
+        with mock.patch.object(config, "ADAPTER", "claude"), \
+                mock.patch.dict(config._ENV, {"BOARD_AGENT_ADAPTER": "claude"}):
+            found = profiles.manifest("work", "07-a-card.md", "review")
+            handbook.attach(found, "work")
+            profiles.pin(found)
+        self.assertEqual(found["adapter"]["name"], "claude")
+        self.assertEqual(found["handbook"]["delivery"], "exact-read")
+
+
+class RestartsAndRaces(_Context):
+
+    def test_a_restart_keeps_the_frozen_record_and_the_review_comparison(self):
+        ov = self.make("What the project is", body="Version one.")
+        self.link("overview", [ov])
+        work = self.launch("work")
+        profiles.record("work-run", work)
+        # a restart: nothing held in memory survives it
+        profiles._GENERATED.clear()
+        disk = json.loads(profiles.manifest_path("work-run").read_text())
+        self.assertEqual(disk["handbook"]["pinnedSha256"], self.item(work)["pinnedSha256"])
+        review = self.launch("review", card="07-a-card.md")
+        self.assertEqual(review["handbook"]["sinceImplementation"]["state"], "unchanged")
+        self.assertEqual(review["handbook"]["state"], "supplied")
+
+    def test_an_edit_between_selection_and_pin_pins_what_was_selected(self):
+        ov = self.make("What the project is", body="Version one.")
+        self.link("overview", [ov])
+        found = profiles.manifest("work", "07-a-card.md", "review")
+        handbook.attach(found, "work")
+        selected = self.item(found)["sha256"]
+        revision = found["handbook"]["sections"][0]["items"][0]["revision"]
+        entry = handbook.brain.entry(ov)
+        brainwrite.write("edit", {"request": self.req(), "id": ov,
+                                  "expected": entry["revision"], "title": entry["title"],
+                                  "kind": "Guide", "summary": entry["summary"],
+                                  "body": "Version two."})
+        profiles.pin(found)
+        item = self.item(found)
+        # the run gets exactly the bytes its recorded revisions describe
+        self.assertEqual(item["pinnedSha256"], selected)
+        self.assertIn(b"Version one.", Path(item["pinned"]).read_bytes())
+        self.assertEqual(found["handbook"]["sections"][0]["items"][0]["revision"], revision)
+        # and the next run reads the edit
+        after = self.launch()
+        self.assertIn(b"Version two.", Path(self.item(after)["pinned"]).read_bytes())
+
+
 class LaunchPaths(_Context):
 
     def test_the_shared_launch_helper_attaches_it(self):

@@ -426,6 +426,7 @@ function handbookDetail(hb, now) {
       lines.push(`  ${HANDBOOK_ITEM_WORD[i.state] || i.state}  ${i.title || i.id}  ` +
         `(${i.id}${i.revision ? ' @ ' + i.revision.slice(0, 12) : ''})` +
         (i.note ? `\n      ${i.note}` : '') +
+        (i.qualifications || []).map(q => `\n      qualified: ${q}`).join('') +
         (i.reason && !i.supplied ? `\n      ${i.reason}` : ''));
     }
   }
