@@ -64,6 +64,57 @@ test('a run is placed by what the board recorded, never guessed', async () => {
   assert.equal(runPurpose(null, { intent: 'act-pr' }).id, 'repair');
   // a run known only from its progress record after a restart
   assert.equal(runPurpose({ id: 'a', replayed: true }, { intent: 'review' }).id, 'review');
+  // a replayed session with no progress record: no intent was recorded,
+  // so none is claimed — never "Implementation run" by default
+  const unknown = runPurpose({ id: 'a', replayed: true }, null);
+  assert.equal(unknown.id, 'run');
+  assert.match(unknown.label, /not recorded/);
+  assert.equal(unknown.followUp.supported, false);
+});
+
+async function registered() {
+  (await load('views/detail/discussion.js')).registerRefineAgent();
+  (await load('views/progress.js')).registerRunAgent();
+}
+
+test('the panel about a relevance review keeps that review, in a slot of its own', async () => {
+  const panel = await load('lib/panel.js');
+  const { S } = await load('app/state.js');
+  board(S);
+  await registered();
+  S.commentDraft['7-x.md::rl-0a1b2c3d4e'] = 'take the scope point';
+  S.commentDraft['7-x.md'] = 'unrelated card note';
+  const s = panel.openAgent('refine', { card: '7-x.md', review: 'rl-0a1b2c3d4e' });
+  assert.equal(s.key, 'refine:7-x.md::rl-0a1b2c3d4e', 'not the card-wide conversation');
+  const body = panelBody(panel, s);
+  assert.match(body, /data-preview="rl-0a1b2c3d4e"/);
+  assert.match(body, /Update card from this review/);
+  assert.match(body, /take the scope point/, 'the review composer’s own unsent text');
+  assert.ok(!body.includes('unrelated card note'), 'never the card-wide draft');
+  S.refineKey['7-x.md::rl-0a1b2c3d4e'] = 'req-r';
+  S.commentKey['7-x.md::rl-0a1b2c3d4e'] = 'req-c';
+  panel.savePanel();
+  const raw = JSON.parse(store.get('bench-agent-panel'));
+  assert.deepEqual(raw.slots['refine:7-x.md::rl-0a1b2c3d4e'].data,
+    { text: 'take the scope point', request: 'req-r', comment: 'req-c' });
+  assert.deepEqual(asked.filter(a => a.method !== 'GET'), [], 'drawing it sent no write');
+});
+
+test('a run’s evidence is linked to its exact record, and a missing card links nowhere', async () => {
+  const panel = await load('lib/panel.js');
+  const { S } = await load('app/state.js');
+  board(S);
+  S.state.progress = { '7-x.md': { agent: 'wren-1', intent: 'work', active: true, lastReport: 1,
+    channel: { state: 'available' }, history: [],
+    current: { doing: 'testing', refs: [{ kind: 'evidence', id: 'ev:verification@0123abcd4567', found: true,
+      check: 'unit', outcome: 'passed', recorded: 'passed', commit: 'abc' }] } } };
+  await registered();
+  const s = panel.openAgent('run', { agent: 'wren-1', card: '7-x.md' });
+  const body = panelBody(panel, s);
+  assert.match(body, /href="\/api\/evidence\/log\?id=ev%3Averification%400123abcd4567"/);
+  S.state.board.stages[0].tasks = [];
+  const gone = panelBody(panel, panel.openAgent('run', { agent: 'wren-1', card: '7-x.md' }));
+  assert.ok(!gone.includes('href="/cards/"'), 'no empty card address');
 });
 
 function board(S) {

@@ -70,6 +70,14 @@ class ReportsNameTheirRun(unittest.TestCase):
     def test_a_legacy_report_names_no_run(self):
         found = acceptance.reports(CARD.format(prov=""))
         self.assertIsNone(found[0]["agent"])
+        self.assertEqual(found[0]["evidence"], [])
+
+    def test_a_filed_report_carries_the_evidence_bench_recorded_and_nothing_else(self):
+        line = acceptance.provenance_line({"agent": "sage-1", "evidence": [
+            "ev:verification@0123abcd4567", "../../state/evidence/x.json", "ev:verification@zz"]})
+        found = acceptance.reports(CARD.format(prov=line + "\n\n"))
+        self.assertEqual(found[0]["evidence"], ["ev:verification@0123abcd4567"],
+                         "an id bench writes, never a path or a malformed id")
 
     def test_a_marker_shaped_line_in_the_report_is_never_read_as_identity(self):
         found = acceptance.reports(CARD.format(prov=""))
@@ -125,9 +133,32 @@ class AdaptersOnlyRead(unittest.TestCase):
         for url in posted:
             self.assertEqual(route_class("POST", url), "browser-mutation", url)
 
-    def test_no_route_was_added_for_the_panel(self):
-        paths = {r.path for r in routes.ROUTES}
-        self.assertFalse([p for p in paths if "panel" in p or "inspect/run" in p])
+    def test_the_panel_adapters_reach_only_routes_that_existed_before(self):
+        # Review finding (task 206): a name check would miss a new route
+        # under any other name. So every `/api/…` address the panel's
+        # adapters name — fetched, posted or linked — is held to this list
+        # of routes that existed before the panel, each with its class.
+        before = {
+            ("GET", "/api/brain/drafts"): "read", ("GET", "/api/brain/reconcile"): "read",
+            ("GET", "/api/progress"): "read", ("GET", "/api/card/acceptance"): "read",
+            ("GET", "/api/card/discussion"): "read", ("GET", "/api/evidence/log"): "read",
+            ("POST", "/api/card/comment"): "browser-mutation",
+            ("POST", "/api/card/refine"): "browser-mutation",
+            ("POST", "/api/card/refine/apply"): "browser-mutation",
+            ("POST", "/api/card/refine/discard"): "browser-mutation",
+            ("POST", "/api/card/refine/cancel"): "browser-mutation",
+        }
+        named = set()
+        texts = [module_text("lib/agentshell.js"), module_text("lib/agentpurposes.js"),
+                 section(module_text("views/progress.js"), "a run, inspected in the shared panel",
+                         "function registerRunAgent"),
+                 module_text("views/detail/discussion.js")]
+        for text in texts:
+            named |= set(re.findall(r"['\"`](/api/[a-z/]+)", text))
+        known = {path for _, path in before}
+        self.assertEqual(sorted(named - known), [], "an address the panel names that is not a known route")
+        for (method, path), klass in before.items():
+            self.assertEqual(route_class(method, path), klass, f"{method} {path}")
 
 
 class TheMatrixIsComplete(unittest.TestCase):

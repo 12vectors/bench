@@ -209,9 +209,20 @@ class SourceInvariants(unittest.TestCase):
     def test_a_refinement_request_carries_a_request_key(self):
         # one asking path for the Brief's composer and the panel's
         self.assertIn("askRefinement(t, box.value)", function("wireDiscussion"))
-        self.assertIn("askRefinement(t, text())", function("refinePainted"))
-        self.assertIn("request: key", function("askRefinement"))
+        self.assertIn("askRefinement(t, text(), review)", function("refinePainted"))
+        self.assertIn("text, request }", function("askRefinement"))
+        self.assertIn("newRequestKey()", function("askRefinement"))
         self.assertIn("newRequestKey()", function("wireRows"))
+
+    def test_the_panel_about_a_relevance_review_keeps_the_review(self):
+        # review finding (task 206): from the panel, a comment and a
+        # refinement about a relevance review are linked to it, as the
+        # review's own composer links them, under the same draft key
+        self.assertIn("payload.review = review", function("askRefinement"))
+        self.assertIn("payload.review = review", function("saveComment"))
+        self.assertIn("saveComment(t, text(), review)", function("refinePainted"))
+        self.assertIn("`${file}::${review}`", function("draftKey"))
+        self.assertIn("const key = `${t.file}::${id}`", function("wireReviews"))
 
     def test_the_drawer_draws_the_brief_without_the_discussion(self):
         # task 81: the Brief section draws the brief alone — the card's

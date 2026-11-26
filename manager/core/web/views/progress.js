@@ -427,6 +427,19 @@ function evidenceRefs(p) {
   return [...seen.values()];
 }
 
+/* One evidence record as an exact link: its scrubbed log, read through
+   the board's own read route (`/api/evidence/log`), in a tab of its own. */
+function evidenceLink(id) {
+  return `<a href="/api/evidence/log?id=${encodeURIComponent(id)}" target="_blank" rel="noopener" ` +
+    `class="mono">${esc(id)}</a>`;
+}
+
+/* The run's named evidence, each as bench reads its record now, with the
+   exact record linked beside it. */
+function runEvidenceRef(ref) {
+  return `<div class="ap-evref">${progressRef(ref)} · ${evidenceLink(ref.id)} <span class="ap-src">its log</span></div>`;
+}
+
 function runBody(s) {
   const { agent: id, card } = s.target;
   const agent = runOf(id);
@@ -465,12 +478,21 @@ function runBody(s) {
     ? `<div class="ap-block" role="alert"><b>The run failed</b>${agent.rc != null ? ` (exit ${esc(String(agent.rc))})` : ''}: ` +
       `<pre class="ap-tail">${esc(agent.failure.excerpt)}</pre></div>` : '';
   const evid = evidenceRefs(p);
-  const evidence = evid.length
-    ? `<section aria-label="Evidence the run named"><h3>Evidence the run named</h3><p class="ap-note">Each as bench reads its record now — ` +
-      `not the run’s word for it.</p><div class="prog"><div class="prefs">${evid.map(progressRef).join('')}</div></div></section>`
+  const named = new Set(evid.map(e => e.id));
+  // the checks bench recorded with the filed report (a PR review's), apart
+  // from what the run named while it worked — each its exact record
+  const filed = ((r && r.evidence) || []).filter(id => !named.has(id));
+  const evidence = (evid.length || filed.length)
+    ? `<section aria-label="Evidence"><h3>Evidence</h3>` +
+      (evid.length ? `<p class="ap-note">The run named these. Each is shown as bench reads its record now — ` +
+        `not the run’s word for it.</p><div class="prog"><div class="prefs">${evid.map(runEvidenceRef).join('')}</div></div>` : '') +
+      (filed.length ? `<p class="ap-note">Recorded by bench with the filed report, as the checks this run asked for.</p>` +
+        `<ul class="ap-evfiled">${filed.map(id => `<li>${evidenceLink(id)}</li>`).join('')}</ul>` : '') +
+      `</section>`
     : `<p class="ap-note">The run named no evidence record. What bench verified for the card is in its ◫ evidence and merge requirements, on the card.</p>`;
   const next = live
-    ? `The run is working. ‖ hold on <a href="/cards/${encodeURIComponent(ref || '')}" data-route>the card</a> is the supported way to stop it.`
+    ? (ref ? `The run is working. ‖ hold on <a href="/cards/${encodeURIComponent(ref)}" data-route>the card</a> is the supported way to stop it.`
+           : `The run is working. ‖ hold on its card is the supported way to stop it; the card is not on this board now.`)
     : `${esc(pur.followUp.how)}${ref ? ` <a href="/cards/${encodeURIComponent(ref)}" data-route>Open the card for its next step.</a>` : ''}`;
   return `<dl class="ap-facts ap-ident">` +
     `<dt>Run</dt><dd>${esc(agent.name || 'Agent')} <span class="mono">${esc(id)}</span>${agent.model ? ` · <span class="mono">${esc(agent.model)}</span>` : ''}</dd>` +

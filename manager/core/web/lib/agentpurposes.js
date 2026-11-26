@@ -85,7 +85,8 @@ const PURPOSES = [
     followUp: { supported: true, how: 'Another comment on the review asks for another bounded refinement.' },
     cancel: { supported: true, how: 'Cancel a refinement while it runs.' },
     reporting: { supported: false, how: 'No live progress channel: the board observes the refinement and its ending.' },
-    entries: ['Update card from this review (a card’s Reviews)'],
+    entries: ['Update card from this review (a card’s Reviews)',
+      'Open in conversation panel, under a relevance review — a conversation linked to that review'],
     legacy: ['/cards/<card>?tab=reviews&review=<review>'], workspace: null,
   },
   {
@@ -141,7 +142,10 @@ function purpose(id) { return PURPOSES.find(p => p.id === id) || null; }
    board cannot place reads as the generic intent, never guessed. */
 function runPurpose(agent, progress) {
   const a = agent || {};
-  const intent = (progress && progress.intent) || (a.repair ? 'act-pr' : a.mode) || 'work';
+  const intent = (progress && progress.intent) || (a.repair ? 'act-pr' : a.mode) || null;
+  // a run known only from a replayed session, with no progress record and
+  // no live registry entry, has no recorded intent: say so, never guess
+  if (!intent) return { ...purpose('implementation'), id: 'run', label: 'Run (its purpose is not recorded on this board)' };
   if (intent === 'act-pr') return purpose('repair');
   if (intent === 'review') {
     if (a.review) return purpose('pr-review');

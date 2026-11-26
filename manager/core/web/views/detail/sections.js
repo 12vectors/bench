@@ -5,7 +5,7 @@ import { fetch, post } from '../../lib/api.js';
 import { $, esc } from '../../lib/dom.js';
 import { wireFolds } from '../../lib/folds.js';
 import { md } from '../../lib/md.js';
-import { askAttrs } from '../../lib/panel.js';
+import { askAttrs, panelOpen, renderPanel } from '../../lib/panel.js';
 import { syncRoute } from '../../lib/nav.js';
 import { cardEntryHtml } from '../../lib/orchwords.js';
 import { cardId, formatRoute, stemOf } from '../../lib/route.js';
@@ -166,7 +166,11 @@ const acceptance = resource({
 function loadAcc(t, force) {
   acceptance.read(t.file, accStamp(t), {
     force, arg: t,
-    done: () => { if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer(); },
+    done: () => {
+      if (S.selected && S.selected.file === t.file && !S.fileView) renderDrawer();
+      // the panel about one relevance review names it from this reading
+      if (panelOpen()) renderPanel('live');
+    },
   });
 }
 
