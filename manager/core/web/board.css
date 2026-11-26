@@ -2484,3 +2484,64 @@
     .tl-row{grid-template-columns:52px 16px minmax(0,1fr)}
     .tl-row .tbody{min-width:0;overflow-wrap:anywhere}
   }
+
+  /* ── the shared agent conversation (task 205) ──────────────────────────
+     One right-hand panel beside whatever page is shown: a flex sibling of
+     the view, so the content it is about stays in view. Wider and full
+     screen are a person's choice; a phone is always full screen, with Close
+     as the way back. Its width is a wish the grip sets, clamped here.    */
+  .agentpanel{flex:none;width:var(--ap-w,420px);max-width:min(60vw,1100px);min-width:320px;min-height:0;
+    display:flex;position:relative;background:var(--canvas);border-left:1px solid var(--border);
+    animation:slidein .18s ease}
+  .agentpanel[hidden]{display:none}
+  body.agent-wide .agentpanel{width:min(760px,70vw);max-width:none}
+  body.agent-full .agentpanel{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:40;border-left:0}
+  /* a card's detail view and the panel can be read side by side */
+  body.agent-open:not(.agent-full) #drawer{right:var(--ap-w,420px)}
+  body.agent-wide:not(.agent-full) #drawer{right:min(760px,70vw)}
+  .ap-grip{width:8px;flex:none;cursor:ew-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
+  .ap-grip::before{content:"";width:3px;height:44px;border-radius:99px;background:var(--border)}
+  .ap-grip:hover::before{background:var(--accent)}
+  body.agent-full .ap-grip{display:none}
+  .ap-inner{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+  .ap-head{display:flex;gap:8px;align-items:flex-start;padding:12px 14px 6px 6px}
+  .ap-who{flex:1;min-width:0}
+  .ap-who h2{margin:0;font-size:15px;font-weight:600}
+  .ap-who h2:focus{outline:none}
+  .ap-cap{margin:2px 0 0;color:var(--muted);font-size:12.5px}
+  .ap-ctl{display:flex;gap:4px;flex:none}
+  .ap-icon{min-width:36px;min-height:36px;padding:4px 8px;font-size:15px;line-height:1;color:var(--text)}
+  .ap-icon[aria-pressed="true"]{border-color:var(--accent)}
+  .ap-about{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:0 14px 10px 6px;border-bottom:1px solid var(--border)}
+  .ap-chip{display:inline-flex;gap:6px;align-items:baseline;padding:3px 10px;border:1px solid var(--border);border-radius:99px;
+    background:var(--surface);color:var(--text);max-width:100%;overflow-wrap:anywhere}
+  .ap-chiplab{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .ap-link{border:0;padding:4px 2px;min-height:32px;color:var(--accent);background:none;text-decoration:underline;text-underline-offset:3px}
+  .ap-link:hover{color:var(--text)}
+  .ap-convs select{max-width:240px}
+  .ap-change{display:flex;flex-direction:column;gap:6px;padding:10px 14px 12px 6px;border-bottom:1px solid var(--border)}
+  .ap-change select{width:100%}
+  .ap-note,.ap-empty{margin:0;color:var(--muted);font-size:12.5px}
+  .ap-body{flex:1;overflow:auto;padding:12px 14px 18px 6px;min-height:0;overflow-wrap:anywhere}
+  .ap-body .o-askthread{grid-template-columns:minmax(0,1fr)}
+  .ap-body .o-askrail{border-left:0;border-top:1px solid var(--border);padding:10px 0 0}
+  .ap-body .o-answer{grid-template-columns:minmax(0,1fr)}
+  .ap-body .o-answer dt{font-weight:600}
+  .ap-body .b-panel{padding:12px}
+  .ap-body .b-cols{grid-template-columns:minmax(0,1fr)}
+  .ap-block{color:var(--alarm)}
+  .ap-refs{border:1px dashed var(--accent);border-radius:8px;padding:6px 10px;margin:6px 0}
+  .ap-refs p{margin:4px 0}
+  .ap-tech{margin-top:10px}
+  .ap-tech summary{cursor:pointer;color:var(--muted);min-height:32px;display:flex;align-items:center}
+  .ap-observed{margin:6px 0}
+  .b-transcript h3{margin:10px 0 4px;font-size:13px}
+  .o-askhistory{margin-top:16px}
+  .o-askhistory h2{margin:0 0 8px}
+  .bn-act .bn-ask{color:var(--accent)}
+  @media (max-width:760px){
+    .agentpanel{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:40;border-left:0}
+    .ap-grip{display:none}
+    .ap-head,.ap-about,.ap-body,.ap-change{padding-left:12px}
+    .ap-icon{min-width:44px;min-height:44px}
+  }

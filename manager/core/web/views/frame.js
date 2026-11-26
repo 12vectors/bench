@@ -5,6 +5,7 @@ import { $, esc } from '../lib/dom.js';
 import { forgetViewScroll } from '../lib/keep.js';
 import { setHtml } from '../lib/keyed.js';
 import { syncRoute } from '../lib/nav.js';
+import { renderPanel } from '../lib/panel.js';
 import { CARD_VIEWS, formatRoute } from '../lib/route.js';
 import { renderBar, renderLog } from './activity.js';
 import { phaseLabel, renderBoard } from './board.js';
@@ -311,6 +312,9 @@ function render() {
   else renderCards();
   renderBar();
   renderLog();
+  // the shared agent conversation sits beside every view (task 205): it
+  // holds its own paint while a person types or presses in it
+  renderPanel();
 }
 
 /* Two views draw cards, and they draw the same cards: the Board's columns

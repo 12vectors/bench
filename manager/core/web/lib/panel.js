@@ -108,7 +108,10 @@ function closePanel() {
   const back = P.back;
   P.back = null;
   if (back && back.isConnected && typeof back.focus === 'function') back.focus();
-  else ($('main .view.on h1, main .view.on [tabindex="-1"]') || document.body).focus?.();
+  else {
+    const to = $('main .view.on h1, main .view.on [tabindex="-1"]') || document.body;
+    if (to && typeof to.focus === 'function') to.focus();
+  }
 }
 
 function setSize(size) {
@@ -210,9 +213,9 @@ function headerHtml(s, ad) {
 /* Paint the panel. Held while a person types in it, unless `force`
    (their own act) — the caret is kept either way. */
 function renderPanel(force) {
-  const el = P.el || (typeof document !== 'undefined' ? $('#agentpanel') : null);
+  // nothing is drawn before the composition root mounts it (the board read)
+  const el = P.el;
   if (!el) return;
-  P.el = el;
   const s = activeSlot();
   const ad = s && adapters[s.purpose];
   const open = !!(P.open && s && ad);
@@ -271,10 +274,12 @@ function focusIn(where) {
    page-wide "ask about this" entry points (`data-agent-ask`), which may
    sit anywhere — a card's Overview, the Board's bar, the Orchestrator. */
 function mountPanel(el) {
-  if (!el || P.el === el) return;
+  if (!el || P.el) return;
   P.el = el;
   const saved = parseInt((typeof localStorage !== 'undefined' && localStorage.getItem(WIDTH)) || '', 10);
-  if (saved) el.style.setProperty('--ap-w', `${Math.max(320, Math.min(saved, 1100))}px`);
+  // on the root, so a card's detail view beside the panel reads it too
+  const root = document.documentElement;
+  if (saved) root.style.setProperty('--ap-w', `${Math.max(320, Math.min(saved, 1100))}px`);
   el.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('[data-pact]');
     if (!b || !el.contains(b) || b.tagName === 'SELECT') return;
@@ -346,7 +351,7 @@ function mountPanel(el) {
   document.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const w = Math.max(320, Math.min(drag.w + (drag.x - e.clientX), Math.round(innerWidth * 0.8)));
-    el.style.setProperty('--ap-w', `${w}px`);
+    root.style.setProperty('--ap-w', `${w}px`);
   });
   const end = () => {
     if (!drag) return;

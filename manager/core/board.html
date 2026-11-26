@@ -101,6 +101,9 @@
     <span class="bn-lab">Board activity</span>
     <a href="/sessions" data-view="flight">All sessions</a>
     <a href="/focus" data-view="focus">Focus</a>
+    <!-- a question about the whole board, in the shared panel (task 205) -->
+    <a href="/orchestrator/ask" class="bn-ask" data-agent-ask="orch"
+       data-agent-target='{"kind":"board"}'>Ask orchestrator</a>
   </div>
 </nav>
 
@@ -178,6 +181,11 @@
       </div>
     </div>
   </div>
+  <!-- the shared agent conversation (task 205): one right-hand panel beside
+       whatever page is shown, for the Orchestrator's questions and the
+       Brain Agent's drafts. Its conversation follows its target, never the
+       page; opening, reading and closing it start and stop nothing. -->
+  <aside id="agentpanel" class="agentpanel" aria-label="Agent conversation" hidden></aside>
 </main>
 
 <div id="logpanel">
