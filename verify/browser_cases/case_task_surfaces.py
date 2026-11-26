@@ -19,8 +19,25 @@ right-hand panel. This case drives the purposes task 206 moves into it:
   entry points, each shows its observed state and the workspace its
   approval, review and Apply stay in; neither draws an answer or Apply
   control.
+- **Refinement from a relevance review.** The review's **Open in
+  conversation panel** opens a conversation of its own about that review:
+  its Comment is linked to the review, its armed **Update card from this
+  review** asks a refinement from it, Discard keeps the brief and the
+  filed review is never changed. A reload and a board restart give the
+  conversation and its unsent text back and run nothing again; the
+  card-wide conversation is another slot.
+- **Ended runs.** A PR review run and a PR repair run that have ended are
+  inspected from Sessions: the review's filed report matched by the run
+  identity bench recorded, the review linked on the card and in the
+  Brain, and the evidence linked to its exact record.
+- **An evaluation draft** opens with its workspace (the Brain), and the
+  queue opens from Automatic classification's own entry point.
 - Escape closes the panel and gives focus back; both themes at 1440 and
   390 px (full screen); opening and reading launch nothing.
+
+Not covered here: the vendored, source-hosted and external layouts (the
+fixture is the standard disposable one), and an SSE reconnect without a
+reload.
 
 The vendor CLI is the backend's stub (a refinement prints only what this
 case wrote to `refine_reply`), the run is case_progress's fixture laid
@@ -334,16 +351,263 @@ class BrainBatchAndQueue(unittest.TestCase):
         self.assertFalse(b.eval("!!document.querySelector('#agentpanel textarea, #agentpanel [data-sact]')"),
                          "answers, review and Apply stay in the workspace")
         shot("agent-seed-draft-1440-dark")
-        # the reconciliation queue, observed: its own reading, not configured here
-        ask_button(b, "reconcile", {"kind": "reconcile"})
+        # an evaluation draft: the same read-only shell, its workspace the Brain
+        evaluation = dict(draft, id="bd-case206e", mode="evaluate", status="ready",
+                          conversation=[{"who": "you", "kind": "request", "text": "Evaluate two entries", "at": "10:00"}],
+                          questions=[], evaluate={"entries": ["e-a", "e-b"]})
+        b.eval("(() => { const prev = window.fetch; "
+               f"const d = {json.dumps(evaluation)}; "
+               "window.fetch = async (url, opts) => String(url).startsWith('/api/brain/drafts?id=bd-case206e') "
+               "? new Response(JSON.stringify({draft: d}), {status: 200}) : prev(url, opts); return true; })()")
+        ask_button(b, "brainjob", {"draft": "bd-case206e", "mode": "evaluate"})
+        if not b.wait(f"{OPEN} && document.querySelector('#agentpanel .ap-transcript') && "
+                      "/Evaluate two entries/.test(document.querySelector('#agentpanel').textContent)", 10):
+            raise bv.CheckFailed("the evaluation draft never opened in the panel: " + panel_text(b)[:300])
+        self.assertEqual("/brain", b.eval("document.querySelector('#agentpanel .ap-wsbtn').getAttribute('href')"),
+                         "its review and Apply stay in Evaluate classifications")
+        self.assertFalse(b.eval("!!document.querySelector('#agentpanel textarea, #agentpanel [data-evact]')"),
+                         "no answer, review or Apply control in the panel")
+        # the reconciliation queue, observed — opened from its own entry
+        # point in Automatic classification, not a synthetic button
+        close(b)
+        b.goto("/brain")
+        if not b.wait("!!document.querySelector('button.ap-open[data-agent-ask=\"reconcile\"]')", 20):
+            raise bv.CheckFailed("Automatic classification offered no Observe in the conversation panel")
+        b.eval("document.querySelector('button.ap-open[data-agent-ask=\"reconcile\"]').click()")
         if not b.wait(f"{OPEN} && /Not configured|Off|On/.test(document.querySelector('#agentpanel .ap-body').textContent)", 10):
             raise bv.CheckFailed("the queue never read: " + panel_text(b)[:300])
         text = panel_text(b)
         self.assertIn("launched by the reconciliation policy, not by you", text)
         self.assertIn("What you can do here", text, "its limits are said")
         self.assertFalse(b.eval("!!document.querySelector('#agentpanel textarea')"))
-        # both conversations are kept, switchable
-        self.assertTrue(b.eval("!!document.querySelector('#agentpanel [data-pact=\"switch\"]')"))
+        shot("agent-reconcile-observed-1440-dark")
+
+
+RL_HEAD = "## Relevance review — 2026-11-20 10:00 (Hazel)"
+PR_HEAD = "## PR review at 0123abcd4567 — 2026-11-21 09:00 (Sage)"
+EVIDENCE = "ev:verification@0123abcd4567"
+REVIEWED = (CARD + "\n---\n\n" + RL_HEAD + "\n\n"
+            '<!-- bench:review {"agent": "hazel-rl1", "kind": "relevance", "reviewer": "Hazel", "v": 1} -->\n\n'
+            "RELEVANCE REVIEW: Needs rewrite\n\nThe scope is said twice; say it once.\n\n"
+            + PR_HEAD + "\n\n"
+            '<!-- bench:review {"agent": "sage-pr1", "evidence": ["' + EVIDENCE + '"], "kind": "pr", '
+            '"reviewer": "Sage", "v": 1} -->\n\n'
+            "PR REVIEW: APPROVE\n\nThe export writes one scope.\n")
+
+
+def rl_id() -> str:
+    import hashlib
+    return "rl-" + hashlib.sha256(RL_HEAD.strip().encode("utf-8")).hexdigest()[:10]
+
+
+def rv_id() -> str:
+    import hashlib
+    return "rv-" + hashlib.sha256(PR_HEAD.strip().encode("utf-8")).hexdigest()[:10]
+
+
+class ReviewRefinementAndEndedRuns(unittest.TestCase):
+    """A relevance review's conversation in the panel keeps that review —
+    its comments are linked to it and its refinement is asked from it —
+    across a reload and a board restart; and runs that have ended, a PR
+    review and a PR repair, are inspected from their real entry points
+    (Sessions) with their report, review and evidence linked exactly."""
+
+    def setUp(self):
+        backend = S["backend"]
+        self.card = backend.work / "tasks" / "to-do" / FILE
+        self.card.write_text(REVIEWED, encoding="utf-8")
+        self.addCleanup(self.card.unlink, True)
+        self.addCleanup(backend.refine_reply.unlink, True)
+        self.addCleanup(lambda: close(S["browser"]))
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            code, body = backend.get("/api/state")
+            text = body.decode("utf-8", "replace") if isinstance(body, bytes) else body
+            if code == 200 and FILE in text:
+                break
+            time.sleep(0.3)
+
+    def tearDown(self):
+        S["browser"].eval("(() => { if (window.__realFetch) window.fetch = window.__realFetch; return true; })()")
+
+    def brief(self) -> str:
+        return self.card.read_text(encoding="utf-8").split("\n---\n")[0]
+
+    def discussion(self) -> dict:
+        code, body = S["backend"].get(f"/api/card/discussion?file={FILE}&stage=to-do")
+        self.assertEqual(code, 200, body[:300])
+        return json.loads(body)
+
+    def open_review_panel(self, b):
+        b.goto("/cards/46?tab=reviews")
+        sel = f".rvcompose[data-review='{rl_id()}'] .ap-open"
+        if not b.wait(f"!!document.querySelector(\"{sel}\")", 15):
+            raise bv.CheckFailed("the relevance review offered no Open in conversation panel")
+        b.eval(f"document.querySelector(\"{sel}\").click()")
+        if not b.wait(f"{OPEN} && document.querySelector('#agentpanel .ap-refine[data-preview=\"{rl_id()}\"]') "
+                      "&& document.querySelector('#ap-commentbox')", 10):
+            raise bv.CheckFailed("the panel did not open about the review: " + panel_text(b)[:300])
+
+    def test_1_a_review_conversation_keeps_its_review_across_reload_and_restart(self):
+        b = S["browser"]
+        b.viewport(1440, 900)
+        b.goto("/board")
+        b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15)
+        theme(b, "dark")
+        b.eval("(() => { try { sessionStorage.removeItem('bench-agent-panel'); } catch (e) {} return true; })()")
+        brief_before = self.brief()
+        before_jobs = jobs()
+        self.open_review_panel(b)
+        b.wait("/Hazel/.test(document.querySelector('#agentpanel').textContent)", 10)
+        text = panel_text(b)
+        self.assertIn("About relevance review", text)
+        self.assertIn("Update card from this review", text)
+        self.assertIn("Hazel", text, "the review is named as the card holds it")
+        # — Comment: saved, linked to the review, nothing launched —
+        b.eval("(() => { const f = document.querySelector('#ap-commentbox'); f.focus(); "
+               "document.execCommand('insertText', false, 'Keep the CSV point'); return true; })()")
+        b.click("#agentpanel [data-pref='comment']")
+        if not b.wait("[...document.querySelectorAll('#agentpanel .dentry.comment')]"
+                      ".some(r => r.innerText.includes('Keep the CSV point'))", 10):
+            raise bv.CheckFailed("the review comment never appeared in the panel: " + panel_text(b)[:300])
+        time.sleep(1)
+        self.assertEqual(before_jobs, jobs(), "a comment launched nothing")
+        mine = [e for e in self.discussion()["entries"] if e["kind"] == "comment"]
+        self.assertEqual([e.get("review") for e in mine], [rl_id()], "the comment is linked to the review")
+        # — Update card from this review: armed, the review goes with it —
+        S["backend"].refine_reply.write_text(proposal(NEW_BRIEF), encoding="utf-8")
+        b.eval("(() => { const f = document.querySelector('#ap-commentbox'); f.focus(); "
+               "document.execCommand('insertText', false, 'Apply this review'); return true; })()")
+        b.click("#agentpanel [data-pref='refine']")
+        if not b.wait("document.querySelector('#agentpanel [data-pref=\"refine\"]').classList.contains('armed')", 5):
+            raise bv.CheckFailed("Update card from this review did not arm on the first click")
+        b.click("#agentpanel [data-pref='refine']")
+        row = ("[...document.querySelectorAll('#agentpanel .dentry.comment')]"
+               ".find(r => r.innerText.includes('Apply this review'))")
+        if not b.wait(f"(() => {{ const r = {row}; return !!r && !!r.querySelector('.rdiff'); }})()", 30):
+            raise bv.CheckFailed("no proposal from the review arrived in the panel: " + panel_text(b)[:400])
+        # (this board's job store is per card file, so the Refinement
+        # case's jobs for the same file name are there too: newest first)
+        d = self.discussion()
+        self.assertEqual(d["jobs"][0].get("review"), rl_id(), "the refinement was asked from the review")
+        self.assertEqual(len([j for j in d["jobs"] if j.get("review") == rl_id()]), 1)
+        self.assertEqual(self.brief(), brief_before, "a proposal changes nothing")
+        self.assertIn("Asked from relevance review", panel_text(b))
+        shot("agent-refine-review-1440-dark")
+        b.eval(f"{row}.querySelector('button[data-act=\"discard\"]').click()")
+        if not b.wait(f"(() => {{ const r = {row}; return !!r && r.innerText.includes('discarded'); }})()", 15):
+            raise bv.CheckFailed("Discard was not recorded: " + panel_text(b)[:400])
+        self.assertEqual(self.brief(), brief_before, "Discard preserved the brief")
+        self.assertIn("RELEVANCE REVIEW: Needs rewrite\n\nThe scope is said twice; say it once.",
+                      self.card.read_text(encoding="utf-8"), "the filed review is never changed")
+        # — unsent words, a reload and a board restart —
+        b.eval("(() => { const f = document.querySelector('#ap-commentbox'); f.focus(); "
+               "document.execCommand('insertText', false, 'unsent review words'); return true; })()")
+        time.sleep(0.5)
+        jobs_before_restart = jobs()
+        S["backend"].stop()
+        S["backend"].start()
+        b.goto("/cards/46?tab=reviews")
+        if not b.wait(f"{OPEN} && document.querySelector('#agentpanel .ap-refine[data-preview=\"{rl_id()}\"]') "
+                      "&& document.querySelector('#ap-commentbox')", 20):
+            raise bv.CheckFailed("after a restart the review conversation did not come back: " + panel_text(b)[:300])
+        self.assertEqual("unsent review words", b.eval("document.querySelector('#ap-commentbox').value"))
+        b.wait("[...document.querySelectorAll('#agentpanel .dentry.comment')].length >= 2", 10)
+        self.assertIn("Keep the CSV point", panel_text(b), "its history is the card's")
+        self.assertEqual(jobs_before_restart, jobs(), "a restart and a reload ran nothing again")
+        self.assertEqual(len([j for j in self.discussion()["jobs"] if j.get("review") == rl_id()]), 1,
+                         "one refinement from the review, never a duplicate")
+        # the card-wide conversation is another slot: it has no review words
+        b.goto("/cards/46?tab=brief")
+        b.wait("!!document.querySelector('.discussion .ap-open')", 15)
+        b.click(".discussion .ap-open")
+        b.wait(f"{OPEN} && document.querySelector('#ap-commentbox') && "
+               "!document.querySelector('#agentpanel .ap-refine[data-preview]')", 10)
+        self.assertNotEqual("unsent review words", b.eval("document.querySelector('#ap-commentbox').value"))
+        b.eval("document.querySelector('#ap-commentbox').focus()")
+        b.key("Escape")
+        self.assertTrue(b.wait(f"{PANEL}.hidden", 5), "Escape closed the panel")
+
+    def install_run(self, b, fx, sid):
+        b.eval(cp.INSTALL % (json.dumps(fx), json.dumps(sid), json.dumps(sid)))
+
+    def inspect_from_sessions(self, b, sid):
+        # an in-page navigation, as a link makes: a reload would drop the
+        # fixture laid over the page's fetch
+        b.eval(f"(() => {{ history.pushState({{}}, '', {json.dumps('/sessions/' + sid)}); "
+               "dispatchEvent(new PopStateEvent('popstate')); return true; })()")
+        if not b.wait("!!document.querySelector('button.ap-open[data-agent-ask=\"run\"]')", 15):
+            raise bv.CheckFailed("Sessions offered no Inspect in panel for " + sid)
+        b.eval("document.querySelector('button.ap-open[data-agent-ask=\"run\"]').click()")
+        if not b.wait(f"{OPEN} && document.querySelector('#agentpanel .ap-ident')", 10):
+            raise bv.CheckFailed("Inspect in panel from Sessions opened no run: " + panel_text(b)[:300])
+
+    def test_2_ended_review_and_repair_runs_from_sessions(self):
+        b = S["browser"]
+        b.viewport(1440, 900)
+        b.goto("/board")
+        b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15)
+        now = time.time()
+        # an ended PR review run on this card: its report is matched by the
+        # run identity bench recorded, its review and evidence linked
+        fx = cp.fixture(now, active=False, status="done")
+        sid = "sess-case206-review"
+        fx["agent"].update(id="sage-pr1", task=FILE, session=sid, name="Sage", mode="review",
+                           review={"head": "0123abcd4567"}, failure=None, rc=0)
+        fx["session"].update(id=sid, agentId="sage-pr1", agentName="Sage", task=FILE, label="Sage · #46")
+        for e in fx["events"]:
+            e["session"] = sid
+        fx["progress"].update(agent="sage-pr1", task=FILE, intent="review", outcome="finished")
+        self.install_run(b, fx, sid)
+        self.inspect_from_sessions(b, sid)
+        if not b.wait("/Matched by the run identity/.test(document.querySelector('#agentpanel').textContent)", 15):
+            raise bv.CheckFailed("the review run's filed report was not matched: " + panel_text(b)[:500])
+        text = panel_text(b)
+        self.assertIn("PR review run", text)
+        self.assertIn("No follow-up here", text)
+        href = lambda sel: b.eval(f"(document.querySelector('{sel}') || {{}}).getAttribute?.('href') || null")
+        self.assertEqual(f"/cards/46?tab=reviews&review={rv_id()}", href("#agentpanel a[href*='tab=reviews']"))
+        self.assertEqual(f"/brain/r/46/{rv_id()}", href("#agentpanel a[href^='/brain/r/']"))
+        self.assertEqual("/api/evidence/log?id=ev%3Averification%400123abcd4567",
+                         href("#agentpanel a[href^='/api/evidence/log']"), "the evidence is its exact record")
+        self.assertEqual(f"/sessions/{sid}?card=46", href("#agentpanel a[href^='/sessions/']"))
+        self.assertFalse(b.eval("!!document.querySelector('#agentpanel textarea')"), "no composer")
+        shot("agent-run-review-ended-1440-dark")
+        close(b)
+        # an ended PR repair run: its purpose from its recorded intent, its
+        # named evidence linked, and no report claimed for it
+        fx2 = cp.fixture(now, active=False, status="done", current=dict(cp.MILESTONE, at=now - 300, refs=[
+            {"kind": "evidence", "id": EVIDENCE, "found": False}]))
+        sid2 = "sess-case206-repair"
+        fx2["agent"].update(id="juno-fix1", session=sid2, name="Juno", mode="work",
+                            repair={"kind": "card"}, failure=None, rc=0)
+        fx2["session"].update(id=sid2, agentId="juno-fix1", agentName="Juno", label="Juno · #03")
+        for e in fx2["events"]:
+            e["session"] = sid2
+        fx2["progress"].update(agent="juno-fix1", intent="act-pr", outcome="finished")
+        b.eval("(() => { if (window.__realFetch) window.fetch = window.__realFetch; return true; })()")
+        self.install_run(b, fx2, sid2)
+        self.inspect_from_sessions(b, sid2)
+        b.wait("/PR repair run/.test(document.querySelector('#agentpanel').textContent)", 10)
+        text = panel_text(b)
+        self.assertIn("PR repair run", text)
+        self.assertIn("not found on this board", text, "a missing record is said, never a pass")
+        self.assertEqual("/api/evidence/log?id=ev%3Averification%400123abcd4567",
+                         href("#agentpanel a[href^='/api/evidence/log']"))
+        self.assertFalse(b.eval("!!document.querySelector('#agentpanel textarea')"), "no composer")
+        # narrow and light, the theme switched before the panel covers the header
+        close(b)
+        b.viewport(390, 844)
+        theme(b, "light")
+        self.inspect_from_sessions(b, sid2)
+        self.assertTrue(b.eval("document.body.classList.contains('agent-full')"))
+        self.assertLessEqual(b.eval("document.documentElement.scrollWidth"), 391)
+        shot("agent-run-repair-ended-390-light")
+        close(b)
+        b.viewport(1440, 900)
+        b.goto("/board")
+        b.wait("document.querySelectorAll('.drop[data-stage]').length >= 5", 15)
+        theme(b, "dark")
 
 
 if __name__ == "__main__":

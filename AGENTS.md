@@ -9803,9 +9803,15 @@ and asks for one proposal; a proposal changes nothing; only an armed
 **Apply** changes the brief, and **Discard** keeps it. The panel's
 composer and the Brief's share the unsent text and the request identity,
 kept with the slot, so a reload or a resend after a lost reply is the
-same request. A relevance review stays exactly as it was filed; its
-comment and decision links and every attribution are the card's history,
-so they survive an upgrade and a re-open.
+same request. Opened from a relevance review, the conversation is about
+that review and is a slot of its own (`refine:<card>::<review>`): it
+draws the review's comments only, its **Comment** is linked to the review
+and its armed **Update card from this review** sends the review's report
+with the instruction — exactly what the review's own composer sends,
+sharing its unsent text and request identities. A relevance review stays
+exactly as it was filed; its comment and decision links and every
+attribution are the card's history, so they survive an upgrade and a
+re-open.
 
 **A run inspected** shows who it is (its name, id, model, purpose and
 card), its progress exactly as Focus draws it — agent-reported, apart
@@ -9813,9 +9819,13 @@ from the last tool activity and the process bench observed — any
 failure's tail, the report it filed on the card, and the exact records:
 Focus, its session, the card, the review at its own address on the card
 and in the Brain, and each evidence record the run named, as bench reads
-that record now. The report is matched by the run identity bench wrote
-under the report's heading when it filed it (`acceptance.reports` returns
-it as `agent`); a report filed before that is never claimed for a run.
+that record now, with its log linked (`/api/evidence/log?id=`), and the
+evidence ids bench recorded with the filed report. The report is matched
+by the run identity bench wrote under the report's heading when it filed
+it (`acceptance.reports` returns it as `agent`, and the recorded evidence
+as `evidence`); a report filed before that is never claimed for a run. A
+run whose intent nothing on this board recorded says its purpose is not
+recorded rather than guessing one.
 There is no composer: a coding run takes no follow-up, and the panel says
 which existing control is the supported next step. Inspection relaunches
 nothing and writes nothing.
