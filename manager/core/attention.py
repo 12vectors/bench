@@ -367,15 +367,19 @@ def _drafts() -> list[dict]:
                          "brain-evaluate": "Proposals ready for review — not applied",
                          }[purpose]
             elif st == "applied":
-                label = ("Applied — saved; whether it is committed and shared is "
-                         "shown on the entry")
+                label = ("Applied — saved; View changes opens the passages it changed, "
+                         "with whether it is committed and shared")
             elif st == "needs-answer":
                 label = "Needs your answer — the agent asked a question"
             target = d.get("target")
             about = (f"updating {target}" if purpose == "brain-draft" and target else
                      "a new entry" if purpose == "brain-draft" else d["id"])
+            # an applied draft's result link reaches the exact passages it
+            # changed (task 209): the entry it wrote, with its change open
+            written = (d.get("applied") or {}).get("id") or target
             href = "/brain/seed" if purpose == "brain-seed" else (
-                f"/brain/e/{target}" if purpose == "brain-draft" and target and st == "applied"
+                f"/brain/e/{written}?change={d['id']}"
+                if purpose == "brain-draft" and written and st == "applied"
                 else "/brain")
             out.append(_item(
                 id=f"brain:{d['id']}", kind=purpose, purpose=purpose, state=st, label=label,

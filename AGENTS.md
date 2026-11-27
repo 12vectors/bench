@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask / attention < routes / watch < httpd < board
+gitproc / records / redact / brainchange < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask / attention < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -77,6 +77,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   `bootstrap.py` used to keep apart, masking only the secret part of a
   match. The marker is the caller's, so each page keeps its own words.
   Stdlib only; `verify.py` adopts it with the verify train (WP12)
+- `brainchange.py` — exact Brain changes (task 209): the line difference
+  one write made to an entry (hunks with their sections, renamed
+  headings, the changed header fields, bounded) and where each change is
+  in the entry's text now — exactly while it is the written revision,
+  relocated only on a unique match of the change and its context,
+  unresolved otherwise. Stdlib only; reads no file. `braindraft` builds
+  the retained change record with it (see "Reviewing and navigating exact
+  Brain changes")
 - `config.py` — paths, stages, settings, prompt/adapter/driver resolution;
   `git_argv`, `git_env` and `git_run` as patchable wrappers over `gitproc`
 - `githost.py` — the hosting provider in force (`BOARD_GIT_PROVIDER`:
@@ -3370,7 +3378,9 @@ to the newest draft round and to a request identity, and bench:
    next Apply and at start-up.
 
 Saved, committed and shared are then shown on the entry exactly as for a
-person's own write ("Writing the Brain").
+person's own write ("Writing the Brain"), and in the panel's applied
+state beside **View changes**, which opens the exact passages the write
+changed (see "Reviewing and navigating exact Brain changes").
 
 **Progress, and what is kept.** While a round runs, the request shows
 what is done (sources pinned, the run launched, its model), what is
@@ -3394,6 +3404,7 @@ requests** on the Brain's list reopens one.
 | `POST /api/brain/draft/retarget` | `{id, round, target}` — switch a new entry to an update; launches nothing |
 | `POST /api/brain/draft/apply` | `{id, request, round, title, kind, summary, body, sources, related, classification?, reason?}` |
 | `POST /api/brain/draft/cancel`, `/discard` | `{id}` |
+| `GET /api/brain/change?draft=` | what an applied request changed, where each change is now, and the write's saved, committed and shared states (task 209, next section); a read |
 
 They sit behind the browser-mutation door. **What is proved, and what is
 not:** `tests/test_braindraft.py` runs the whole lifecycle through the
@@ -3414,6 +3425,114 @@ automatic classification, handbook membership, adopting legacy files,
 review projections, more than one entry per Apply, and any edit of code,
 cards, configuration or policy. A proposal is one person-requested
 update of one entry, never a claim that the whole Brain is fresh.
+
+### Reviewing and navigating exact Brain changes
+
+A Brain Agent proposal is reviewed at the passage it changes, and once it
+is applied the person can go straight to what changed — not only to the
+entry (task 209, `brainchange.py`). It extends the drafting request above:
+the same round, the same Apply through `brainwrite.write`, the same
+request identity and journal. Nothing here is a second history of the
+entry: the entry's bytes stay the one authority, and the change record is
+a bounded, read-only reading of what one write did.
+
+**Before Apply: the proposal against its exact base.** A round of an
+update keeps the entry exactly as it read it — its revision, title,
+summary, kind, Source and Related lists and body — beside the round in
+the private draft record. The request read by id (`GET
+/api/brain/drafts?id=`) carries `changes`: that base, named by
+revision, the header fields the proposal changes — title, summary,
+kind, and the Source and Related lists (before → after) — the sections it changes, renamed headings, and each
+hunk — its removed and added lines (marked `−` and `+`, in words as well
+as colour) with two unchanged lines either side. An update opens on this
+**Changes** view; **Draft** and **Edit** are beside it. Once the person
+edits the draft, the view shows their edit against the same base, which
+is exactly what Apply would write. The base is the revision the round
+read, not the entry now: when the entry has moved on since, the view says
+so and that Apply will be refused (`destination-changed`, as before) —
+the person's edit is never written over another's. **Revise** (Ask for a
+revised draft) and **Discard** change nothing in the entry. Apply is still
+the whole proposal as one revision-guarded write; there is no per-hunk
+acceptance, and a seed or evaluation batch keeps its own all-or-none
+review.
+
+**At Apply: one change record.** The base is kept on the request before
+the write (`applyBase`), so a restart part way still has it. When the
+write is saved, bench reads the entry back and, only when it is the
+revision the write saved, records:
+
+| field | what it is |
+| --- | --- |
+| `draft`, `round`, `request`, `operation` | the conversation, the proposal round and the write operation (the Brain journal's request identity) |
+| `entry`, `file`, `mode` | the stable entry id, its file, `update` or `create` |
+| `baseRevision`, `resultRevision` | the revision the proposal was drafted from (none for a new entry) and the one the write produced |
+| `fields` | the header fields that changed: title, summary, kind, and the Source and Related lists |
+| `body` | the hunks (`n`, `kind` insert/delete/replace, the `sections` they touch, `beforeAt`/`afterAt`, the place of each separate edit (`edits`) where one hunk holds several with unchanged lines between them, the lines with their context), the changed sections, renamed headings, line counts, and `truncated` when a very large change was bounded (120 hunks, 400 lines a hunk, 2,000 characters a line) |
+| `exact` | false — with `why` — when no diff can be claimed: an update whose base was not retained, or an entry another write changed before it could be read back |
+
+The record lives with the private draft under
+`manager/local/state/brain/drafts/` (machine-local, never committed). A
+lost Apply reply is settled from the Brain's journal at the next Apply and
+at start-up, and the record is made then from the base kept before the
+write, so a reload, a restart or an inbox notification always leads to
+the same proposal → operation → revision. An Apply sent again answers
+with the one write and records nothing new. A request applied before this
+change has no record and says so.
+
+**After Apply: View changes.** The panel's applied state says what
+changed (how many changes, in which sections, lines added and removed),
+offers **View changes**, and shows the write's **Saved**, **Committed**
+and **Shared** rows apart, with **Retry commit** and **Push now** /
+**Retry push** — the writer's own retries, which never write the entry
+again. **View changes** opens `/brain/e/<id>?change=<request>`: the entry
+at its stable address with a navigator above the body. The first change
+is scrolled to and focused; **Previous change** and **Next change** move
+through the record in order, by pointer or keyboard, each landing on its
+passage. A located change is a labelled, outlined block (`Change 2 of 4:
+added 1 line in “Prepare”`), widened to whole Markdown blocks so a list,
+a table or a code fence is never split or rendered as something else. A
+change holding several nearby edits marks each edit as its own block
+(the later ones *continued*), never the unchanged text between them; a
+replacement keeps **What this replaced** one fold away, and a
+deletion-only change is a marker where the removed text was, with that
+text. **Open the conversation** returns to the very Brain Agent request,
+in the shared panel. The Activity inbox's result link for an applied
+draft is that address.
+
+**When the entry has moved on, the page says so.** `GET
+/api/brain/change` reads the entry now and places each change
+conservatively:
+
+| the entry now | each change |
+| --- | --- |
+| still the revision the write produced | **current** — exactly where the record says |
+| edited since | **relocated** only where the change's own lines (with any unchanged lines between its edits) and the unchanged lines around it occur exactly once in the current text; otherwise **unresolved** — its text was edited or removed, or now repeats — and shown only in the revision diff |
+| retired, missing or unreadable | nothing is placed; the revision diff is what was applied |
+
+The **Revision diff** fold — base revision → resulting revision, every
+hunk as recorded — is open whenever the entry is no longer that revision.
+A person's later text is never highlighted as the agent's change, and
+nothing here undoes, reapplies or rewrites anything.
+
+**Reading changes nothing.** The review, the change route and View
+changes read the draft record, the entry and the Brain journal; they
+write, fetch and launch nothing. Change text is untrusted: the record's
+lines are escaped, and a marked block is rendered by the page's own
+Markdown renderer like the rest of the entry.
+
+**What is proved, and what is not.** `tests/test_brainchange.py` holds
+the pure diff (insertions, deletion-only edits, renamed and moved
+sections, a fenced heading, bounds) and `locate` (exact, relocated,
+repeated text unresolved), and drives the drafting request on #175's
+split fixture through the Claude adapter's real `run` with a stub vendor:
+the review's base, the record an Apply keeps, a later human edit, a
+retirement, a lost reply settled at restart with the same record, a
+conflict that records nothing and keeps the human edit, a new entry, the
+read route, and the page's block marking run in node.
+`verify/browser_cases/case_brain_changes.py` drives the review, Apply,
+View changes, Previous/Next by pointer and keyboard, a reload, the return
+to the conversation, the inbox link and a later edit at 1280 and 390
+pixels in both themes. Selection-anchored comments are task 210.
 
 ### Reviews in the Brain
 
@@ -3657,6 +3776,7 @@ once the board has been read.
 | --- | --- |
 | `/board` | the Board. `/` is the same page, and the bar is corrected to `/board` |
 | `/brain`, `/brain/e/<id>` | the Brain's list, and one entry by its stable id (task 157) |
+| `/brain/e/<id>?change=<request>` | that entry with what one applied Brain Agent request changed, its first change focused (task 209); a value that is not a request id is dropped from the address |
 | `/brain/seed[?from=setup]` | Seed Brain: choosing and inspecting sources, returning to the Brain or to Settings → Setup guide (task 192) |
 | `/brain/r/<card>/<review>` | one review filed on a card, by the card's number (its stem if it has none) and the review's `rv-`/`rl-` identity (task 168) |
 | `/cards/<card>` | the card's detail view, on its Overview, over the Board |
@@ -9879,7 +9999,7 @@ records bench already keeps and owns none of them:
 | --- | --- | --- |
 | a run's progress record (`progress`) — implementation, repair, review | `run:<agent>` | running; finished (*not yet reviewed*; a review *is a review, not an acceptance*); returned — not ready; failed; cancelled (‖ hold); interrupted — its ending was not observed |
 | an Orchestrator conversation (`decisions`, `reasoning`) | `ask:<conversation>` | running; answer ready (*an interpretation; nothing was executed*); failed; cancelled; outcome unknown |
-| a Brain Agent draft, seed or evaluation (`braindraft`) | `brain:<draft>` | running; needs your answer; ready for your review — not applied; applied (*whether it is committed and shared is shown on the entry*); failed; cancelled |
+| a Brain Agent draft, seed or evaluation (`braindraft`) | `brain:<draft>` | running; needs your answer; ready for your review — not applied; applied (*View changes opens the passages it changed, with whether it is committed and shared*; its link is `/brain/e/<id>?change=<draft>`); failed; cancelled |
 | a card refinement (`refine`) | `refine:<job>` | running; proposal ready (*the brief is unchanged until you apply it*); applied; failed; cancelled |
 | an open owner question on a card (`decisions`) | `question:<card>:<id>` | needs your answer, until it is answered or withdrawn |
 

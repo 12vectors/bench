@@ -314,6 +314,17 @@
       "to": "### The shared agent conversation"
     },
     {
+      "path": "/concepts/brain-changes/",
+      "title": "Exact Brain changes",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Review a Brain Agent update against the exact revision it was drafted from, then View changes: the entry opened on each changed passage, with Previous and Next, saved, committed and shared said apart, and an honest historical diff once the entry has moved on.",
+      "lede": "What the review shows before Apply, the change record an Apply keeps and where it lives, how View changes places each change — exactly, relocated or not at all — and what reading it does: nothing.",
+      "source": "AGENTS.md",
+      "from": "### Reviewing and navigating exact Brain changes",
+      "to": "### Reviews in the Brain"
+    },
+    {
       "path": "/concepts/agent-conversation/",
       "title": "The shared agent conversation",
       "layout": "article",

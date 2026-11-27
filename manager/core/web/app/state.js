@@ -18,6 +18,8 @@ const S = {
   // The Brain (task 157): the entry an address names (its stable id), or
   // null for the list; and what an address named that is not an entry
   brainEntry: null,
+  // the Brain Agent request whose applied change the entry shows (task 209)
+  brainChange: null,
   brainBad: null,
   // the filed review the Brain shows (task 168): {card, id}, or null
   brainReview: null,

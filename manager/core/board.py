@@ -62,6 +62,7 @@ import attention
 import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
+import brainchange  # noqa: F401
 import braindraft
 import brainreconcile
 import brainreviews  # noqa: F401

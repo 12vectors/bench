@@ -241,7 +241,7 @@ class BrainAgent(unittest.TestCase):
         self.type(b, "data-age", "title", "Getting started as a contributor")
         shot("brain-agent-edit-night")
         self.armed_click(b, "ag-apply")
-        self.wait_text(b, ["Applied as"])
+        self.wait_text(b, ["Applied to", "View changes"])
         shot("brain-agent-applied-night")
         code, raw = self.backend.get("/api/brain")
         entries = json.loads(raw)["brain"]["entries"]
@@ -352,7 +352,7 @@ class BrainAgent(unittest.TestCase):
                          "Apply is still offered for the kept draft")
         shot("brain-agent-failed-revision-kept-night")
         self.armed_click(b, "ag-apply")
-        self.wait_text(b, ["Applied as"])
+        self.wait_text(b, ["Applied to"])
         code, raw = self.backend.get("/api/brain")
         titles = [e["title"] for e in json.loads(raw)["brain"]["entries"]]
         self.assertIn("Onboarding, as edited by a person", titles)

@@ -73,6 +73,21 @@ test('a Brain entry is addressed by its stable id, and nothing else is one (task
   assert.deepEqual(routeOf({ view: 'brain', brainEntry: null, dtab: {} }), { view: 'brain' });
 });
 
+test('an applied change is addressed on its entry by the request that made it (task 209)', async () => {
+  const { parseRoute, formatRoute, routeOf } = await load('lib/route.js');
+  const want = { view: 'brain', entry: 'e-exports', change: 'bd-c81fe74d41' };
+  assert.deepEqual(parseRoute(at('/brain/e/e-exports', '?change=bd-c81fe74d41')), want);
+  assert.equal(formatRoute(want), '/brain/e/e-exports?change=bd-c81fe74d41');
+  assert.deepEqual(routeOf({ view: 'brain', brainEntry: 'e-exports', brainChange: 'bd-c81fe74d41', dtab: {} }), want);
+  // not a request id: the entry opens and the address is corrected
+  for (const bad of ['../x', 'BD-1', 'bd-', 'bd-zz', '<b>']) {
+    const got = parseRoute(at('/brain/e/e-exports', '?change=' + encodeURIComponent(bad)));
+    assert.deepEqual(got, { view: 'brain', entry: 'e-exports', alias: true }, bad);
+  }
+  // a change on the list is not an address
+  assert.deepEqual(parseRoute(at('/brain', '?change=bd-c81fe74d41')), { view: 'brain' });
+});
+
 test('a review filed on a card is addressed by the card and its rv-/rl- identity (task 168)', async () => {
   const { parseRoute, formatRoute, routeOf } = await load('lib/route.js');
   for (const [path, want] of [

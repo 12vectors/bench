@@ -38,7 +38,7 @@ the top level. `composition` modules are imported by nothing outside
 composition.
 
 ```architecture current
-L0  gitproc records redact
+L0  gitproc records redact brainchange
 L1  config
 L2  githost assets agreements operations decisiontrace
 L3  state reports templates gitrepo verifierreport workbase
@@ -93,6 +93,14 @@ reuse selection (together, under one lock), the execution, cancellation,
 recovery and the board's reading. Consumers ask each owner directly;
 nothing is re-exported, and reading a moved name on `verify` raises,
 naming its owner.
+
+`brainchange` (task 209) is a stdlib leaf on `L0`: the exact line
+difference one Brain write made (hunks, sections, renamed headings, the
+changed header fields) and where each change is in an entry's text now,
+placed only when the entry is still the written revision or the change's
+own lines and context occur exactly once. It reads no file and imports no
+core module; `braindraft` builds the retained change record with it and
+`board` loads it at startup.
 
 `stacks` (task 117, WP09) sits directly above `completion` and below
 `delivery`, where the target table puts it: the derived stack reading —
@@ -453,7 +461,7 @@ The maintainability plan's target (§2.2), recorded so later packages can
 be checked against it when they land. Not enforced.
 
 ```architecture proposed
-L0  gitproc records redact
+L0  gitproc records redact brainchange
 L1  config
 L2  state reports templates gitrepo assets verifierreport agreements operations workbase decisiontrace
 L3  githost
@@ -810,5 +818,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 195
+routes 196
 ```

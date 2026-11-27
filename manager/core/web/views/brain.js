@@ -1481,7 +1481,13 @@ function errorHtml() {
 function writeStatus(id) {
   const o = ops[id];
   if (!o || !o.op) return '';
-  const op = o.op;
+  return `<div class="b-panel b-status" role="status" aria-live="polite"><h2>Your last change: ${esc(o.op.what || '')}</h2>` +
+    `<ul class="b-steps">${opRows(o.op, o.request)}</ul></div>`;
+}
+
+/* Saved, committed and shared, each its own row with its own way on —
+   one write's three facts, read again, never one word for all of them. */
+function opRows(op, request) {
   const c = op.commit || {};
   const p = op.push || {};
   const rows = [];
@@ -1491,16 +1497,15 @@ function writeStatus(id) {
   else if (c.state === 'off') rows.push(`<li><strong>Not committed</strong>: ${esc(c.detail || '')}</li>`);
   else if (c.state === 'failed') {
     rows.push(`<li class="b-bad-row"><strong>Commit failed</strong>: ${esc(c.detail || '')}. The saved file is kept; ` +
-      `nothing was rolled back. ${button('retry-commit', 'Retry commit', { arg: o.request })}</li>`);
+      `nothing was rolled back. ${button('retry-commit', 'Retry commit', { arg: request })}</li>`);
   }
   if (p.state === 'shared') rows.push(`<li><strong>Shared</strong>: ${esc(p.upstream || 'the remote')} holds it</li>`);
-  else if (p.state === 'pending') rows.push(`<li><strong>Push pending</strong> to ${esc(p.upstream || 'the remote')} — not shared yet ${button('retry-push', 'Push now', { arg: o.request })}</li>`);
+  else if (p.state === 'pending') rows.push(`<li><strong>Push pending</strong> to ${esc(p.upstream || 'the remote')} — not shared yet ${button('retry-push', 'Push now', { arg: request })}</li>`);
   else if (p.state === 'failed') {
     rows.push(`<li class="b-bad-row"><strong>Push failed</strong>: ${esc(p.detail || '')}. Committed here, not shared. ` +
-      `${button('retry-push', 'Retry push', { arg: o.request })}</li>`);
+      `${button('retry-push', 'Retry push', { arg: request })}</li>`);
   } else if (p.state === 'off') rows.push(`<li><strong>Not shared</strong>: ${esc(p.detail || '')}</li>`);
-  return `<div class="b-panel b-status" role="status" aria-live="polite"><h2>Your last change: ${esc(op.what || '')}</h2>` +
-    `<ul class="b-steps">${rows.join('')}</ul></div>`;
+  return rows.join('');
 }
 
 function revisionsHtml(id) {
@@ -1542,7 +1547,8 @@ function entryHtml(slot, id) {
       `${esc(id)}</h1><p>${esc(slot.error || 'the entry could not be read')}</p></div>`;
   }
   if (e.state === 'unknown') {
-    return back + '<div class="b-panel"><h1 class="b-title" tabindex="-1">No entry ' + esc(id) +
+    return back + (S.brainChange ? changeNavHtml(e, changeOf(S.brainChange)) : '') +
+      '<div class="b-panel"><h1 class="b-title" tabindex="-1">No entry ' + esc(id) +
       ' on this board</h1><p>No file in <code>brain/</code> carries this id, and none ever kept it as ' +
       'removed. It may belong to another board, or it was never written.</p></div>';
   }
@@ -1590,6 +1596,12 @@ function entryHtml(slot, id) {
       'about this entry\'s format</summary><ul>' + e.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul></details>'
     : '';
   const editing = ed && ed.id === e.id ? formHtml(e) : '';
+  // an applied change opened on this entry (task 209): its navigator, and
+  // the body with each located change marked where it is
+  const cv = S.brainChange ? changeOf(S.brainChange) : null;
+  const shown = cv && cv.data && cv.data.entry && cv.data.entry.id === e.id ? cv.data : null;
+  const prose = shown && shown.locations.some(l => l.state !== 'unresolved') && !ed
+    ? bodyWithChanges(e.body, shown) : md(e.body, { base: 2 });
   return back + stale +
     `<article class="b-entry" aria-labelledby="btitle"><header class="b-head">` +
     `<p class="b-kicker">${chip('b-kind', e.entryKind)} ${classChip(e.classification)}` +
@@ -1598,12 +1610,242 @@ function entryHtml(slot, id) {
     (e.summary ? `<p class="b-lede">${esc(e.summary)}</p>` : '') +
     `<p class="b-permalink"><span class="mono">${esc(entryHref(e.id))}</span> ` +
     `<button type="button" data-copy-link="${esc(entryHref(e.id))}">Copy link</button></p></header>` +
-    writeStatus(e.id) + entryActions(e) + editing + removed + superseded +
-    `<div class="b-read"><div class="b-prose">${md(e.body, { base: 2 }) ||
+    writeStatus(e.id) + (S.brainChange ? changeNavHtml(e, cv) : '') + entryActions(e) + editing + removed + superseded +
+    `<div class="b-read"><div class="b-prose">${prose ||
       '<p class="b-none">This entry has no body.</p>'}</div>` +
     `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>${adoptionHtml(e)}${authorityHtml(e)}` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
     warnings + '</article>';
+}
+
+/* ── an applied change, navigated (task 209) ──────────────────────────
+
+   `/brain/e/<id>?change=<request>` opens the entry with what one Brain
+   Agent request changed: the page reads `GET /api/brain/change`, which
+   says where each recorded change is in the entry *now* — exactly, while
+   the entry is the revision the write produced; relocated, only where the
+   change and its context occur once; unresolved otherwise. A located
+   change is marked in the body by a labelled, outlined block (never by
+   colour alone); everything else is in the revision diff, the record's
+   own, so text the change did not touch is never marked as it. Reading
+   it writes and launches nothing. */
+
+const changes = {};                                  // request id -> {data, error, status, at}
+const chg = { draft: null, at: 0, focused: null, diffOpen: false };   // the change navigated on this page
+
+async function loadChange(id) {
+  const k = 'c:' + id;
+  if (!id || inflight.has(k)) return;
+  inflight.add(k);
+  try {
+    const res = await fetch('/api/brain/change?draft=' + encodeURIComponent(id));
+    const data = await res.json().catch(() => ({}));
+    changes[id] = res.ok ? { data, error: null, status: res.status, at: Date.now() }
+      : { ...(changes[id] || {}), data: (changes[id] || {}).data || null,
+          error: data.error || 'the change could not be read', status: res.status, at: Date.now() };
+  } catch (e) {
+    changes[id] = { ...(changes[id] || {}), error: 'the board could not be asked', status: 0, at: Date.now() };
+  }
+  inflight.delete(k);
+  renderBrain();
+}
+
+/* A change's reading, asked again when it is older than a few seconds —
+   a later edit or a sync is read on the next paint, never assumed. */
+function changeOf(id) {
+  const slot = changes[id];
+  if (!slot || Date.now() - slot.at > FRESH_MS * 2) loadChange(id);
+  return slot || null;
+}
+
+const KIND_WORD = { insert: 'Added', delete: 'Removed', replace: 'Changed' };
+
+function changeLabel(h, total) {
+  const where = (h.sections || [h.section]).filter(Boolean).join(', ');
+  return `Change ${h.n} of ${total}: ${(KIND_WORD[h.kind] || 'Changed').toLowerCase()}` +
+    `${h.added ? ` ${h.added} line${h.added === 1 ? '' : 's'}` : ''}` +
+    `${h.removed ? `${h.added ? ',' : ''} removed ${h.removed} line${h.removed === 1 ? '' : 's'}` : ''}` +
+    (where ? ` in “${where}”` : '');
+}
+
+/* One hunk as the record keeps it: removed and added lines marked by
+   sign and by words, inside a bounded, scrolling block. */
+function hunkHtml(h) {
+  const rows = (h.lines || []).map(([op, text]) =>
+    `<span class="b-diff-${op === '+' ? 'add' : op === '-' ? 'del' : 'same'}">` +
+    `<span class="b-diff-sign">${op === '+' ? '+ ' : op === '-' ? '− ' : '  '}</span>${esc(text)}</span>`).join('\n');
+  return `<pre class="b-diff" tabindex="0" aria-label="${esc(KIND_WORD[h.kind] || 'Changed')} lines">${rows}</pre>` +
+    (h.droppedLines ? `<p class="b-note">${h.droppedLines} more line(s) of this change are not kept in the record.</p>` : '') +
+    (h.renamed && h.renamed.length ? '<p class="b-note">' + h.renamed.map(r =>
+      `Section renamed: “${esc(r.from)}” → “${esc(r.to)}”`).join('; ') + '</p>' : '');
+}
+
+/* Where a block of Markdown may be cut and rendered on its own: before
+   the first line, after the last, or after a blank line outside a fence.
+   A change is widened to such places, so a list, a table or a code fence
+   is never split and rendered as something it is not. */
+function cutPoints(lines) {
+  const fenced = [];
+  let opener = null;
+  for (const line of lines) {
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (opener === null && m) { opener = m[1][0]; fenced.push(true); }
+    else if (opener !== null) { fenced.push(true); if (m && m[1][0] === opener) opener = null; }
+    else fenced.push(false);
+  }
+  const ok = new Set([0, lines.length]);
+  lines.forEach((line, i) => { if (!line.trim() && !fenced[i]) ok.add(i + 1); });
+  return [...ok].sort((a, b) => a - b);
+}
+
+function bodyWithChanges(body, view) {
+  const lines = String(body || '').split('\n');
+  const cuts = cutPoints(lines);
+  const down = (x) => cuts.filter(c => c <= x).pop() ?? 0;
+  const up = (x) => cuts.find(c => c >= x) ?? lines.length;
+  const hunks = Object.fromEntries(((view.change.body || {}).hunks || []).map(h => [h.n, h]));
+  const total = Object.keys(hunks).length;
+  // each located change, widened to whole blocks; a deletion is a marker
+  // at the first cut at or after where its lines were
+  // A hunk may hold several edits with unchanged lines between them: each
+  // edit is its own range, so the lines between are never marked as it.
+  const marks = [];
+  for (const loc of view.locations) {
+    if (loc.state === 'unresolved' || !hunks[loc.n]) continue;
+    const ranges = loc.ranges && loc.ranges.length ? loc.ranges : [{ start: loc.start, end: loc.end }];
+    for (const r of ranges) {
+      if (r.end > r.start) marks.push({ s: down(r.start), e: up(r.end), ns: [loc.n], kind: 'block', loc });
+      else marks.push({ s: up(r.start), e: up(r.start), ns: [loc.n], kind: 'gone', loc });
+    }
+  }
+  marks.sort((a, b) => a.s - b.s || (a.kind === 'gone' ? -1 : 1));
+  const merged = [];
+  for (const m of marks) {
+    const last = merged[merged.length - 1];
+    if (last && last.kind === 'block' && m.kind === 'block' && m.s < last.e) {
+      last.e = Math.max(last.e, m.e);
+      for (const n of m.ns) if (!last.ns.includes(n)) last.ns.push(n);
+    } else merged.push({ ...m, ns: [...m.ns] });
+  }
+  const tagged = new Set();             // a change's id and label go on its first block only
+  let out = '';
+  let at = 0;
+  const plain = (a, b) => (b > a ? md(lines.slice(a, b).join('\n'), { base: 2 }) : '');
+  for (const m of merged) {
+    if (m.s < at) {
+      // inside a block already drawn: a removal is said right after it
+      if (m.kind !== 'gone') continue;
+      m.s = at; m.e = at;
+    }
+    out += plain(at, m.s);
+    const first = hunks[m.ns[0]];
+    const tags = m.ns.map(n => (tagged.has(n)
+      ? `<span class="b-chg-tag">${esc(changeLabel(hunks[n], total))} (continued)`
+      : `<span class="b-chg-tag" id="bchg-${n}">${esc(changeLabel(hunks[n], total))}`) +
+      `${m.loc.state === 'relocated' ? ' — found again in the current text' : ''}</span>`).join('');
+    // what a change removed is said once, on its first block
+    const removed = m.ns.filter(n => !tagged.has(n))
+      .flatMap(n => (hunks[n].lines || []).filter(r => r[0] === '-').map(r => r[1]));
+    m.ns.forEach(n => tagged.add(n));
+    const gone = removed.length ? `<details class="b-chg-was"${m.kind === 'gone' ? ' open' : ''}><summary>` +
+      `${m.kind === 'gone' ? 'The removed text' : 'What this replaced'} (${removed.length} line${removed.length === 1 ? '' : 's'})</summary>` +
+      `<pre class="b-diff">${removed.map(r => `<span class="b-diff-del"><span class="b-diff-sign">− </span>${esc(r)}</span>`).join('\n')}</pre></details>` : '';
+    out += `<section class="b-chg b-chg-${m.kind === 'gone' ? 'gone' : esc(first.kind)}" data-chg="${m.ns.join(' ')}" ` +
+      `tabindex="-1" aria-label="${esc(changeLabel(first, total))}">${tags}` +
+      (m.kind === 'gone' ? '' : plain(m.s, m.e)) + gone + '</section>';
+    at = m.kind === 'gone' ? m.s : m.e;
+  }
+  return out + plain(at, lines.length);
+}
+
+const CHG_STATE = {
+  current: ['The entry is still the revision this change wrote.', 'Each change is marked where it is.'],
+  'changed-since': ['The entry has been edited since this change was applied.',
+    'A change is marked only where its own text and the lines around it occur exactly once; the rest are in the revision diff.'],
+  retired: ['The entry was retired after this change was applied.', 'Its revision diff is kept below.'],
+  missing: ['No entry with this id is on this board now.', 'The revision diff is what was applied.'],
+  unreadable: ['The entry cannot be read as an entry now.', 'The revision diff is what was applied.'],
+};
+
+function changeNavHtml(e, cv) {
+  const close = `<a class="b-btn" href="${esc(entryHref(e.id || S.brainEntry))}" data-route data-bchg-close>Hide changes</a>`;
+  const conv = cv && cv.data ? button('ag-open', 'Open the conversation', { arg: cv.data.draft }) : '';
+  if (!cv || (!cv.data && !cv.error)) {
+    return '<section class="b-panel b-chgnav" aria-labelledby="bchg-h"><h2 id="bchg-h">Changes from a Brain Agent request</h2>' +
+      '<p class="b-note" role="status" aria-busy="true">Reading what this request changed…</p></section>';
+  }
+  if (!cv.data) {
+    return '<section class="b-panel b-chgnav b-bad" role="alert" aria-labelledby="bchg-h"><h2 id="bchg-h">' +
+      `Changes from Brain Agent request <span class="mono">${esc(S.brainChange)}</span></h2>` +
+      `<p>${esc(cv.error)}${cv.status === 404 ? ' — this board holds no applied change for that request.' : ''}</p>` +
+      `<div class="b-actions">${close}</div></section>`;
+  }
+  const v = cv.data;
+  const c = v.change || {};
+  const hunks = (c.body || {}).hunks || [];
+  const total = hunks.length;
+  const where = Object.fromEntries((v.locations || []).map(l => [l.n, l]));
+  const wrongEntry = v.entry && v.entry.id !== e.id;
+  const [said, how] = CHG_STATE[v.state] || ['', ''];
+  const k = Math.min(Math.max(chg.at, 0), Math.max(total - 1, 0));
+  const cur = hunks[k];
+  const loc = cur ? where[cur.n] : null;
+  const position = !total ? '' : `<p class="b-chg-pos" aria-live="polite"><strong>${esc(changeLabel(cur, total))}</strong>` +
+    ` — ${!loc || loc.state === 'unresolved' ? `not placed in the current text (${esc((loc && loc.why) || 'not located')}); shown in the revision diff`
+      : loc.state === 'relocated' ? 'found again in the current text' : 'marked in the entry below'}.</p>`;
+  const nav = total ? '<div class="b-actions" role="group" aria-label="Move between changes">' +
+    button('chg-prev', 'Previous change', { disabled: k <= 0 }) +
+    button('chg-next', 'Next change', { disabled: k >= total - 1 }) + conv + close + '</div>'
+    : `<div class="b-actions">${conv}${close}</div>`;
+  const fields = (c.fields || []).length ? '<ul class="b-chg-fields">' + c.fields.map(f =>
+    `<li><strong>${esc(f.field[0].toUpperCase() + f.field.slice(1))}:</strong> ` +
+    `${f.before === null ? '' : `<del>${esc(f.before || '(none)')}</del> → `}<ins>${esc(f.after || '(none)')}</ins></li>`).join('') + '</ul>' : '';
+  const body = c.body || {};
+  const summary = c.exact
+    ? `<p>${total ? `${total} change${total === 1 ? '' : 's'}` : 'No change to the body'}` +
+      `${body.sections && body.sections.length ? ` in ${body.sections.map(s => `“${esc(s)}”`).join(', ')}` : ''}` +
+      ` · ${esc(String(body.added || 0))} line(s) added, ${esc(String(body.removed || 0))} removed` +
+      `${body.truncated ? ' · the record is bounded and leaves part of a very large change out' : ''}.</p>`
+    : `<p class="b-warn">${esc(c.why || 'The exact difference was not recorded.')}</p>`;
+  const diff = hunks.length ? `<details class="b-panel b-chgdiff" id="bchg-diff" data-bchgdiff` +
+    `${v.state === 'current' && !chg.diffOpen ? '' : ' open'}>` +
+    `<summary>Revision diff — <span class="mono">${esc((c.baseRevision || 'new entry').slice(0, 12))}</span> → ` +
+    `<span class="mono">${esc((c.resultRevision || '').slice(0, 12))}</span></summary><ol class="b-chglist">` +
+    hunks.map(h => `<li id="bchgd-${h.n}" tabindex="-1"><p><strong>${esc(changeLabel(h, total))}</strong>` +
+      ` <span class="b-note">${esc(({ current: 'marked in the entry', relocated: 'found again in the current text' })[(where[h.n] || {}).state] ||
+        'not placed in the current text')}</span></p>${hunkHtml(h)}</li>`).join('') + '</ol></details>' : '';
+  const op = v.operation;
+  const status = op ? `<ul class="b-steps" aria-label="Where this write stands">${opRows(op, c.request)}</ul>`
+    : '<p class="b-note">This board holds no record of the write operation; the entry\'s Revisions list its commits.</p>';
+  return `<section class="b-panel b-chgnav" aria-labelledby="bchg-h" data-chgnav="${esc(v.draft)}">` +
+    `<h2 id="bchg-h" tabindex="-1">Changes from Brain Agent request <span class="mono">${esc(v.draft)}</span></h2>` +
+    (wrongEntry ? `<p class="b-warn">This request changed <a href="${esc(entryHref(v.entry.id))}?change=${esc(v.draft)}" data-route>` +
+      `${esc(v.entry.id)}</a>, not this entry.</p>` : '') +
+    `<p class="b-chg-state"><strong>${esc(said)}</strong> ${esc(how)}</p>` + summary + fields + position + nav + status + diff +
+    (cv.error ? `<p class="b-warn" role="status">${esc(cv.error)} — showing the last reading.</p>` : '') +
+    '</section>';
+}
+
+/* Move to change `k`: its marked block in the entry, or, where it is not
+   placed in the current text, its row in the revision diff — scrolled to
+   and focused, so a keyboard and a screen reader land on it too. */
+function focusChange(k) {
+  const v = (changes[S.brainChange] || {}).data;
+  const hunks = v && v.change && v.change.body ? v.change.body.hunks || [] : [];
+  if (!hunks.length) return;
+  chg.at = Math.min(Math.max(k, 0), hunks.length - 1);
+  renderBrain(true);
+  const n = hunks[chg.at].n;
+  let target = document.querySelector(`#bshell #bchg-${n}`)?.closest('.b-chg');
+  if (!target) {
+    const fold = document.querySelector('#bshell #bchg-diff');
+    if (fold) { fold.open = true; chg.diffOpen = true; }
+    target = document.querySelector(`#bshell #bchgd-${n}`);
+  }
+  if (target) {
+    target.scrollIntoView({ block: 'center' });
+    target.focus({ preventScroll: true });
+  }
 }
 
 /* ── a review filed on a card (task 168) ──────────────────────────────
@@ -1931,7 +2173,8 @@ function composerAg(target, revision, title) {
 }
 
 function draftAg(id) {
-  return { mode: 'draft', draftId: id, answers: {}, note: '', edit: null, view: 'rendered',
+  // `view` null: the proposal opens on what suits it (its changes, for an update)
+  return { mode: 'draft', draftId: id, answers: {}, note: '', edit: null, view: null,
            busy: false, error: null, request: agRequest() };
 }
 
@@ -1997,7 +2240,7 @@ function registerBrainAgent() {
       const a = s.data;
       return { mode: a.mode, target: a.target || null, expected: a.expected || null, targetTitle: a.targetTitle || null,
                text: a.text || '', request: a.request, draftId: a.draftId || null, answers: a.answers || {},
-               note: a.note || '', view: a.view || 'rendered', edit: a.edit || null };
+               note: a.note || '', view: a.view || null, edit: a.edit || null };
     },
     revive: (d) => {
       if (d.mode !== 'compose' && d.mode !== 'draft') return null;
@@ -2054,6 +2297,61 @@ function bodyDiff(before, after) {
     ? '<span class="b-diff-gap">…</span>'
     : `<span class="b-diff-${r[0] === '+' ? 'add' : r[0] === '-' ? 'del' : 'same'}">` +
       `${r[0] === '+' ? '+ ' : r[0] === '-' ? '− ' : '  '}${esc(r[1])}</span>`).join('\n') + '</pre>';
+}
+
+/* The proposal against its exact base, before Apply (task 209): the base
+   the round read, named by revision, each changed section and each hunk
+   from the server's own diff — or, once the person has edited the draft,
+   their edit against that same base. Reading it writes nothing. */
+function proposedChangesHtml(d, e, target) {
+  const c = d.changes;
+  const p = d.proposal || {};
+  if (!c) {
+    // a page that has not read the request by id yet: the current entry
+    if (d.mode !== 'update') return bodyDiff('', e.body);
+    return target ? bodyDiff(target.body, e.body) : '<p class="b-note" role="status">Reading the entry…</p>';
+  }
+  if (c.missing) return `<p class="b-warn" role="alert">${esc(c.missing)}</p>`;
+  const base = c.base;
+  // sources and related are lists on the record and text in the editor
+  const listOf = (v, sep) => (Array.isArray(v) ? v : String(v || '').split(sep))
+    .map(s => String(s).trim()).filter(Boolean).join(', ');
+  const editedList = { sources: listOf(e.sources, '\n'), related: listOf(e.related, ',') };
+  const edited = e.body !== p.body || e.title !== p.title || (e.summary || '') !== (p.summary || '') || e.kind !== p.kind ||
+    editedList.sources !== listOf(p.sources, '\n') || editedList.related !== listOf(p.related, ',');
+  const head = base
+    ? `<p class="b-chg-base">Against <span class="mono">${esc(d.target)}</span> at revision ` +
+      `<span class="mono">${esc(base.revision.slice(0, 12))}</span> — the exact entry this draft read.</p>` +
+      (c.currentRevision && c.currentRevision !== c.baseRevision
+        ? '<p class="b-warn" role="alert">The entry has changed since this draft read it, so applying will be refused ' +
+          'and nothing will be overwritten. Ask for a revised draft so the agent reads it again, or discard this one.</p>' : '')
+    : '<p class="b-chg-base">A new entry: every line is an addition.</p>';
+  if (edited) {
+    const was = base || { title: '', summary: '', kind: '', body: '' };
+    const value = (src, k) => (k === 'sources' || k === 'related')
+      ? (src === e ? editedList[k] : listOf(src[k], k === 'sources' ? '\n' : ',')) : (src[k] || '');
+    const fieldRows = [['title', 'Title'], ['summary', 'Summary'], ['kind', 'Kind'], ['sources', 'Sources'], ['related', 'Related']]
+      // a base retained before sources and related were compared says nothing about them
+      .filter(([k]) => !(base && (k === 'sources' || k === 'related') && !(k in base)))
+      .filter(([k]) => value(was, k) !== value(e, k))
+      .map(([k, label]) => `<li><strong>${label}:</strong> ${base ? `<del>${esc(value(was, k) || '(none)')}</del> → ` : ''}<ins>${esc(value(e, k) || '(none)')}</ins></li>`);
+    return head + '<p class="b-note">Showing your edits against the same base; Apply writes exactly this.</p>' +
+      (fieldRows.length ? `<ul class="b-chg-fields">${fieldRows.join('')}</ul>` : '') + bodyDiff(was.body, e.body);
+  }
+  const body = c.body || {};
+  const hunks = body.hunks || [];
+  const fields = (c.fields || []).length ? '<ul class="b-chg-fields">' + c.fields.map(f =>
+    `<li><strong>${esc(f.field[0].toUpperCase() + f.field.slice(1))}:</strong> ` +
+    `${f.before === null ? '' : `<del>${esc(f.before || '(none)')}</del> → `}<ins>${esc(f.after || '(none)')}</ins></li>`).join('') + '</ul>' : '';
+  const sections = (body.sections || []).length
+    ? `<p><strong>Sections changed:</strong> ${body.sections.map(s => `“${esc(s)}”`).join(', ')} · ` +
+      `${esc(String(body.added || 0))} line(s) added, ${esc(String(body.removed || 0))} removed</p>` +
+      ((body.renamed || []).length ? `<p class="b-note">${body.renamed.map(r => `Renamed: “${esc(r.from)}” → “${esc(r.to)}”`).join('; ')}</p>` : '')
+    : '<p class="b-note">No change to the body.</p>';
+  return head + fields + sections + (hunks.length ? '<ol class="b-chglist">' + hunks.map(h =>
+    `<li><p><strong>${esc(changeLabel(h, hunks.length))}</strong></p>${hunkHtml(h)}</li>`).join('') + '</ol>' : '') +
+    (body.truncated ? '<p class="b-note">This proposal is very large: part of its difference is not shown here. Edit shows all of it.</p>' : '') +
+    '<p class="b-note">Apply writes the whole proposal as one revision-guarded write; it does not accept or reject changes one by one.</p>';
 }
 
 function preflightHtml(pf) {
@@ -2146,12 +2444,15 @@ function proposalHtml(d) {
   const p = d.proposal;
   const e = ag.edit || {};
   const target = d.target ? (cache.entries['e:' + d.target] || {}).data : null;
-  const views = ['rendered', 'changes', 'edit'];
+  const views = ['changes', 'rendered', 'edit'];
+  // an update opens on its exact changes against its base (task 209); a
+  // new entry on the draft itself
+  const view = ag.view || (d.mode === 'update' ? 'changes' : 'rendered');
   const tabs = '<div class="b-tabs" role="group" aria-label="The draft">' + views.map(v =>
-    `<button type="button" class="b-tab" data-bact="ag-view" data-barg="${v}" aria-pressed="${ag.view === v}">` +
+    `<button type="button" class="b-tab" data-bact="ag-view" data-barg="${v}" aria-pressed="${view === v}">` +
     `${v === 'rendered' ? 'Draft' : v === 'changes' ? (d.mode === 'update' ? 'Changes' : 'Whole entry') : 'Edit'}</button>`).join('') + '</div>';
   let pane;
-  if (ag.view === 'edit') {
+  if (view === 'edit') {
     pane = field('ag-title', 'Title', `<input id="bf-ag-title" data-age="title" type="text" value="${esc(e.title)}" autocomplete="off">`) +
       field('ag-kind', 'Kind', `<select id="bf-ag-kind" data-age="kind">` + KINDS.map(k =>
         `<option${k === e.kind ? ' selected' : ''}>${esc(k)}</option>`).join('') + '</select>') +
@@ -2169,13 +2470,8 @@ function proposalHtml(d) {
       pane += `<p class="b-note">The entry's classification (${esc(target ? target.classification : 'as it is')}) and its history are kept. ` +
         `The agent suggested ${esc(p.classification)}; change it with Classify after applying, if you agree.</p>`;
     }
-  } else if (ag.view === 'changes') {
-    pane = d.mode === 'update'
-      ? (target ? `<p class="b-note">Against ${esc(d.target)} as this draft read it (${esc(d.targetRevision || '')}).</p>` +
-          (target.revision !== d.targetRevision ? '<p class="b-warn">The entry has changed since; applying will be refused.</p>' : '') +
-          (e.title !== target.title ? `<p><strong>Title:</strong> <del>${esc(target.title)}</del> → <ins>${esc(e.title)}</ins></p>` : '') +
-          bodyDiff(target.body, e.body) : '<p class="b-note" role="status">Reading the entry…</p>')
-      : bodyDiff('', e.body);
+  } else if (view === 'changes') {
+    pane = proposedChangesHtml(d, e, target);
   } else {
     pane = `<h3>${esc(e.title)}</h3>${e.summary ? `<p class="b-lede">${esc(e.summary)}</p>` : ''}` +
       `<div class="b-prose">${md(e.body || '', { base: 3 })}</div>`;
@@ -2265,9 +2561,7 @@ function draftHtml() {
       '<div class="b-actions">' + button('ag-discard', phaseOf(armed.store, 'ag-discard') === 'armed' ? 'Confirm: discard' : 'Discard',
         { armed: phaseOf(armed.store, 'ag-discard') === 'armed' }) + '</div>';
   } else if (d.status === 'applied') {
-    const a = d.applied || {};
-    body += `<p>Applied as <a href="${esc(entryHref(a.id))}" data-route data-brain-id="${esc(a.id)}">${esc(a.id)}</a> ` +
-      `(${esc(a.what || '')}). Saved, committed and shared are shown on the entry.</p>`;
+    body += appliedHtml(d);
   } else {
     body += `<p class="b-note">${d.status === 'cancelled' ? 'Cancelled: nothing was written, and this request cannot be applied.'
       : 'Discarded: the Brain is unchanged.'}</p>`;
@@ -2280,6 +2574,32 @@ function draftHtml() {
     `<blockquote class="b-request">${esc(d.text)}</blockquote>` + conversationHtml(d) + observedHtml(d) + body +
     (ag.error ? `<p class="b-warn" role="alert">${esc(ag.error)}</p>` : '') +
     `<p class="b-note">${esc(d.local || '')}. Closing the panel stops nothing; the request is kept here and listed under Brain Agent requests.</p></section>`;
+}
+
+/* An applied request (task 209): what it changed, in words, the way to
+   the exact passages, and the write's saved, committed and shared states
+   apart — each read again from the board, never inferred from "applied". */
+function appliedHtml(d) {
+  const a = d.applied || {};
+  const s = d.change || {};
+  const href = `${entryHref(a.id)}?change=${encodeURIComponent(d.id)}`;
+  const cv = changeOf(d.id);
+  const v = cv && cv.data;
+  const op = v && v.operation;
+  const said = s.exact
+    ? `${s.changes ? `${s.changes} change${s.changes === 1 ? '' : 's'}` : 'No change to the body'}` +
+      `${(s.sections || []).length ? ` in ${s.sections.map(x => `“${esc(x)}”`).join(', ')}` : ''}` +
+      ` · ${esc(String(s.added || 0))} added, ${esc(String(s.removed || 0))} removed` +
+      `${(s.fields || []).length ? ` · ${esc(s.fields.join(', '))} changed` : ''}`
+    : esc(s.why || 'the exact difference was not recorded');
+  const now = v ? ({ current: '', 'changed-since': ' The entry has been edited since; View changes says which changes it can still place.',
+    retired: ' The entry has been retired since.', missing: ' The entry is no longer on this board.' })[v.state] || '' : '';
+  return `<div class="b-applied"><p>Applied to <a href="${esc(entryHref(a.id))}" data-route data-brain-id="${esc(a.id)}">` +
+    `${esc(a.id)}</a> (${esc(a.what || '')}). <span class="b-note">${said}.${esc(now)}</span></p>` +
+    `<p class="b-actions"><a class="b-btn b-primary" href="${esc(href)}" data-route data-bchg-open="${esc(d.id)}">View changes</a></p>` +
+    (op ? `<ul class="b-steps" aria-label="Where this write stands">${opRows(op, (v.change || {}).request)}</ul>`
+      : cv && cv.error ? `<p class="b-warn">${esc(cv.error)}</p>`
+        : '<p class="b-note" role="status">Reading whether it is committed and shared…</p>') + '</div>';
 }
 
 /* What bench itself observed of the request, apart from what the agent
@@ -2480,7 +2800,7 @@ async function save() {
     toast(op.duplicate ? 'Already saved — this request was answered from the record.'
       : `Saved: ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
       !!(op.commit && op.commit.state === 'failed'));
-    if (mine.mode === 'create') { S.brainEntry = op.id; S.brainBad = null; syncRoute(); }
+    if (mine.mode === 'create') { S.brainEntry = op.id; S.brainChange = null; S.brainBad = null; syncRoute(); }
     renderBrain(true);
     // the form that held focus is gone: the entry's heading takes it (a
     // new entry's arrives with its reading, and is focused then)
@@ -2498,7 +2818,7 @@ async function save() {
         ed = null;
         forget();
         toast('The save had landed — the board\'s record says so.');
-        if (mine.mode === 'create') { S.brainEntry = data.operation.id; syncRoute(); }
+        if (mine.mode === 'create') { S.brainEntry = data.operation.id; S.brainChange = null; syncRoute(); }
       }
     } catch (e) { /* the warning stands */ }
     renderBrain(true);
@@ -2522,6 +2842,8 @@ async function retryOp(action, request) {
   if (res.ok && id) ops[id].op = res.data.operation;
   toast(res.ok ? (action === 'commit' ? 'Commit retried.' : 'Push asked for.') : res.error, !res.ok);
   forget();
+  // an applied change's rows are read again too (task 209)
+  Object.values(changes).forEach(slot => { slot.at = 0; });
   renderBrain(true);
 }
 
@@ -2542,6 +2864,8 @@ function act(name, arg, from) {
     if (name === 'ag-close' && !document.querySelector('#agentpanel:not([hidden])')) $('#bshell .b-title')?.focus();
     return;
   }
+  if (name === 'chg-prev') { focusChange(chg.at - 1); return; }
+  if (name === 'chg-next') { focusChange(chg.at + 1); return; }
   if (name.startsWith('rf-')) { rfAct(name, arg); return; }
   if (name.startsWith('hb-')) { hbAct(name, arg); return; }
   if (name.startsWith('ad-')) { adAct(name, arg); return; }
@@ -2730,6 +3054,8 @@ function wire(el) {
       revsOpen = d.open ? d.dataset.brevs : null;
       if (d.open) loadRevisions(d.dataset.brevs);
     }
+    // the revision diff stays as the reader left it across repaints (task 209)
+    if (d.dataset && d.dataset.bchgdiff !== undefined) chg.diffOpen = d.open;
   }, true);
   el.addEventListener('focusout', (ev) => { if (isField(ev.target)) setTimeout(() => renderBrain(), 0); });
   el.addEventListener('pointerdown', (ev) => { if (ev.isPrimary !== false) pressing().down(); });
@@ -2744,7 +3070,10 @@ function wire(el) {
 function wireAgentPanel(el) {
   el.addEventListener('click', (ev) => {
     const b = ev.target.closest && ev.target.closest('[data-bact]');
-    if (!b || !el.contains(b) || b.disabled || !b.dataset.bact.startsWith('ag-')) return;
+    if (!b || !el.contains(b) || b.disabled) return;
+    // an applied change's Retry commit / Push now (task 209): the writer's own retry
+    if (b.dataset.bact.startsWith('retry-')) { act(b.dataset.bact, b.dataset.barg, b); return; }
+    if (!b.dataset.bact.startsWith('ag-')) return;
     const s = activeSlot();
     if (!s || s.purpose !== 'brain') return;
     ag = s.data;
@@ -2934,6 +3263,9 @@ function renderBrain(force) {
         : active.dataset.adop ? `[data-adop="${CSS.escape(active.dataset.adop)}"]`
         : active.dataset.hbrep ? `[data-hbrep="${CSS.escape(active.dataset.hbrep)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
+        // a change the reader moved to (task 209) keeps focus through a live repaint
+        : active.dataset.chg ? `[data-chg="${CSS.escape(active.dataset.chg)}"]`
+        : active.id && active.id.startsWith('bchgd-') ? `#${CSS.escape(active.id)}`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]` +
           (active.dataset.barg ? `[data-barg="${CSS.escape(active.dataset.barg)}"]` : '')
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +
@@ -2958,6 +3290,18 @@ function renderBrain(force) {
       || el.querySelector('.b-title');
     if (target && document.activeElement !== target) target.focus();
     if (k !== 'index') { el.scrollTop = 0; if (k !== 'seed') returnTo = k.slice(2); }
+  }
+  // View changes (task 209): once the change and the entry have both been
+  // read, the first change is scrolled to and focused — once per opening
+  if (S.brainChange !== chg.draft) { chg.draft = S.brainChange; chg.at = 0; chg.focused = null; chg.diffOpen = false; }
+  const cv = S.brainChange ? changes[S.brainChange] : null;
+  if (cv && cv.data && chg.focused !== S.brainChange && k.startsWith('e:') && !loading &&
+      cache.entries[k] && cache.entries[k].data) {
+    chg.focused = S.brainChange;
+    setTimeout(() => {
+      if ((cv.data.change.body || {}).hunks?.length) focusChange(0);
+      else $('#bshell #bchg-h')?.focus();
+    }, 0);
   }
 }
 
