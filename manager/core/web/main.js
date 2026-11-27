@@ -184,6 +184,7 @@ function applyRoute(route, background) {
       // an address that is not an entry's is said in place, never swapped
       // for the list or another entry
       S.brainEntry = route.entry || null;
+      S.brainChange = route.change || null;
       S.brainReview = route.review || null;
       S.brainSeed = route.seed || null;
       S.brainBad = route.invalid === 'entry' ? route.raw : null;
@@ -239,7 +240,7 @@ document.querySelectorAll('#views [data-view]').forEach(b =>
     e.preventDefault();
     // the switcher's Brain is the Brain's list, as its href says
     if (b.dataset.view === 'brain') {
-      S.brainEntry = null; S.brainReview = null; S.brainSeed = null; S.brainBad = null;
+      S.brainEntry = null; S.brainChange = null; S.brainReview = null; S.brainSeed = null; S.brainBad = null;
     }
     setView(b.dataset.view);
   }));

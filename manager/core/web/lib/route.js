@@ -64,6 +64,8 @@ const SECTION_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const ENTRY_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 // a filed review's identity (task 168): `brainreviews.REVIEW_ID_RE`
 const REVIEW_RE = /^r[vl]-[0-9a-f]{10}$/;
+// a Brain Agent request's id (task 209): `braindraft`'s `bd-<hex>`
+const CHANGE_RE = /^bd-[0-9a-f]{6,32}$/;
 
 function decodeSegment(raw) {
   try { return decodeURIComponent(raw); } catch (e) { return null; }
@@ -126,7 +128,15 @@ function parseRoute(where) {
       return { view: 'brain', invalid: 'entry', raw: decodeSegment(pathname) ?? pathname };
     }
     const id = extra.length === 1 && rest === 'e' ? decodeSegment(extra[0]) : null;
-    if (id !== null && ENTRY_RE.test(id)) return { view: 'brain', entry: id };
+    if (id !== null && ENTRY_RE.test(id)) {
+      // what one Brain Agent request changed in it (task 209), by the
+      // request's id; anything else is not a change and is dropped from
+      // the address, the entry still opened
+      const change = params.get('change');
+      if (change === null) return { view: 'brain', entry: id };
+      return CHANGE_RE.test(change) ? { view: 'brain', entry: id, change }
+        : { view: 'brain', entry: id, alias: true };
+    }
     return { view: 'brain', invalid: 'entry', raw: decodeSegment(pathname) ?? pathname };
   }
   if (extra.length) return { view: 'board', invalid: 'path', raw: pathname };
@@ -250,7 +260,7 @@ function formatRoute(route) {
   const base = '/' + VIEW_PATHS[view];
   if (view === 'brain' && r.seed) return `${base}/seed${r.seed === 'setup' ? '?from=setup' : ''}`;
   if (view === 'brain' && r.review) return `${base}/r/${enc(r.review.card)}/${enc(r.review.id)}`;
-  if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}`;
+  if (view === 'brain' && r.entry) return `${base}/e/${enc(r.entry)}${r.change ? `?change=${enc(r.change)}` : ''}`;
   if (view === 'phases' && r.phase) return `${base}/${enc(r.phase)}`;
   if (view === 'flight' || view === 'focus') {
     const path = r.session ? `${base}/${enc(r.session)}` : base;
@@ -339,6 +349,7 @@ function routeOf(S) {
     case 'brain':
       if (S.brainSeed) return { view, seed: S.brainSeed };
       if (S.brainReview) return { view, review: { card: S.brainReview.card, id: S.brainReview.id } };
+      if (S.brainEntry && S.brainChange) return { view, entry: S.brainEntry, change: S.brainChange };
       return S.brainEntry ? { view, entry: S.brainEntry } : { view };
     case 'phases': return S.phaseSel ? { view, phase: S.phaseSel } : { view };
     case 'flight':

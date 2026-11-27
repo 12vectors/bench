@@ -348,5 +348,69 @@ class Applied(_Board):
         self.assertEqual([a for a in state.AGENTS.values() if a["status"] == "running"], [])
 
 
+class ThePageMarks(unittest.TestCase):
+    """The entry page marks only located changes, in whole Markdown blocks
+    — run in node from the page's own source, as the other page-script
+    tests are."""
+
+    def run_page(self, body: str, after_body: str, before_body: str, current: str) -> str:
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available — the page script is unchecked")
+        from tests.test_agents_settings_ui import lift
+        rec = brainchange.record(draft="bd-0000000001", round_no=1, request="r",
+                                 entry_id="e-x", file="e-x.md",
+                                 base={"revision": "b", "title": "", "summary": "", "kind": "",
+                                       "body": before_body},
+                                 result={"revision": "a", "title": "", "summary": "", "kind": "",
+                                         "body": after_body}, at="t")
+        view = {"change": rec, "locations": brainchange.locate(
+            rec, current, current_revision="a" if current == after_body else "c")}
+        script = ("const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')"
+                  ".replace(/\"/g,'&quot;');\n"
+                  "const md = (s) => '<md>' + esc(s) + '</md>';\n"
+                  "const KIND_WORD = { insert: 'Added', delete: 'Removed', replace: 'Changed' };\n"
+                  + lift("changeLabel") + "\n" + lift("cutPoints") + "\n" + lift("bodyWithChanges")
+                  + f"\nconsole.log(bodyWithChanges({json.dumps(body)}, {json.dumps(view)}));")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def test_a_change_inside_a_list_marks_the_whole_list_and_nothing_else(self):
+        before = "Intro.\n\n- one\n- two\n\n## Next\n\nUnrelated."
+        after = "Intro.\n\n- one\n- two\n- three\n\n## Next\n\nUnrelated."
+        html = self.run_page(after, after, before, after)
+        self.assertIn('id="bchg-1"', html)
+        marked = html.split('<section', 1)[1].split('</section>', 1)[0]
+        self.assertIn("- one\n- two\n- three", marked)
+        self.assertNotIn("Unrelated", marked)
+        self.assertNotIn("Intro.", marked)
+        self.assertIn("Change 1 of 1: added 1 line", html)
+
+    def test_a_deletion_is_said_where_it_was_with_its_text(self):
+        before = "Para one.\n\nGone para.\n\nPara three."
+        after = "Para one.\n\nPara three."
+        html = self.run_page(after, after, before, after)
+        self.assertIn("b-chg-gone", html)
+        self.assertIn("Gone para.", html)
+        self.assertLess(html.index("Para one."), html.index("b-chg-gone"))
+        self.assertLess(html.index("b-chg-gone"), html.index("Para three."))
+
+    def test_a_fence_is_never_split(self):
+        before = "Intro.\n\n```\nx = 1\n\ny = 2\n```\n\nEnd."
+        after = before.replace("y = 2", "y = 3")
+        html = self.run_page(after, after, before, after)
+        marked = html.split('<section', 1)[1].split('</section>', 1)[0]
+        self.assertIn("```\nx = 1\n\ny = 3\n```", marked)
+
+    def test_hostile_text_is_escaped(self):
+        before = "Safe."
+        after = "Safe.\n\n<script>alert(1)</script>"
+        html = self.run_page(after, after, before, after)
+        self.assertNotIn("<script>", html)
+
+
 if __name__ == "__main__":
     unittest.main()

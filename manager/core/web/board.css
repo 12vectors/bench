@@ -2280,6 +2280,34 @@
   .b-link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
   .b-scope summary,.b-agent details summary{cursor:pointer;font-weight:600}
   @media (max-width:760px){.b-cols{grid-template-columns:minmax(0,1fr)}}
+  /* exact Brain changes (task 209): marked by words, a heavy edge and an
+     outline — never by colour alone — and read by a screen reader as
+     added or removed */
+  .b-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .b-diff-add{background:color-mix(in oklab, var(--calm) 12%, transparent)}
+  .b-diff-del{background:color-mix(in oklab, var(--alarm) 10%, transparent)}
+  .b-diff-sign{font-weight:700}
+  .b-chgnav h2{font-size:15px;margin:0 0 6px}
+  .b-chgnav{border-left:4px solid var(--accent)}
+  .b-chg-state{margin:4px 0}
+  .b-chg-pos{margin:8px 0 4px}
+  .b-chg-base{margin:4px 0 8px}
+  .b-chg-fields{margin:4px 0 8px;padding-left:18px}
+  .b-chg-fields del{color:var(--alarm)}
+  .b-chg-fields ins{color:var(--calm);text-decoration:underline}
+  .b-chglist{margin:8px 0;padding-left:22px;display:flex;flex-direction:column;gap:10px}
+  .b-chglist > li:focus{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+  .b-chgdiff summary{cursor:pointer;font-weight:600}
+  .b-chg{position:relative;margin:10px 0;padding:6px 10px 6px 12px;border-left:5px double var(--accent);
+    background:color-mix(in oklab, var(--accent) 8%, transparent);border-radius:0 6px 6px 0;scroll-margin:96px}
+  .b-chg:focus{outline:2px dashed var(--accent);outline-offset:3px}
+  .b-chg-gone{border-left-style:dashed;border-left-color:var(--alarm);background:color-mix(in oklab, var(--alarm) 7%, transparent)}
+  .b-chg-tag{display:block;font:600 12px/1.4 var(--sans);color:var(--text);margin:0 0 4px;
+    text-transform:none;letter-spacing:0}
+  .b-chg-tag::before{content:"✎ ";font-weight:700}
+  .b-chg-gone .b-chg-tag::before{content:"⌫ "}
+  .b-chg-was summary{cursor:pointer;font-size:12px}
+  .b-applied .b-actions{margin:6px 0}
   /* the curated handbook (task 171): five sections over the library */
   .b-hb{display:flex;flex-direction:column;gap:8px}
   .b-hb > h2{font-size:16px}
