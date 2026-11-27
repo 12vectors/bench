@@ -3626,8 +3626,19 @@ changes**. Everything else stays open and says why:
 | `cancelled`, `discarded` | the request was ended without an edit |
 | `not-launched` | the request could not start |
 
-Comments nobody asked the agent about are never touched by an edit, and
-a person's reopen is not undone by a later settlement or restart.
+Touching is read by **whole source lines**. A paragraph is usually one
+line of Markdown, so an edit to another sentence of the same paragraph
+touches the passage and resolves its thread; a line inserted directly
+before or after the passage (bench's own `## Sources and claims`, say)
+does not. Comments nobody asked the agent about are never touched by an
+edit, and a person's reopen is not undone by a later settlement or
+restart: settling reads the thread's own history (a resolve by that edit
+already recorded, even one since reopened, or an outcome already said)
+and writes nothing more, whatever the write journal still remembers.
+After a comment write the panel says Saved, Committed and Shared apart,
+with **Retry commit** while the commit failed and **Push now** /
+**Retry push** while a committed write is not on the remote yet, each
+asked by the request identity the page sent.
 
 **The record, version 1.** One file per entry,
 `brain/comments/<entry id>.md`, beside the entries in the work state, and

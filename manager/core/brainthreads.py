@@ -225,7 +225,9 @@ def ask(payload: dict) -> dict:
 
 def _touches(change: dict, start: int, end: int) -> bool:
     """Whether an applied change's edits touch lines start..end of the base
-    it was made from (an insertion at the passage's edge counts)."""
+    it was made from. Lines are whole source lines, so an edit to another
+    sentence of a one-line paragraph touches it; an insertion directly
+    before or after the passage does not."""
     for h in ((change.get("body") or {}).get("hunks") or []):
         edits = h.get("edits") or [{"beforeAt": h.get("beforeAt") or 0,
                                     "removed": h.get("removed") or 0}]
@@ -233,7 +235,9 @@ def _touches(change: dict, start: int, end: int) -> bool:
             at, gone = int(e.get("beforeAt") or 0), int(e.get("removed") or 0)
             if gone and at <= end and at + gone - 1 >= start:
                 return True
-            if not gone and start <= at <= end + 1:
+            # an insertion counts only between two of the passage's own
+            # lines: one directly before or after it changed nothing in it
+            if not gone and start < at <= end:
                 return True
     return False
 
@@ -261,10 +265,14 @@ def settle(draft_id: str) -> list[dict]:
             status = draft.get("status")
             key = link.get("request") or draft_id
             if status == "applied":
-                if t["state"] == "resolved" or any(o.get("draft") == draft_id
-                                                   for o in t["outcomes"]
-                                                   if o.get("outcome") in ("unrelated",
-                                                                           "unverified")):
+                # settled once: a resolve by this edit already in the history —
+                # even one a person has since reopened — or an outcome said
+                # for it. The record is the memory, not the write journal.
+                if t["state"] == "resolved" or any(
+                        ev.get("kind") == "resolve" and ev.get("by") == "edit"
+                        and ev.get("draft") == draft_id for ev in t["history"]) or any(
+                        o.get("draft") == draft_id for o in t["outcomes"]
+                        if o.get("outcome") in ("unrelated", "unverified")):
                     continue
                 try:
                     view = braindraft.change_view(draft_id)
@@ -304,6 +312,11 @@ def settle(draft_id: str) -> list[dict]:
                 continue
             if out[0] != "conflict" and (draft_id, out[0]) in {
                     (o.get("draft"), o.get("outcome")) for o in t["outcomes"]}:
+                continue
+            mine = [o for o in t["outcomes"] if o.get("draft") == draft_id]
+            if (out[0] == "conflict" and mine and mine[-1].get("outcome") == "conflict"
+                    and mine[-1].get("why") == out[1][:600]):
+                # this refusal is already the thread's newest word on it
                 continue
             tag = out[0] + (("." + str(conflict.get("at") or "")[-8:].replace(":", ""))
                             if out[0] == "conflict" else "")

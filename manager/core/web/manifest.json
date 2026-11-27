@@ -296,13 +296,13 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 191703,
-   "sha256": "cb8553c5beb4ff1bdb5e6cc05d6a548bc943b61ff6d3c07e5f2ca20f84c973d5",
+   "bytes": 191916,
+   "sha256": "0e52e573dafd3c3af6c1bf5206eed054e357f22eb9b77bf09c46cb602e6e0dfd",
    "type": "text/javascript; charset=utf-8"
   },
   "views/braincomments.js": {
-   "bytes": 24754,
-   "sha256": "b8235de06d67e3c6bb8e103cecf28ae3c9fc1847ff758bc837d156852fbc40cd",
+   "bytes": 26178,
+   "sha256": "85b81b90f423e41432a952978fa1140b5db541e6a244cd597e48caaba4185ad4",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {

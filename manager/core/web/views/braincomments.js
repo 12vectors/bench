@@ -310,7 +310,8 @@ function commentsHtml(e) {
         : '<p class="b-loading" role="status" aria-busy="true">Reading the comments…</p>') + '</section>';
   }
   const msg = cm.msg ? `<p class="${cm.msg.bad ? 'b-warn' : 'b-note'}" role="${cm.msg.bad ? 'alert' : 'status'}">` +
-    `${esc(cm.msg.text)}${cm.msg.retry ? ' ' + btn('retry-commit', 'Retry commit', { arg: cm.msg.retry }) : ''}</p>` : '';
+    `${esc(cm.msg.text)}${cm.msg.retry ? ' ' + btn('retry-commit', 'Retry commit', { arg: cm.msg.retry }) : ''}` +
+    `${cm.msg.push ? ' ' + btn('retry-push', cm.msg.pushFailed ? 'Retry push' : 'Push now', { arg: cm.msg.push }) : ''}</p>` : '';
   const open = d.threads.filter(t => t.state === 'open');
   const closed = d.threads.filter(t => t.state !== 'open');
   return `<section class="b-panel b-comments" aria-labelledby="bcm-h">${head}` +
@@ -332,10 +333,28 @@ function commentsHtml(e) {
 
 /* ── acting ─────────────────────────────────────────────────────────── */
 
+// Saved, Committed and Shared, said apart as for any Brain write
 function opWords(op) {
   const c = (op && op.commit) || {};
-  return c.state === 'committed' ? 'committed' : c.state === 'off' ? 'saved, not committed (committing board edits is off)'
+  const p = (op && op.push) || {};
+  const shared = p.state === 'shared' ? '; shared' : p.state === 'pending' ? '; not shared yet (push pending)'
+    : p.state === 'failed' ? `; not shared — the push failed (${p.detail || 'sync could not publish it'})`
+    : p.state === 'off' ? '; not shared (sync is off)' : '';
+  return c.state === 'committed' ? 'saved and committed' + shared
+    : c.state === 'off' ? 'saved, not committed (committing board edits is off)'
     : c.state === 'failed' ? `saved; the commit failed (${c.detail || 'git refused it'})` : 'saved';
+}
+
+// the message after a write or a retry, with the retry it calls for:
+// Retry commit while the commit failed, Push now / Retry push while a
+// committed write is not on the remote yet — each by the request identity
+function opMsg(lead, op, request) {
+  const c = (op && op.commit) || {};
+  const p = (op && op.push) || {};
+  const unpushed = c.state === 'committed' && (p.state === 'pending' || p.state === 'failed');
+  return { text: `${lead}${opWords(op)}.`, bad: c.state === 'failed' || p.state === 'failed',
+           retry: c.state === 'failed' ? request || null : null,
+           push: unpushed ? request || null : null, pushFailed: p.state === 'failed' };
 }
 
 async function send(url, body, onOk) {
@@ -402,22 +421,25 @@ function act(name, arg, root, entry) {
     if (m) { m.scrollIntoView({ block: 'center' }); m.focus(); }
     return;
   }
-  if (name === 'retry-commit') {
-    post('/api/brain/retry', { request: arg, action: 'commit' }).then(r => {
-      cm.msg = r.ok ? { text: 'Committed.' } : { bad: true, text: r.error || 'the commit was refused', retry: arg };
+  if (name === 'retry-commit' || name === 'retry-push') {
+    const action = name === 'retry-commit' ? 'commit' : 'push';
+    post('/api/brain/retry', { request: arg, action }).then(r => {
+      cm.msg = r.ok ? opMsg('Asked again — ', (r.data || {}).operation, arg)
+        : { bad: true, text: r.error || `the ${action} was refused`, [action === 'commit' ? 'retry' : 'push']: arg };
       cm.at = 0; hooks.repaint(true);
     });
     return;
   }
-  const done = (what) => (data) => {
+  // a write's request identity is the one the page sent: the writer's
+  // answer says the operation's state, and a retry asks for it by that
+  const done = (what, request) => (data) => {
     if (data.comments) cm.data = data.comments;
-    const op = data.operation;
-    cm.msg = { text: `${what} — ${opWords(op)}.`, retry: op && op.commit && op.commit.state === 'failed' ? op.request || null : null };
+    cm.msg = opMsg(`${what} — `, data.operation, request);
     cm.at = Date.now();
   };
   const go = (url, body, what, after) => {
     cm.busyUrl = url;
-    cm.onOk = (data) => { done(what)(data); if (after) after(data); };
+    cm.onOk = (data) => { done(what, body && body.request)(data); if (after) after(data); };
     send(url, body, cm.onOk);
   };
   if ((name === 'post' || name === 'ask' || name === 'send-reanchor') && p) {

@@ -3264,6 +3264,9 @@ function renderBrain(force) {
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
       ? (active.classList.contains('b-conflict') ? '.b-conflict'
+        // the destination's heading, focused on arrival, keeps focus when a
+        // section read after it (the comments, task 210) repaints the page
+        : active.classList.contains('b-title') ? '.b-title'
         : active.dataset.skey ? `[data-skey="${CSS.escape(active.dataset.skey)}"]`
         : active.dataset.sact ? `[data-sact="${CSS.escape(active.dataset.sact)}"]`
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`

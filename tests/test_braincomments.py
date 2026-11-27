@@ -340,11 +340,63 @@ class Asking(Threads):
         brainthreads.settle(out["draft"])
         again = {t["id"]: t for t in self.comments()["threads"]}[out["thread"]]
         self.assertEqual(len(again["history"]), n)
-        # a person's reopen is not undone by a later settle or a restart
+        # a person's reopen is not undone by a later settle or a restart —
+        # and not because the write journal still remembers the resolve
+        # (it keeps a bounded number of operations): settle writes nothing
         self.post("reopen", thread=out["thread"], text="Not quite.")
+        real = brainthreads._append
+        brainthreads._append = lambda *a, **k: self.fail(f"settle wrote {a!r}")
+        self.addCleanup(setattr, brainthreads, "_append", real)
         brainthreads.reconcile()
+        brainthreads.settle(out["draft"])
+        brainthreads._append = real
         self.assertEqual({t["id"]: t for t in self.comments()["threads"]}[out["thread"]]
                          ["state"], "open")
+
+    def test_an_insertion_beside_the_passage_does_not_resolve_it(self):
+        # the passage is the body's last line; bench appends its own
+        # "Sources and claims" right after it, and the person adds a line too
+        out, _ = self.ask(quote="Exports are written by the export module")
+        draft = self.settle(out["draft"])
+        body = brain.entry("e-exports")["body"].rstrip("\n") + "\n\nA new closing note.\n"
+        self.apply(draft, body=body)
+        brainthreads.settle(out["draft"])
+        t = self.comments()["threads"][0]
+        self.assertEqual(t["state"], "open")
+        self.assertEqual(t["outcomes"][-1]["outcome"], "unrelated")
+
+    def test_touching_is_by_the_passage_s_own_lines(self):
+        def change(*edits):
+            return {"body": {"hunks": [{"edits": list(edits)}]}}
+        ins = lambda at: {"beforeAt": at, "removed": 0}  # noqa: E731
+        rep = lambda at, n=1: {"beforeAt": at, "removed": n}  # noqa: E731
+        touches = brainthreads._touches
+        # a one-line passage at line 3
+        self.assertFalse(touches(change(ins(3)), 3, 3))   # directly before it
+        self.assertFalse(touches(change(ins(4)), 3, 3))   # directly after it
+        self.assertTrue(touches(change(rep(3)), 3, 3))
+        self.assertFalse(touches(change(rep(2)), 3, 3))
+        self.assertTrue(touches(change(rep(2, 2)), 3, 3))
+        # a three-line passage: an insertion between its lines touches it
+        self.assertTrue(touches(change(ins(4)), 3, 5))
+        self.assertFalse(touches(change(ins(6)), 3, 5))
+
+    def test_a_repeated_refusal_is_said_once(self):
+        out, _ = self.ask()
+        draft = self.settle(out["draft"])
+        self.entry_file.write_text(EXISTING.replace("Exports are", "Today exports are"),
+                                   encoding="utf-8")
+        with self.assertRaises(braindraft.Refused):
+            self.apply(draft)
+        brainthreads.settle(out["draft"])
+        real = brainthreads._append
+        brainthreads._append = lambda *a, **k: self.fail(f"settle wrote {a!r}")
+        self.addCleanup(setattr, brainthreads, "_append", real)
+        brainthreads.settle(out["draft"])
+        brainthreads.reconcile()
+        brainthreads._append = real
+        t = self.comments()["threads"][0]
+        self.assertEqual([o["outcome"] for o in t["outcomes"]], ["conflict"])
 
     def test_an_edit_elsewhere_keeps_the_thread_open_with_its_reason(self):
         self.entry_file.write_text(EXISTING.replace(
@@ -443,6 +495,28 @@ class Committed(Threads):
         shown = git(self.work, "show", "HEAD:brain/comments/e-exports.md")
         self.assertNotIn(str(self.tmp), shown)
         self.assertIn('"actor": "reviewer"', shown)
+
+    def test_a_failed_commit_is_said_and_retried_by_its_request(self):
+        lock = self.work / ".git" / "index.lock"
+        lock.write_text("")
+        self.addCleanup(lock.unlink, True)
+        rev = brain.entry("e-exports")["revision"]
+        request = self.key()
+        out = brainthreads.write("open", {"request": request, "entry": "e-exports",
+                                          "expected": "none", "entryRevision": rev,
+                                          "quote": "written by the export module",
+                                          "text": "Is this still true?"})
+        self.assertTrue(out["operation"]["saved"])
+        self.assertEqual(out["operation"]["commit"]["state"], "failed")
+        # the comment is saved and readable; nothing was rolled back
+        self.assertEqual(len(self.comments()["threads"]), 1)
+        # the page retries by the request identity it sent
+        lock.unlink()
+        again = brainwrite.retry({"request": request, "action": "commit"})
+        self.assertEqual(again["commit"]["state"], "committed", again["commit"])
+        self.assertIn("push", again)
+        files = git(self.work, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertEqual(files, ["brain/comments/e-exports.md"])
 
 
 if __name__ == "__main__":
