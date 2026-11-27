@@ -44,7 +44,7 @@ L2  githost assets agreements operations decisiontrace
 L3  state reports templates gitrepo verifierreport workbase
 L4  taskfiles
 L5  plans profiles execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice handbook adoption
+L6  gatepolicy reviews inputs basechoice handbook adoption braincomments
 L7  evidence resultidentity artifacts seedsources
 L8  staleness
 L9  verify
@@ -67,7 +67,7 @@ L25 setupguide
 L26 phases
 L27 phasescope archiveall
 L28 refine reasoning coordinate braindraft
-L29 recovery brainreconcile
+L29 recovery brainreconcile brainthreads
 L30 scheduler
 L31 ask attention
 L32 routes watch
@@ -209,6 +209,19 @@ maintenance health (`health`): its own queue reading, the Brain's index
 and the handbook's source authority (`handbook.authority` under one
 shared `handbook.budget`), writing nothing; its preview-bound Repair is
 an action on the same queue.
+
+`braincomments` (task 210) sits beside `handbook` (L6), directly above
+`brain`: the version 1 record of comments on selected entry text
+(`brain/comments/<entry id>.md`, append-only events), mapping a
+selection onto the entry's Markdown and locating each passage in the
+entry now — current, relocated only on a unique match with its context,
+otherwise outdated or detached. It imports `brain`, `brainchange` and
+`redact` and writes nothing; `brainwrite` writes its records.
+`brainthreads` (task 210) sits beside `brainreconcile` (L29), directly
+above `braindraft`: a person's comment writes through `brainwrite`, Ask
+agent through `braindraft.start` (the existing drafting path), and the
+settling of a thread against an applied change record. It owns no
+store; `routes` and `board` (a start-up reconcile) import it.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -467,7 +480,7 @@ L2  state reports templates gitrepo assets verifierreport agreements operations 
 L3  githost
 L4  taskfiles
 L5  profiles plans execowner movements decisions brain
-L6  gatepolicy reviews inputs basechoice handbook adoption
+L6  gatepolicy reviews inputs basechoice handbook adoption braincomments
 L7  evidence resultidentity artifacts seedsources
 L8  staleness
 L9  verify
@@ -489,7 +502,7 @@ L24 setupguide
 L25 phases
 L26 phasescope archiveall
 L27 refine reasoning coordinate braindraft
-L28 recovery brainreconcile
+L28 recovery brainreconcile brainthreads
 L29 scheduler
 L30 ask attention
 L31 watch routes
@@ -818,5 +831,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 196
+routes 203
 ```

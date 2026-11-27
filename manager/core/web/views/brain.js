@@ -24,6 +24,7 @@ import { syncRoute } from '../lib/nav.js';
 import { activeSlot, closePanel, dropSlot, openAgent, registerAgent, renderPanel, savePanel, slotsOf } from '../lib/panel.js';
 import { pressHold } from '../lib/press.js';
 import { toast } from '../lib/toast.js';
+import { commentsHtml, forgetComments, paintAnchors, setCommentHooks, wireComments } from './braincomments.js';
 import { evalField, evalHtml, openEvaluation, setEvalRepaint, wireEvaluate } from './evaluate.js';
 import { recHtml, setRecHooks, wireReconcile } from './reconcile.js';
 import { seedField, seedHtml, setSeedRepaint, wireSeed } from './seed.js';
@@ -188,6 +189,7 @@ function forget() {
   if (cache.handbook) cache.handbook.at = 0;
   Object.values(cache.entries).forEach(slot => { slot.at = 0; });
   cache.revisions = {};
+  forgetComments();
 }
 
 const chip = (cls, text, title) =>
@@ -1615,7 +1617,9 @@ function entryHtml(slot, id) {
       '<p class="b-none">This entry has no body.</p>'}</div>` +
     `<aside class="b-side" aria-label="About this entry"><div class="b-panel">${facts}</div>${adoptionHtml(e)}${authorityHtml(e)}` +
     `<div class="b-panel"><h2>Classification history</h2>${history}</div>${revisionsHtml(e.id)}</aside></div>` +
-    warnings + '</article>';
+    // comments on selected passages (task 210): a maintained entry only,
+    // and not while a write form is open over its text
+    (ed ? '' : commentsHtml(e)) + warnings + '</article>';
 }
 
 /* ── an applied change, navigated (task 209) ──────────────────────────
@@ -2041,6 +2045,10 @@ function reviewHtml(slot, k) {
     `<p class="b-assess b-assess-${esc(a.state)}" role="note"><strong>${esc(ASSESS[a.state] || a.state)}</strong> — ${esc(a.why)}</p>` +
     (r.clipped ? `<p class="b-warn" role="note">This report was clipped when it was filed: “${esc(r.clipped)}”</p>` : '') +
     actions +
+    // a filed review is the card's, immutable here: it is discussed on its
+    // card, never annotated as if it were an editable entry (task 210)
+    `<p class="b-note b-cm-review" role="note">Comments on passages are for maintained Brain entries. ` +
+    `To discuss this review, <a href="${esc(v.source.reviewsAddress)}" data-route>comment on its card</a>.</p>` +
     `<div class="b-read"><div class="b-prose">${md(r.body, { base: 2 }) || '<p class="b-none">The report is empty.</p>'}</div>` +
     `<aside class="b-side" aria-label="About this review"><div class="b-panel"><h2>Provenance</h2>${reviewFacts(v)}</div>` +
     reviewClassHtml(v) + linked + others + '</aside></div></article>';
@@ -2954,6 +2962,12 @@ function wire(el) {
   wireEvaluate(el);
   setRecHooks((force) => renderBrain(force), openEvaluation);
   wireReconcile(el);
+  setCommentHooks({ repaint: (force) => renderBrain(force), openDraft: (id) => openDraft(id) });
+  wireComments(el, () => {
+    const k = key();
+    const slot = k.startsWith('e:') ? cache.entries[k] : null;
+    return slot && slot.data && slot.data.state === 'entry' ? slot.data : null;
+  });
   el.addEventListener('click', (ev) => {
     const k = ev.target.closest && ev.target.closest('[data-bkind]');
     if (k && el.contains(k)) {
@@ -3244,11 +3258,15 @@ function renderBrain(force) {
       (active.dataset.skey && (active.tagName === 'TEXTAREA' || active.type === 'text' ||
         active.type === 'search')) ||
       ((active.dataset.bf || active.dataset.ag || active.dataset.agq || active.dataset.age || active.dataset.rvf ||
+        active.dataset.cmf ||
         active.dataset.hb || active.dataset.ad) &&
         (active.tagName === 'TEXTAREA' || active.type === 'text')))
       ? [active.selectionStart, active.selectionEnd] : null;
     const keep = active && el.contains(active) && active.dataset
       ? (active.classList.contains('b-conflict') ? '.b-conflict'
+        // the destination's heading, focused on arrival, keeps focus when a
+        // section read after it (the comments, task 210) repaints the page
+        : active.classList.contains('b-title') ? '.b-title'
         : active.dataset.skey ? `[data-skey="${CSS.escape(active.dataset.skey)}"]`
         : active.dataset.sact ? `[data-sact="${CSS.escape(active.dataset.sact)}"]`
         : active.dataset.bfind ? `[data-bfind="${CSS.escape(active.dataset.bfind)}"]`
@@ -3265,6 +3283,11 @@ function renderBrain(force) {
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
         // a change the reader moved to (task 209) keeps focus through a live repaint
         : active.dataset.chg ? `[data-chg="${CSS.escape(active.dataset.chg)}"]`
+        // a comment's field or action (task 210) keeps focus through a live repaint
+        : active.dataset.cmf ? `[data-cmf="${CSS.escape(active.dataset.cmf)}"]` +
+          (active.dataset.cmarg ? `[data-cmarg="${CSS.escape(active.dataset.cmarg)}"]` : '')
+        : active.dataset.cm ? `[data-cm="${CSS.escape(active.dataset.cm)}"]` +
+          (active.dataset.cmarg ? `[data-cmarg="${CSS.escape(active.dataset.cmarg)}"]` : '')
         : active.id && active.id.startsWith('bchgd-') ? `#${CSS.escape(active.id)}`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]` +
           (active.dataset.barg ? `[data-barg="${CSS.escape(active.dataset.barg)}"]` : '')
@@ -3272,6 +3295,8 @@ function renderBrain(force) {
             (active.type === 'radio' ? `[value="${CSS.escape(active.value)}"]` : '') : null) : null;
     el.innerHTML = `<div class="b-main">${html}</div>`;
     painted = html;
+    // each open comment's passage marked where it is (task 210)
+    paintAnchors(el);
     if (S.brainReview) settleLinks(el, reviewHref(S.brainReview.card, S.brainReview.id));
     else if (S.brainEntry) settleLinks(el, entryHref(S.brainEntry));
     if (keep) {

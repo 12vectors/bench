@@ -63,8 +63,10 @@ import assets
 import basechoice  # noqa: F401
 import brain  # noqa: F401
 import brainchange  # noqa: F401
+import braincomments  # noqa: F401
 import braindraft
 import brainreconcile
+import brainthreads
 import brainreviews  # noqa: F401
 import brainwrite  # noqa: F401
 import handbook  # noqa: F401
@@ -290,6 +292,10 @@ def main() -> None:
     # the process: closed as failed, naming the restart, never re-run; an
     # Apply left unfinished is settled from the Brain's own journal (task 175).
     braindraft.recover()
+    # Comment threads linked to a drafting request learn what it came to —
+    # an Apply a restart settled included; resolved only by an applied
+    # edit that touched their passage. Writes comment records only (task 210).
+    brainthreads.reconcile()
     # A run's report a dead board was filing is read against its card: one
     # the card holds is recorded filed, one it does not is kept, unfiled,
     # for a person's Retry filing. Nothing is appended here (task 169).

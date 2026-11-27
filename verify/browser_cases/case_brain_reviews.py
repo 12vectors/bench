@@ -194,6 +194,14 @@ class BrainReviews(unittest.TestCase):
         self.assertEqual(b.eval("document.querySelector('.b-prose').querySelectorAll('script, img, [onerror]').length"), 0)
         # there is nothing to edit the report with
         self.assertEqual(b.eval("document.querySelectorAll('#bshell [data-bact=\"edit\"], #bshell textarea').length"), 0)
+        # a filed review is never annotated: no passage controls, and its
+        # discussion is routed to the card that owns it (task 210)
+        self.assertEqual(b.eval("document.querySelectorAll('#bshell .b-comments, #bshell [data-cm=\"pick\"]').length"), 0)
+        note = self.text(b, ".b-cm-review")
+        self.assertIn("Comments on passages are for maintained Brain entries", note)
+        self.assertIn("comment on its card", note)
+        self.assertEqual(b.eval("document.querySelector('.b-cm-review a').getAttribute('href')"),
+                         b.eval("document.querySelector('#bshell a.b-oncard').getAttribute('href')"))
         shot("brain-review-desktop-night")
         b.eval("S.dark = false; applyTheme(); true")
         shot("brain-review-desktop-day")

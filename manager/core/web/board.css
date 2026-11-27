@@ -2285,6 +2285,34 @@
   .b-diff-add{background:color-mix(in oklab, var(--calm) 12%, transparent)}
   .b-diff-del{background:color-mix(in oklab, var(--alarm) 10%, transparent)}
   .b-diff-sign{font-weight:700}
+  /* comments on selected passages (task 210): an outlined, underlined
+     mark — never colour alone — and the thread list under the entry */
+  .b-anchor{background:color-mix(in oklab, var(--accent) 14%, transparent);color:inherit;
+    outline:1px dashed var(--accent);outline-offset:1px;text-decoration:underline dotted var(--accent);
+    text-underline-offset:3px;border-radius:2px;scroll-margin:96px}
+  .b-anchor:focus{outline:2px solid var(--accent)}
+  .b-comments{margin-top:16px}
+  .b-comments h2{font-size:16px;margin:0 0 6px}
+  .b-cm-list{list-style:none;margin:10px 0;padding:0;display:flex;flex-direction:column;gap:12px}
+  .b-cm-thread{border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:6px;padding:8px 12px}
+  .b-cm-resolved{border-left-color:var(--idle)}
+  .b-cm-h{font-size:14px;margin:0 0 4px}
+  .b-cm-quote{margin:4px 0;padding:4px 10px;border-left:3px solid var(--border);font-style:italic;overflow-wrap:anywhere}
+  .b-cm-where{margin:4px 0}
+  .b-cm-outdated,.b-cm-detached{border:1px solid var(--alarm)}
+  .b-cm-msgs,.b-cm-links,.b-cm-outcomes{margin:6px 0;padding-left:0;list-style:none}
+  .b-cm-who{margin:4px 0 0}
+  .b-cm-text{margin:2px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
+  .b-cm-acts textarea,.b-cm-compose textarea{width:100%;box-sizing:border-box}
+  .b-cm-compose{border-left:4px solid var(--accent);margin:10px 0}
+  .b-cm-blocks{display:flex;flex-direction:column;gap:6px;padding-left:22px}
+  .b-cm-block{text-align:left;width:100%;min-height:44px;padding:6px 10px;font:inherit;color:inherit;
+    background:var(--sunken);border:1px solid var(--border);border-radius:6px;cursor:pointer}
+  .b-cm-block:focus{outline:2px solid var(--accent)}
+  .b-selbar{position:fixed;z-index:40;display:flex;gap:6px;padding:6px;background:var(--raised);
+    border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  .b-selbar[hidden]{display:none}
+  .b-selbar button{min-height:36px}
   .b-chgnav h2{font-size:15px;margin:0 0 6px}
   .b-chgnav{border-left:4px solid var(--accent)}
   .b-chg-state{margin:4px 0}

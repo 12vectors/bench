@@ -35,7 +35,9 @@ import assets
 import agentsettings
 import adoption
 import brain
+import braincomments
 import braindraft
+import brainthreads
 import brainreconcile
 import brainreviews
 import brainwrite
@@ -1563,9 +1565,64 @@ def post_brain_draft(req) -> None:
     try:
         result = BRAIN_DRAFT_STEPS[step](req.body)
     except braindraft.Refused as exc:
+        # a refused Apply (a conflict) is recorded on the threads linked to
+        # the request, which stay open (task 210)
+        if step == "apply":
+            _settle_threads((req.body or {}).get("id"))
         req.reply(exc.status, {"error": str(exc), **exc.extra})
         return
+    if step in ("apply", "cancel", "discard"):
+        _settle_threads(((result or {}).get("draft") or {}).get("id")
+                        or (req.body or {}).get("id"))
     state.broadcast({"type": "brain"})
+    req.reply(200, result)
+
+
+def _settle_threads(draft_id) -> None:
+    # Comment threads linked to a drafting request learn what it came to
+    # (task 210): resolved only by an applied edit that touched their
+    # passage. Settling writes comment records only, never the entry; a
+    # failure to settle is retried at the next start, never raised here.
+    if not isinstance(draft_id, str):
+        return
+    try:
+        brainthreads.settle(draft_id)
+    except (brainthreads.Refused, brainwrite.Refused, braincomments.Invalid):
+        pass
+
+
+def get_brain_comments(req) -> None:
+    # One entry's comment threads (task 210), each passage located in the
+    # entry as it is now and each linked agent request's state on this
+    # board. A read: nothing is written, settled or launched. A filed
+    # review is not a Brain entry: its discussion is on its card.
+    if _q(req, "review"):
+        card = _q(req, "card") or ""
+        req.reply(409, {"error": "a filed review is kept on its card and is never "
+                        "annotated in the Brain; discuss it on the card",
+                        "code": "review-immutable",
+                        "card": f"/cards/{card}?tab=reviews&review={_q(req, 'review')}"})
+        return
+    try:
+        req.reply(200, {"comments": brainthreads.reading(_q(req, "entry"))})
+    except brainthreads.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
+def post_brain_comment(req) -> None:
+    # A person's comment, reply, resolution, reopening or re-anchoring
+    # (task 210): one record appended through the Brain's writer, bound to
+    # the record revision the page read and a request identity. Posting a
+    # comment launches nothing.
+    step = req.path.rsplit("/", 1)[-1]
+    try:
+        if step == "ask":
+            result = brainthreads.ask(req.body)
+        else:
+            result = brainthreads.write(step, req.body)
+    except brainthreads.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+        return
     req.reply(200, result)
 
 
@@ -2821,6 +2878,7 @@ ROUTES = (
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
     Route("GET", "/api/brain/change", "read", get_brain_change),
+    Route("GET", "/api/brain/comments", "read", get_brain_comments),
 
     Route("POST", "/api/move", "browser-mutation", post_move),
     Route("POST", "/api/events", "event-ingest", post_events),
@@ -2927,6 +2985,12 @@ ROUTES = (
     Route("POST", "/api/brain/draft/discard", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/retarget", "browser-mutation", post_brain_draft),
     Route("POST", "/api/brain/draft/apply", "browser-mutation", post_brain_draft),
+    Route("POST", "/api/brain/comments/open", "browser-mutation", post_brain_comment),
+    Route("POST", "/api/brain/comments/reply", "browser-mutation", post_brain_comment),
+    Route("POST", "/api/brain/comments/resolve", "browser-mutation", post_brain_comment),
+    Route("POST", "/api/brain/comments/reopen", "browser-mutation", post_brain_comment),
+    Route("POST", "/api/brain/comments/reanchor", "browser-mutation", post_brain_comment),
+    Route("POST", "/api/brain/comments/ask", "browser-mutation", post_brain_comment),
     Route("POST", "/api/card/comment", "browser-mutation", post_card_comment),
     Route("POST", "/api/card/refine", "browser-mutation", post_card_refine),
     Route("POST", "/api/card/refine/apply", "browser-mutation", post_card_refine_decision),

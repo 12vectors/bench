@@ -322,6 +322,17 @@
       "lede": "What the review shows before Apply, the change record an Apply keeps and where it lives, how View changes places each change — exactly, relocated or not at all — and what reading it does: nothing.",
       "source": "AGENTS.md",
       "from": "### Reviewing and navigating exact Brain changes",
+      "to": "### Comments on selected text"
+    },
+    {
+      "path": "/concepts/brain-comments/",
+      "title": "Comments on selected Brain text",
+      "layout": "article",
+      "section": "Concepts",
+      "description": "Select a passage of a Brain entry to comment on it or ask the Brain Agent to work on it: anchored to the entry's Markdown, located conservatively after edits, kept as versioned history in the work state, and resolved only by an applied edit that touched the passage or by a person.",
+      "lede": "How a selection becomes an anchor and when it is refused, what In place, Found again, Outdated and Detached mean, why Post comment starts nothing and Ask agent starts exactly one drafting request, what resolves a thread and what keeps it open, and the record it is all kept in.",
+      "source": "AGENTS.md",
+      "from": "### Comments on selected text",
       "to": "### Reviews in the Brain"
     },
     {
