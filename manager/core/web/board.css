@@ -2303,7 +2303,7 @@
   .b-chg-tag{display:block;font:600 12px/1.4 var(--sans);color:var(--text);margin:0 0 4px;
     text-transform:none;letter-spacing:0}
   .b-chg-tag::before{content:"✎ ";font-weight:700}
-  .b-chg-gone .b-chg-tag::before{content:"⌫ "}
+  .b-chg-gone .b-chg-tag::before{content:"− "}
   .b-chg-was summary{cursor:pointer;font-size:12px}
   .b-applied .b-actions{margin:6px 0}
   /* the curated handbook (task 171): five sections over the library */
