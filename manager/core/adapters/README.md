@@ -209,6 +209,13 @@ resolved source path and that path's hash, so what those readings
 describe or grant is the source selection itself. A card's launch always
 pins first and never takes that path.
 
+Since task 203 every launch may also carry one entry named
+`project-handbook`: the project handbook's selection, compiled by bench
+(not copied from a file) and pinned like any other input, so an adapter
+grants it exactly as it grants the rest — nothing changes in the
+contract. An adapter that declares no `inputs.delivery: exact-read`
+receives the same text in the prompt instead, and needs no grant for it.
+
 ### Approved workflow briefs (`AGENT_GUIDANCE`) — optional
 
 The workflow briefs the prompt makes mandatory reading but that live

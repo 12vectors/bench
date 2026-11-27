@@ -41,6 +41,7 @@ from pathlib import Path
 import acceptance
 import agents
 import config
+import handbook
 import phases
 import profiles
 import records
@@ -448,8 +449,10 @@ def request(filename: str, stage: str, *, comment_id: str | None = None,
 
         # resolved and pinned before anything is written: a board that
         # cannot launch a refinement refuses here, with no comment saved
-        manifest = profiles.require(profiles.manifest(
-            "refine", filename, stage, pin_inputs=True))
+        # the project handbook rides along as optional guidance (task 203)
+        manifest = profiles.require(handbook.attach(profiles.manifest(
+            "refine", filename, stage), "refine"))
+        profiles.pin(manifest)
 
         if text is not None:
             entry = taskfiles.add_comment(filename, stage, text, _author(),

@@ -56,21 +56,28 @@ const INPUT_STATE = {
   unresolved: ['none', '—', 'not resolved'],
 };
 
-function inputRows(found) {
+/* `opts.handbook` adds the run's handbook summary after the rows (the
+   Focus view's reading of a frozen run, with `opts.now`, the handbook as
+   it reads today, kept beside it rather than merged into it). */
+function inputRows(found, opts) {
   const items = found.context || [];
+  const hb = opts && opts.handbook
+    ? `<div class="lrows">${handbookPanel(found.handbook, opts.now)}</div>` : '';
   if (!items.length) {
     return `<div class="check-row none"><span class="glyph">—</span>` +
       `<span class="name">no approved context selected</span>` +
-      `<span class="state">the run reads the repository it is in</span></div>`;
+      `<span class="state">the run reads the repository it is in</span></div>` + hb;
   }
   return items.map(i => {
-    const [cls, glyph, word] = INPUT_STATE[i.status] || INPUT_STATE.unresolved;
+    let [cls, glyph, word] = INPUT_STATE[i.status] || INPUT_STATE.unresolved;
+    // the handbook is guidance: one that did not land is a note, not a failure
+    if (i.kind === 'handbook' && cls === 'fail') [cls, glyph, word] = ['none', '·', 'not delivered'];
     const need = i.required ? '' : ' · optional';
     return `<div class="check-row ${cls}" title="${esc(i.source)}">` +
       `<span class="glyph">${glyph}</span>` +
       `<span class="name">${esc(i.name)}</span>` +
       `<span class="state">${esc(word)}${need}</span></div>`;
-  }).join('');
+  }).join('') + hb;
 }
 
 function grantRows(found) {
@@ -337,7 +344,7 @@ async function profileSheet(task, intent) {
     `Checked ${esc(fmtShort(Date.now() / 1000))} against current settings. ` +
     `This is not proof the run will succeed.</p>` +
     next +
-    `<div class="lrows">${rows.join('')}</div>` +
+    `<div class="lrows">${rows.join('')}${handbookPanel(p.handbook)}</div>` +
     `<p class="cscope">Launch only. Merge rules, Bench checks, CI and review ` +
     `are separate signals on the card.</p>` +
     `<details class="fold"><summary>Access details — commands, files and blocked capabilities</summary>` +
@@ -384,6 +391,69 @@ async function profileSheet(task, intent) {
   if (t && !wrap.contains(document.activeElement)) t.focus();
 }
 
+/* The project handbook a run is (or was) given (task 203): one quiet
+   line in neutral words, and the selection one fold away — which entries,
+   at which revision, what was left out and why, and any diagnostic. It is
+   guidance, so nothing here is drawn as a failure or an alert, and it says
+   plainly that supplied bytes are not proof the run read or followed
+   them. `now` is the handbook as it reads today, beside a frozen run's. */
+const HANDBOOK_ITEM_WORD = {
+  supplied: 'supplied', omitted: 'listed, not supplied', 'not-operative': 'indexed only',
+  retired: 'indexed only', empty: 'no body text yet', missing: 'linked entry missing',
+  duplicate: 'duplicate id', candidate: 'not yet selected',
+};
+
+function handbookLine(hb) {
+  if (!hb) return 'not recorded for this run';
+  const bits = [];
+  if (hb.supplied) bits.push(`${hb.supplied} ${hb.supplied === 1 ? 'entry' : 'entries'} supplied`);
+  if ((hb.omitted || []).length) bits.push(`${hb.omitted.length} listed, not supplied`);
+  if ((hb.diagnostics || []).length)
+    bits.push(`${hb.diagnostics.length} ${hb.diagnostics.length === 1 ? 'note' : 'notes'}`);
+  if (hb.state === 'none') bits.push('nothing to supply; the run starts normally');
+  if (hb.state === 'not-supplied' && hb.why) bits.push(hb.why);
+  if (hb.supplied && hb.delivery) bits.push(hb.deliveryNote || hb.delivery);
+  return bits.join(' · ');
+}
+
+function handbookDetail(hb, now) {
+  if (!hb) return '';
+  const lines = [];
+  for (const s of hb.sections || []) {
+    if (!(s.items || []).length) continue;
+    lines.push(`${s.title}`);
+    for (const i of s.items) {
+      lines.push(`  ${HANDBOOK_ITEM_WORD[i.state] || i.state}  ${i.title || i.id}  ` +
+        `(${i.id}${i.revision ? ' @ ' + i.revision.slice(0, 12) : ''})` +
+        (i.note ? `\n      ${i.note}` : '') +
+        (i.qualifications || []).map(q => `\n      qualified: ${q}`).join('') +
+        (i.reason && !i.supplied ? `\n      ${i.reason}` : ''));
+    }
+  }
+  if (!lines.length) lines.push('no entries are linked in the handbook');
+  for (const d of hb.diagnostics || [])
+    lines.push(`note  ${d.code}: ${d.message}` + (d.remedy ? `\n      ${d.remedy}` : ''));
+  if (hb.sinceImplementation) lines.push(`since implementation: ${hb.sinceImplementation.message}`);
+  if (hb.revision) lines.push(`handbook revision ${hb.revision} · Brain revision ${hb.brainRevision || '—'}`);
+  if (hb.pinnedSha256) lines.push(`pinned sha256 ${hb.pinnedSha256.slice(0, 16)}`);
+  if (hb.limits) lines.push(`limits ${hb.limits.bytes} bytes a run, ${hb.limits.entryBytes} an entry; ` +
+    `read first: ${(hb.limits.order || []).join(', ')}`);
+  if (now && now.revision !== hb.revision)
+    lines.push(`today the handbook reads ${now.label.toLowerCase()} at revision ${now.revision}; ` +
+               'this run keeps what it was given');
+  if (hb.observed) lines.push(hb.observed);
+  return lines.join('\n');
+}
+
+function handbookPanel(hb, now) {
+  const label = hb ? hb.label : 'Not recorded';
+  return `<div class="hbctx" data-state="${esc(hb ? hb.state : 'unknown')}">` +
+    lrow('Handbook', label, { mono: false, why: handbookLine(hb) }) +
+    (hb ? `<details class="fold"><summary>Handbook selection — entries, revisions, ` +
+      `omissions</summary><pre>${esc(handbookDetail(hb, now))}</pre></details>` : '') +
+    `</div>`;
+}
+
 /* The technical half: identities, hashes, where the policy came from. Real
    and checkable, and nobody reads it first — so it folds. Contents never
    appear here; the server's allowlist has none to send. */
@@ -418,7 +488,8 @@ function profileDetail(p) {
 }
 
 export {
-  copyButton, deniedRow, grantRows, guaranteeLines, INPUT_STATE, inputRows,
+  copyButton, deniedRow, grantRows, guaranteeLines, handbookDetail, handbookLine,
+  handbookPanel, INPUT_STATE, inputRows,
   INTENT_LABEL, isolated, isolationLine, LAUNCH_INTENTS, launchActionFor,
   lrow, PROFILE_INTENT_FOR, profileDetail, profileIntentFor, profileSheet,
   reviewIsIn, selectionRows

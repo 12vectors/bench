@@ -359,12 +359,16 @@ async function fetchManifest(agentId) {
     const res = await fetch('/api/manifest?agent=' + encodeURIComponent(agentId));
     const data = res.ok ? await res.json() : {};
     S.manifests[agentId] = { at: Date.now(), manifest: data.manifest || null,
-                             freshness: data.freshness || null };
+                             freshness: data.freshness || null,
+                             // the handbook as it reads today, kept apart
+                             // from what this run was given (task 203)
+                             handbookNow: data.handbookNow || null };
     if (S.view === 'focus') scheduleRender();
   } catch {
     S.manifests[agentId] = { at: Date.now(),
                              manifest: cached ? cached.manifest : null,
-                             freshness: cached ? cached.freshness : null };
+                             freshness: cached ? cached.freshness : null,
+                             handbookNow: cached ? cached.handbookNow : null };
   }
 }
 

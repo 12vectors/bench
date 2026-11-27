@@ -374,6 +374,12 @@ saved, committed and shared said apart. See "Seeding the Brain:
 inspecting approved sources", "Generating a private seed draft" and
 "Reviewing and applying a seed draft" in `AGENTS.md`.
 
+Once the handbook links Current entries, every run bench launches is
+given them automatically — pinned read-only, best effort, as guidance
+rather than a gate: an empty or broken handbook never stops a launch,
+and the launch check (⚿) and Focus say what a run was given. See "The
+project handbook, supplied to every run" in `AGENTS.md`.
+
 As work lands, **Evaluate classifications** on the Brain asks the Brain
 Agent whether entries you select are still classified right. After a
 preview of the model, the sources and their revisions, it proposes a

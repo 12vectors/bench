@@ -78,6 +78,7 @@ import agreements
 import config
 import decisions
 import evidence
+import handbook
 import movements
 import orchestrator
 import profiles
@@ -1142,6 +1143,8 @@ def request(filename: str | None, need: str, *, via: str = "orchestrator",
         found["template"] = {**templates.identity(prompts["main"]),
                              "guidance": templates.identity(prompts["guidance"])}
         attach(found, filename, need, operation, bound, tasks, subject, question, ask)
+        # the project handbook, as optional guidance (task 203)
+        handbook.attach(found, "reason")
         profiles.pin(found)
         inputs_ = delivered(found)
 

@@ -74,7 +74,8 @@ class OneResolver(unittest.TestCase):
 
     def test_the_grant_and_input_rows_read_the_served_fields(self):
         self.assertRegex(self.html, r"function grantRows\(found\)")
-        self.assertRegex(self.html, r"function inputRows\(found\)")
+        # `opts` adds the run's handbook summary in Focus (task 203)
+        self.assertRegex(self.html, r"function inputRows\(found(, opts)?\)")
         # the row's state is the server's `status`, not a guess from the path
         self.assertIn("INPUT_STATE[i.status]", self.html)
         self.assertIn("found.commands", self.html)
