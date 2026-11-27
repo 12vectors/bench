@@ -296,8 +296,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "views/brain.js": {
-   "bytes": 188722,
-   "sha256": "512d03791b523f8422bdb0ac63d8a28cc94cb8a8e54a8519e0f3d00c6a21e146",
+   "bytes": 190200,
+   "sha256": "84ee743accf7b7f9761c376075285e442103f73186f28d76ec71c6216a8fd134",
    "type": "text/javascript; charset=utf-8"
   },
   "views/card.js": {
