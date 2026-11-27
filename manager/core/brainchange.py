@@ -38,7 +38,8 @@ MAX_HUNKS = 120           # hunks kept in a record; the rest are counted
 MAX_HUNK_LINES = 400      # lines kept in one hunk; the rest are counted
 MAX_LINE = 2000           # characters kept of one line
 MAX_FIELD = 500           # characters kept of a changed header field
-FIELDS = ("title", "summary", "kind")
+FIELDS = ("title", "summary", "kind", "sources", "related")
+LIST_FIELDS = ("sources", "related")    # compared as lists, shown joined
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
@@ -122,12 +123,18 @@ def diff(before: str | None, after: str | None) -> dict:
         first_change_b = first_change_a = None
         renamed = []
         touches: list[str] = []
+        # each separate edit in the hunk, where it is on both sides: a hunk
+        # may hold several edits with unchanged lines between them
+        edits: list[dict] = []
+        last_change_b = None
         for tag, i1, i2, j1, j2 in group:
             if tag == "equal":
                 rows.extend(["=", _clip(x)] for x in a[i1:i2])
                 continue
             if first_change_b is None:
                 first_change_b, first_change_a = j1, i1
+            last_change_b = j2
+            edits.append({"afterAt": j1, "added": j2 - j1, "beforeAt": i1, "removed": i2 - i1})
             # every section a change falls in: the new text's, and the old
             # text's for what was removed
             # a blank line names nothing: it belongs to whichever side it sits on
@@ -175,6 +182,10 @@ def diff(before: str | None, after: str | None) -> dict:
             "contextBefore": [r[1] for r in rows[:lead]],
             "contextAfter": [r[1] for r in rows[tail + 1:]],
             "addedLines": [r[1] for r in rows if r[0] == "+"][:MAX_HUNK_LINES],
+            # the new text from the first edit to the end of the last, the
+            # unchanged lines between edits included: what relocation matches
+            "afterSpan": [_clip(x) for x in b[first_change_b:last_change_b]][:MAX_HUNK_LINES],
+            "edits": edits,
             "lines": kept_rows, "droppedLines": dropped,
             "renamed": renamed,
         })
@@ -197,8 +208,13 @@ def fields(before: dict | None, after: dict) -> list[dict]:
     """The header fields a write changed, as before → after."""
     out = []
     for name in FIELDS:
+        if before is not None and name not in before:
+            continue          # a base retained before this field was compared
         was = ((before or {}).get(name) or "") if before is not None else ""
         now = after.get(name) or ""
+        if name in LIST_FIELDS:
+            was = ", ".join(str(x) for x in (was or []))
+            now = ", ".join(str(x) for x in (now or []))
         if was != now:
             out.append({"field": name, "before": was[:MAX_FIELD] if before is not None else None,
                         "after": now[:MAX_FIELD]})
@@ -244,6 +260,12 @@ def _occurrences(hay: list[str], needle: list[str]) -> list[int]:
             if hay[i] == first and hay[i:i + size] == needle]
 
 
+def _ranges(edits: list[dict], first: int, origin: int) -> list[dict]:
+    """Each edit's place, with the hunk's first edit at `origin`."""
+    return [{"start": origin + e["afterAt"] - first,
+             "end": origin + e["afterAt"] - first + e["added"]} for e in edits]
+
+
 def locate(change: dict, current_body: str | None, *, current_revision: str | None) -> list[dict]:
     """Where each hunk of `change` is in the entry's text now.
 
@@ -255,7 +277,10 @@ def locate(change: dict, current_body: str | None, *, current_revision: str | No
 
     `start`/`end` are 0-based line indexes in the current body: the added
     lines, or for a deletion `start == end`, the place the removed lines
-    were."""
+    were. `ranges` holds one `{start, end}` per separate edit in the hunk:
+    a hunk may hold several edits with unchanged lines between them, and
+    only the edits are marked, never the unchanged lines between. `start`
+    and `end` are then the first edit's start and the last edit's end."""
     body = change.get("body") if isinstance(change, dict) else None
     if not body:
         return []
@@ -265,19 +290,28 @@ def locate(change: dict, current_body: str | None, *, current_revision: str | No
     out = []
     for h in body.get("hunks") or []:
         added = h.get("addedLines") or []
+        edits = h.get("edits")
+        if edits:
+            first = edits[0]["afterAt"]
+            span = h.get("afterSpan")
+            if span is None:
+                span = added
+        else:             # a record made before edits were kept: one edit
+            first, span = h.get("afterAt") or 0, added
+            edits = [{"afterAt": first, "added": len(added)}]
         if exact and not h.get("droppedLines"):
-            start = h.get("afterAt") or 0
-            out.append({"n": h["n"], "state": "current", "start": start,
-                        "end": start + h.get("added", 0)})
+            rs = _ranges(edits, first, h.get("afterAt") or 0)
+            out.append({"n": h["n"], "state": "current", "start": rs[0]["start"],
+                        "end": rs[-1]["end"], "ranges": rs})
             continue
         before, after_ctx = h.get("contextBefore") or [], h.get("contextAfter") or []
-        needle = before + added + after_ctx
+        needle = before + span + after_ctx
         meaningful = any(x.strip() for x in needle)
         hits = _occurrences(hay, needle) if meaningful else []
-        if len(hits) == 1 and (added or (before and after_ctx)):
-            start = hits[0] + len(before)
-            out.append({"n": h["n"], "state": "relocated", "start": start,
-                        "end": start + len(added)})
+        if len(hits) == 1 and (span or (before and after_ctx)) and not h.get("droppedLines"):
+            rs = _ranges(edits, first, hits[0] + len(before))
+            out.append({"n": h["n"], "state": "relocated", "start": rs[0]["start"],
+                        "end": rs[-1]["end"], "ranges": rs})
         else:
             out.append({"n": h["n"], "state": "unresolved",
                         "why": ("its text occurs more than once now" if len(hits) > 1 else

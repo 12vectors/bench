@@ -140,6 +140,21 @@ class Diff(unittest.TestCase):
                                  {"title": "B", "summary": "s", "kind": "Guide"})
         self.assertEqual(got, [{"field": "title", "before": "A", "after": "B"}])
 
+    def test_sources_and_related_are_compared_as_lists(self):
+        base = {"title": "A", "summary": "", "kind": "Guide",
+                "sources": ["#12"], "related": ["e-a"]}
+        got = brainchange.fields(base, {**base, "sources": ["#12", "plans/x.md"],
+                                        "related": ["e-a"]})
+        self.assertEqual(got, [{"field": "sources", "before": "#12",
+                                "after": "#12, plans/x.md"}])
+        # a base retained before these were compared says nothing about them
+        old = {"title": "A", "summary": "", "kind": "Guide"}
+        self.assertEqual(brainchange.fields(old, {**old, "sources": ["#1"], "related": ["e-b"]}), [])
+        # a new entry lists what it starts with
+        new = brainchange.fields(None, {"title": "A", "summary": "", "kind": "Guide",
+                                        "sources": ["#1"], "related": []})
+        self.assertIn({"field": "sources", "before": None, "after": "#1"}, new)
+
 
 class Locate(unittest.TestCase):
     """Where a recorded change is now: exact, relocated or unresolved —
@@ -183,6 +198,44 @@ class Locate(unittest.TestCase):
         where = brainchange.locate(rec, apart, current_revision="c")[0]
         self.assertEqual(where["state"], "relocated")
         self.assertEqual(where["start"], 3)
+
+    TWO_EDITS_BEFORE = "## A\n\nFirst para.\n\nMiddle para.\n\nLast para.\n\n## B\n\nTail."
+    TWO_EDITS_AFTER = ("## A\n\nFirst para, edited.\n\nMiddle para.\n\nLast para, edited.\n"
+                       "Last para, extra line.\n\n## B\n\nTail.")
+
+    def marked(self, text: str, where: dict) -> list[str]:
+        lines = brainchange.lines_of(text)
+        return [x for r in where["ranges"] for x in lines[r["start"]:r["end"]]]
+
+    def test_two_nearby_edits_in_one_hunk_mark_exactly_the_edited_lines(self):
+        # one unchanged paragraph between two edits: difflib groups them into
+        # one hunk, and only the edits — never the paragraph between — are marked
+        rec = self.record(self.TWO_EDITS_BEFORE, self.TWO_EDITS_AFTER)
+        self.assertEqual(len(rec["body"]["hunks"]), 1)
+        self.assertEqual(len(rec["body"]["hunks"][0]["edits"]), 2)
+        where = brainchange.locate(rec, self.TWO_EDITS_AFTER, current_revision="a")[0]
+        self.assertEqual(where["state"], "current")
+        self.assertEqual(self.marked(self.TWO_EDITS_AFTER, where),
+                         ["First para, edited.", "Last para, edited.", "Last para, extra line."])
+        # after an edit elsewhere the same two edits are found again, and only they
+        later = "A new opening line.\n\n" + self.TWO_EDITS_AFTER
+        where = brainchange.locate(rec, later, current_revision="c")[0]
+        self.assertEqual(where["state"], "relocated")
+        self.assertEqual(self.marked(later, where),
+                         ["First para, edited.", "Last para, edited.", "Last para, extra line."])
+        # an edit of the unchanged paragraph between them unplaces the change
+        moved = self.TWO_EDITS_AFTER.replace("Middle para.", "Middle para, rewritten.")
+        where = brainchange.locate(rec, moved, current_revision="c")[0]
+        self.assertEqual(where["state"], "unresolved")
+
+    def test_a_record_without_edits_is_read_as_one_edit(self):
+        after = BASE.replace("Move a card.\n", "Move a card.\nArchive a card.\n")
+        rec = self.record(BASE, after)
+        for h in rec["body"]["hunks"]:
+            h.pop("edits")
+            h.pop("afterSpan")
+        where = brainchange.locate(rec, after, current_revision="a")[0]
+        self.assertEqual(self.marked(after, where), ["Archive a card."])
 
     def test_a_record_without_a_retained_base_claims_no_diff(self):
         rec = brainchange.record(draft="bd-1", round_no=1, request="r", entry_id="e-x",
@@ -228,6 +281,14 @@ class Applied(_Board):
         self.assertIn("## Format", changes["base"]["body"])
         self.assertTrue(changes["body"]["hunks"])
         self.assertIn("title", [f["field"] for f in changes["fields"]])
+        # the Source and Related lists an update writes are compared too
+        base = changes["base"]
+        self.assertIn("sources", base)
+        self.assertIn("related", base)
+        p = draft["proposal"]
+        named = [f["field"] for f in changes["fields"]]
+        self.assertEqual("sources" in named, list(p["sources"]) != base["sources"])
+        self.assertEqual("related" in named, list(p["related"]) != base["related"])
         # the listing stays light: no diff in it
         listed = braindraft.listing()["drafts"][0]
         self.assertNotIn("changes", listed)
@@ -259,6 +320,12 @@ class Applied(_Board):
         self.assertEqual(first["state"], "current")
         self.assertEqual(lines[first["start"]], "Semicolon separated.")
         self.assertTrue(all(loc["state"] == "current" for loc in view["locations"]))
+        # every marked line is exactly a line the change added — never the
+        # unchanged lines between two edits in one hunk
+        hunks = {h["n"]: h for h in rec["body"]["hunks"]}
+        for loc in view["locations"]:
+            marked = [x for r in loc["ranges"] for x in lines[r["start"]:r["end"]]]
+            self.assertEqual(marked, hunks[loc["n"]]["addedLines"])
         self.assertTrue(view["operation"]["saved"])
         self.assertEqual(view["operation"]["commit"]["state"], "off")
 
@@ -482,6 +549,21 @@ class ThePageMarks(unittest.TestCase):
         html = self.run_page(after, after, before, after)
         marked = html.split('<section', 1)[1].split('</section>', 1)[0]
         self.assertIn("```\nx = 1\n\ny = 3\n```", marked)
+
+    def test_two_nearby_edits_mark_each_edit_and_not_the_paragraph_between(self):
+        before, after = Locate.TWO_EDITS_BEFORE, Locate.TWO_EDITS_AFTER
+        html = self.run_page(after, after, before, after)
+        blocks = [s.split('</section>', 1)[0] for s in html.split('<section')[1:]]
+        self.assertEqual(len(blocks), 2, html)
+        self.assertIn("First para, edited.", blocks[0])
+        self.assertIn("Last para, edited.\nLast para, extra line.", blocks[1])
+        for b in blocks:
+            self.assertNotIn("Middle para.", b)
+        # the change's id and what it replaced are given once, on its first block
+        self.assertEqual(html.count('id="bchg-1"'), 1)
+        self.assertIn('id="bchg-1"', blocks[0])
+        self.assertIn("(continued)", blocks[1])
+        self.assertEqual(html.count("What this replaced"), 1)
 
     def test_hostile_text_is_escaped(self):
         before = "Safe."

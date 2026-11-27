@@ -3438,10 +3438,11 @@ a bounded, read-only reading of what one write did.
 
 **Before Apply: the proposal against its exact base.** A round of an
 update keeps the entry exactly as it read it — its revision, title,
-summary, kind and body — beside the round in the private draft record.
-The request read by id (`GET /api/brain/drafts?id=`) carries `changes`:
-that base, named by revision, the header fields the proposal changes
-(before → after), the sections it changes, renamed headings, and each
+summary, kind, Source and Related lists and body — beside the round in
+the private draft record. The request read by id (`GET
+/api/brain/drafts?id=`) carries `changes`: that base, named by
+revision, the header fields the proposal changes — title, summary,
+kind, and the Source and Related lists (before → after) — the sections it changes, renamed headings, and each
 hunk — its removed and added lines (marked `−` and `+`, in words as well
 as colour) with two unchanged lines either side. An update opens on this
 **Changes** view; **Draft** and **Edit** are beside it. Once the person
@@ -3465,8 +3466,8 @@ revision the write saved, records:
 | `draft`, `round`, `request`, `operation` | the conversation, the proposal round and the write operation (the Brain journal's request identity) |
 | `entry`, `file`, `mode` | the stable entry id, its file, `update` or `create` |
 | `baseRevision`, `resultRevision` | the revision the proposal was drafted from (none for a new entry) and the one the write produced |
-| `fields` | the header fields that changed |
-| `body` | the hunks (`n`, `kind` insert/delete/replace, the `sections` they touch, `beforeAt`/`afterAt`, the lines with their context), the changed sections, renamed headings, line counts, and `truncated` when a very large change was bounded (120 hunks, 400 lines a hunk, 2,000 characters a line) |
+| `fields` | the header fields that changed: title, summary, kind, and the Source and Related lists |
+| `body` | the hunks (`n`, `kind` insert/delete/replace, the `sections` they touch, `beforeAt`/`afterAt`, the place of each separate edit (`edits`) where one hunk holds several with unchanged lines between them, the lines with their context), the changed sections, renamed headings, line counts, and `truncated` when a very large change was bounded (120 hunks, 400 lines a hunk, 2,000 characters a line) |
 | `exact` | false — with `why` — when no diff can be claimed: an update whose base was not retained, or an entry another write changed before it could be read back |
 
 The record lives with the private draft under
@@ -3489,7 +3490,9 @@ is scrolled to and focused; **Previous change** and **Next change** move
 through the record in order, by pointer or keyboard, each landing on its
 passage. A located change is a labelled, outlined block (`Change 2 of 4:
 added 1 line in “Prepare”`), widened to whole Markdown blocks so a list,
-a table or a code fence is never split or rendered as something else; a
+a table or a code fence is never split or rendered as something else. A
+change holding several nearby edits marks each edit as its own block
+(the later ones *continued*), never the unchanged text between them; a
 replacement keeps **What this replaced** one fold away, and a
 deletion-only change is a marker where the removed text was, with that
 text. **Open the conversation** returns to the very Brain Agent request,
@@ -3503,7 +3506,7 @@ conservatively:
 | the entry now | each change |
 | --- | --- |
 | still the revision the write produced | **current** — exactly where the record says |
-| edited since | **relocated** only where the change's own lines and the unchanged lines around it occur exactly once in the current text; otherwise **unresolved** — its text was edited or removed, or now repeats — and shown only in the revision diff |
+| edited since | **relocated** only where the change's own lines (with any unchanged lines between its edits) and the unchanged lines around it occur exactly once in the current text; otherwise **unresolved** — its text was edited or removed, or now repeats — and shown only in the revision diff |
 | retired, missing or unreadable | nothing is placed; the revision diff is what was applied |
 
 The **Revision diff** fold — base revision → resulting revision, every

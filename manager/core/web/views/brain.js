@@ -1707,20 +1707,27 @@ function bodyWithChanges(body, view) {
   const total = Object.keys(hunks).length;
   // each located change, widened to whole blocks; a deletion is a marker
   // at the first cut at or after where its lines were
+  // A hunk may hold several edits with unchanged lines between them: each
+  // edit is its own range, so the lines between are never marked as it.
   const marks = [];
   for (const loc of view.locations) {
     if (loc.state === 'unresolved' || !hunks[loc.n]) continue;
-    if (loc.end > loc.start) marks.push({ s: down(loc.start), e: up(loc.end), ns: [loc.n], kind: 'block', loc });
-    else marks.push({ s: up(loc.start), e: up(loc.start), ns: [loc.n], kind: 'gone', loc });
+    const ranges = loc.ranges && loc.ranges.length ? loc.ranges : [{ start: loc.start, end: loc.end }];
+    for (const r of ranges) {
+      if (r.end > r.start) marks.push({ s: down(r.start), e: up(r.end), ns: [loc.n], kind: 'block', loc });
+      else marks.push({ s: up(r.start), e: up(r.start), ns: [loc.n], kind: 'gone', loc });
+    }
   }
   marks.sort((a, b) => a.s - b.s || (a.kind === 'gone' ? -1 : 1));
   const merged = [];
   for (const m of marks) {
     const last = merged[merged.length - 1];
     if (last && last.kind === 'block' && m.kind === 'block' && m.s < last.e) {
-      last.e = Math.max(last.e, m.e); last.ns.push(...m.ns);
+      last.e = Math.max(last.e, m.e);
+      for (const n of m.ns) if (!last.ns.includes(n)) last.ns.push(n);
     } else merged.push({ ...m, ns: [...m.ns] });
   }
+  const tagged = new Set();             // a change's id and label go on its first block only
   let out = '';
   let at = 0;
   const plain = (a, b) => (b > a ? md(lines.slice(a, b).join('\n'), { base: 2 }) : '');
@@ -1732,9 +1739,14 @@ function bodyWithChanges(body, view) {
     }
     out += plain(at, m.s);
     const first = hunks[m.ns[0]];
-    const tags = m.ns.map(n => `<span class="b-chg-tag" id="bchg-${n}">${esc(changeLabel(hunks[n], total))}` +
+    const tags = m.ns.map(n => (tagged.has(n)
+      ? `<span class="b-chg-tag">${esc(changeLabel(hunks[n], total))} (continued)`
+      : `<span class="b-chg-tag" id="bchg-${n}">${esc(changeLabel(hunks[n], total))}`) +
       `${m.loc.state === 'relocated' ? ' — found again in the current text' : ''}</span>`).join('');
-    const removed = m.ns.flatMap(n => (hunks[n].lines || []).filter(r => r[0] === '-').map(r => r[1]));
+    // what a change removed is said once, on its first block
+    const removed = m.ns.filter(n => !tagged.has(n))
+      .flatMap(n => (hunks[n].lines || []).filter(r => r[0] === '-').map(r => r[1]));
+    m.ns.forEach(n => tagged.add(n));
     const gone = removed.length ? `<details class="b-chg-was"${m.kind === 'gone' ? ' open' : ''}><summary>` +
       `${m.kind === 'gone' ? 'The removed text' : 'What this replaced'} (${removed.length} line${removed.length === 1 ? '' : 's'})</summary>` +
       `<pre class="b-diff">${removed.map(r => `<span class="b-diff-del"><span class="b-diff-sign">− </span>${esc(r)}</span>`).join('\n')}</pre></details>` : '';
@@ -2301,7 +2313,12 @@ function proposedChangesHtml(d, e, target) {
   }
   if (c.missing) return `<p class="b-warn" role="alert">${esc(c.missing)}</p>`;
   const base = c.base;
-  const edited = e.body !== p.body || e.title !== p.title || (e.summary || '') !== (p.summary || '') || e.kind !== p.kind;
+  // sources and related are lists on the record and text in the editor
+  const listOf = (v, sep) => (Array.isArray(v) ? v : String(v || '').split(sep))
+    .map(s => String(s).trim()).filter(Boolean).join(', ');
+  const editedList = { sources: listOf(e.sources, '\n'), related: listOf(e.related, ',') };
+  const edited = e.body !== p.body || e.title !== p.title || (e.summary || '') !== (p.summary || '') || e.kind !== p.kind ||
+    editedList.sources !== listOf(p.sources, '\n') || editedList.related !== listOf(p.related, ',');
   const head = base
     ? `<p class="b-chg-base">Against <span class="mono">${esc(d.target)}</span> at revision ` +
       `<span class="mono">${esc(base.revision.slice(0, 12))}</span> — the exact entry this draft read.</p>` +
@@ -2311,9 +2328,13 @@ function proposedChangesHtml(d, e, target) {
     : '<p class="b-chg-base">A new entry: every line is an addition.</p>';
   if (edited) {
     const was = base || { title: '', summary: '', kind: '', body: '' };
-    const fieldRows = [['title', 'Title'], ['summary', 'Summary'], ['kind', 'Kind']]
-      .filter(([k]) => (was[k] || '') !== (e[k] || ''))
-      .map(([k, label]) => `<li><strong>${label}:</strong> ${base ? `<del>${esc(was[k] || '(none)')}</del> → ` : ''}<ins>${esc(e[k] || '(none)')}</ins></li>`);
+    const value = (src, k) => (k === 'sources' || k === 'related')
+      ? (src === e ? editedList[k] : listOf(src[k], k === 'sources' ? '\n' : ',')) : (src[k] || '');
+    const fieldRows = [['title', 'Title'], ['summary', 'Summary'], ['kind', 'Kind'], ['sources', 'Sources'], ['related', 'Related']]
+      // a base retained before sources and related were compared says nothing about them
+      .filter(([k]) => !(base && (k === 'sources' || k === 'related') && !(k in base)))
+      .filter(([k]) => value(was, k) !== value(e, k))
+      .map(([k, label]) => `<li><strong>${label}:</strong> ${base ? `<del>${esc(value(was, k) || '(none)')}</del> → ` : ''}<ins>${esc(value(e, k) || '(none)')}</ins></li>`);
     return head + '<p class="b-note">Showing your edits against the same base; Apply writes exactly this.</p>' +
       (fieldRows.length ? `<ul class="b-chg-fields">${fieldRows.join('')}</ul>` : '') + bodyDiff(was.body, e.body);
   }

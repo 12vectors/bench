@@ -2482,12 +2482,17 @@ def _reconcile_apply(draft: dict) -> None:
 
 
 def _snapshot(entry: dict | None) -> dict | None:
-    """An entry as a change record compares it: its revision, the three
-    header fields a draft may change, and its body."""
+    """An entry as a change record compares it: its revision, the header
+    fields a draft may change (title, summary, kind, sources and related)
+    and its body."""
     if not entry or entry.get("state") not in ("entry", "tombstone"):
         return None
     return {"revision": entry.get("revision"), "title": entry.get("title") or "",
             "summary": entry.get("summary") or "", "kind": entry.get("entryKind") or "",
+            "sources": [s.get("text") if isinstance(s, dict) else s
+                        for s in entry.get("sources") or []],
+            "related": [r.get("id") if isinstance(r, dict) else r
+                        for r in entry.get("related") or []],
             "body": entry.get("body") or ""}
 
 
@@ -2568,7 +2573,9 @@ def review_changes(draft: dict) -> dict | None:
         return None
     p = draft["proposal"]
     proposed = {"title": p.get("title") or "", "summary": p.get("summary") or "",
-                "kind": p.get("kind") or "", "body": p.get("body") or ""}
+                "kind": p.get("kind") or "", "body": p.get("body") or "",
+                "sources": list(p.get("sources") or []),
+                "related": list(p.get("related") or [])}
     if draft.get("mode") == "create":
         return {"base": None, "fields": brainchange.fields(None, proposed),
                 "body": brainchange.diff("", proposed["body"])}
