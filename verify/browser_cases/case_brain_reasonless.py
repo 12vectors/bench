@@ -126,9 +126,10 @@ class ReasonlessClassification(unittest.TestCase):
     def test_1_a_new_entry_is_created_classified_with_no_reason(self):
         b = self.open("/brain")
         b.click('#bshell [data-bact="ag-new"]')
-        if not b.wait("!!document.querySelector('#bshell [data-bact=\"ag-manual\"]')", 5):
+        # the composer opens in the shared panel beside the Brain (task 205)
+        if not b.wait("!!document.querySelector('#agentpanel [data-bact=\"ag-manual\"]')", 5):
             raise bv.CheckFailed("New entry opened no composer")
-        b.click('#bshell [data-bact="ag-manual"]')
+        b.click('#agentpanel [data-bact="ag-manual"]')
         if not b.wait("!!document.querySelector('#bshell .b-form [data-bf=\"title\"]')", 5):
             raise bv.CheckFailed("New entry opened no form")
         self.set(b, '#bshell [data-bf="title"]', "Reasonless guide")
