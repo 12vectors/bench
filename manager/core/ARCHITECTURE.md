@@ -621,6 +621,7 @@ phasescope._backup
 phasescope._write_model
 plans.record
 plans.restore
+profiles._rerecord
 profiles.record
 recovery._save
 recovery.breaker_failure
