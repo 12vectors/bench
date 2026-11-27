@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import threading
 import unittest
@@ -42,6 +41,7 @@ import brainwrite  # noqa: E402
 import config  # noqa: E402
 import httpd  # noqa: E402
 
+import tests.test_braindraft as drafting  # noqa: E402
 from tests.test_braindraft import _Board, EXISTING, git  # noqa: E402
 
 RICH = """Intro with **bold words** and a [linked phrase](https://example.com/x) here.
@@ -406,6 +406,15 @@ class Asking(Threads):
         self.assertEqual([m["kind"] for m in t["messages"]], ["open", "reply"])
 
 
+class VendoredAsking(drafting.Vendored, Asking):
+    """The same journeys with the tool and the work root inside the
+    application checkout (vendored, as a source-hosted install is too)."""
+
+    # the drafting suite's own vendored journeys run there, not here
+    test_the_journey_holds_and_the_boundary_is_the_deny_rules = None
+    test_a_citation_of_bench_private_state_through_the_app_is_refused = None
+
+
 class Committed(Threads):
     """BOARD_COMMIT_MOVES on, in a work-state repository of its own."""
 
@@ -438,7 +447,3 @@ class Committed(Threads):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-# keep subprocess imported for a reader extending the fixtures
-_ = subprocess
