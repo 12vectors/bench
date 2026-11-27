@@ -62,6 +62,7 @@ from pathlib import Path
 import acceptance
 import adoption
 import brain
+import braincomments
 import brainreviews
 import config
 import gitrepo
@@ -999,11 +1000,86 @@ def _plan_adopt(payload: dict, reading: dict, actor: str) -> dict:
             "text": render(title, fields, body, [line]), "what": f"adopted ({op})"}
 
 
+# ── comments on selected entry text (task 210) ─────────────────────────
+#
+# One record per entry, brain/comments/<entry id>.md (the format is
+# braincomments'), appended to one event at a time: held to the record's
+# revision the page read (`expected`, `none` before the first), under a
+# request identity, committed and synced like any Brain write. The entry
+# itself is never touched here.
+
+COMMENT_FIELDS = {"request", "entry", "expected", "op", "thread", "text", "quote",
+                  "prefix", "suffix", "entryRevision", "mode", "by", "draft", "change",
+                  "revision", "outcome", "why", "anchor"}
+
+
+def _comments_directory(make: bool) -> Path:
+    _check_directory(create=False, make=False)
+    path = braincomments.directory()
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        if make:
+            os.mkdir(path)
+        return path
+    if stat.S_ISLNK(info.st_mode):
+        raise Refused("brain/comments/ is a link; bench never writes through one", 409)
+    if not stat.S_ISDIR(info.st_mode):
+        raise Refused("brain/comments/ is not a directory; nothing was written", 409)
+    if config.escapes_work(path) is not None:
+        raise Refused("brain/comments/ resolves outside the work root; nothing was written",
+                      409)
+    return path
+
+
+def _plan_comment(payload: dict, reading: dict, actor: str) -> dict:
+    for key in payload:
+        if key not in COMMENT_FIELDS:
+            raise Refused(f"{str(key)[:40]!r} cannot be written with a comment: a comment "
+                          "never edits the entry it is about", field=str(key)[:40])
+    entry_id = payload.get("entry")
+    try:
+        name = braincomments.record_name(entry_id)
+        entry = brain.entry(entry_id)
+    except (braincomments.Invalid, brain.NotAnId) as exc:
+        raise Refused(str(exc), field="entry") from exc
+    path = _comments_directory(make=False) / name
+    data = _current_bytes(path)
+    parsed = braincomments.parse(data)
+    if parsed["state"] in ("invalid", "unsupported"):
+        raise Refused(f"brain/comments/{name} is not a version {braincomments.CONTRACT} "
+                      "comment record; fix it by hand first", 409)
+    now = braincomments.revision_of(data)
+    expected = payload.get("expected") or "none"
+    if expected != now:
+        raise Refused(
+            f"the comments on {entry_id} changed since this page read them (it read "
+            f"{str(expected)[:16]}, the record is now {now[:16]}). Nothing was written; "
+            "your text is kept on the page — read them again and send it again.", 409,
+            stale=True, code="comments-changed",
+            current=braincomments.reading(entry_id))
+    try:
+        ev = braincomments.build(payload.get("op"), payload, entry=entry,
+                                 events=parsed["events"], actor=actor,
+                                 actor_source="git", request=payload["request"])
+        text = braincomments.appended(entry_id, data, ev)
+    except braincomments.Invalid as exc:
+        raise Refused(str(exc), exc.status, **exc.extra) from exc
+    what = {"open": "opened", "reply": "reply", "resolve": "resolved",
+            "reopen": "reopened", "reanchor": "re-anchored", "link": "agent request",
+            "outcome": "agent outcome"}[ev["kind"]]
+    return {"id": entry_id, "file": braincomments.file_for(entry_id),
+            "expected": None if now == "none" else now, "text": text,
+            "what": f"comment {ev['thread']} {what}",
+            "event": {"id": ev["id"], "thread": ev["thread"], "kind": ev["kind"]}}
+
+
 PLANS = {"create": _plan_create, "edit": _plan_edit, "classify": _plan_classify,
          "override": _plan_override, "retire": _plan_retire,
          "handbook": _plan_handbook, "adopt": _plan_adopt,
          "review-classify": lambda p, r, a: _plan_review("review-classify", p, r, a),
-         "review-override": lambda p, r, a: _plan_review("review-override", p, r, a)}
+         "review-override": lambda p, r, a: _plan_review("review-override", p, r, a),
+         "comment": _plan_comment}
 REVIEW_KINDS = ("review-classify", "review-override")
 
 
@@ -1017,6 +1093,11 @@ def _entry_path(entry: dict) -> Path:
         if sub != brain.REVIEWS_DIRECTORY or not brainreviews.RECORD_NAME_RE.match(name):
             raise Refused("the review record's name is not c<card>-<review id>.md", 409)
         return _reviews_directory(make=True) / name
+    if entry.get("kind") == "comment":
+        sub, _, name = file.partition("/")
+        if sub != braincomments.DIRECTORY or not braincomments.NAME_RE.match(name):
+            raise Refused("a comment record is brain/comments/<entry id>.md", 409)
+        return _comments_directory(make=True) / name
     if entry.get("kind") == "handbook":
         if file != f"{brain.HANDBOOK_DIRECTORY}/{handbook.FILE}":
             raise Refused("the handbook record is brain/handbook/handbook.md", 409)
@@ -1108,6 +1189,8 @@ def write(kind: str, payload: dict) -> dict:
                  "id": plan["id"], "file": plan["file"], "expected": plan["expected"],
                  "target": brain.revision(plan["text"].encode("utf-8")),
                  "text": plan["text"], "what": plan["what"], "actor": actor}
+        if plan.get("event"):
+            entry["event"] = plan["event"]
         _journal_put(request, entry)
         return _finish(request, entry, resumed=False)
 
@@ -1156,6 +1239,11 @@ def _conflict(request: str, entry: dict) -> dict:
 
 
 def _current_entry(operation: dict) -> dict | None:
+    if operation.get("kind") == "comment":
+        try:
+            return braincomments.reading(operation.get("id"))
+        except braincomments.Invalid:
+            return None
     if operation.get("kind") == "handbook":
         # told by the write's kind: `handbook` is also a legal entry id
         return handbook.reading()
@@ -1217,6 +1305,8 @@ def _public(entry: dict) -> dict:
            "status": entry.get("status"), "saved": bool(entry.get("saved")),
            "revision": entry.get("revision"), "commit": commit,
            "refused": entry.get("refused")}
+    if entry.get("event"):
+        out["event"] = entry["event"]
     if entry.get("saved"):
         out["push"] = _push(commit, entry.get("file") or "", entry.get("revision") or "")
         # what is on disk now, said beside what this operation saved

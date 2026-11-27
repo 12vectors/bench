@@ -73,6 +73,9 @@ REVIEWS_DIRECTORY = "reviews"
 # where the handbook's membership record lives (task 171): a directory of
 # its own, so it is never read as an entry and no entry write reaches it
 HANDBOOK_DIRECTORY = "handbook"
+# where comments on selected entry text live (task 210): one record per
+# entry, which braincomments reads and brainwrite writes; never an entry
+COMMENTS_DIRECTORY = "comments"
 
 KINDS = ("Review", "Investigation", "Decision", "Guide", "Prototype",
          "Attachment")
@@ -530,7 +533,8 @@ def _scan() -> dict:
         out.update(state="refused", why=f"brain/ could not be listed ({exc.strerror or exc})")
         return out
     for name in names:
-        if name.startswith(".") or name in (REVIEWS_DIRECTORY, HANDBOOK_DIRECTORY):
+        if name.startswith(".") or name in (REVIEWS_DIRECTORY, HANDBOOK_DIRECTORY,
+                                                COMMENTS_DIRECTORY):
             # brain/reviews/ holds the review classification records (task
             # 168), which brainreviews reads, and brain/handbook/ the
             # handbook's membership record (task 171), which handbook reads;

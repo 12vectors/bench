@@ -848,6 +848,15 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/draft/discard": "browser-mutation",
     "POST /api/brain/draft/retarget": "browser-mutation",
     "POST /api/brain/draft/apply": "browser-mutation",
+    # comments on selected Brain text (task 210): a read, and a person's
+    # writes; Ask agent rides the drafting path behind the same door
+    "GET /api/brain/comments": "read",
+    "POST /api/brain/comments/open": "browser-mutation",
+    "POST /api/brain/comments/reply": "browser-mutation",
+    "POST /api/brain/comments/resolve": "browser-mutation",
+    "POST /api/brain/comments/reopen": "browser-mutation",
+    "POST /api/brain/comments/reanchor": "browser-mutation",
+    "POST /api/brain/comments/ask": "browser-mutation",
     "GET /cards/*": "read",
     # the Orchestrator view (task 145), a page like the others
     "GET /orchestrator": "read",
