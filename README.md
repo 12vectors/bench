@@ -53,6 +53,17 @@ inspect — what it reported, what bench observed, its report and exact
 records — without a composer, because a coding run takes no follow-up
 ("Every agent purpose, and what it supports").
 
+A Brain Agent update is reviewed at the passages it changes: before
+**Apply** the panel shows the proposal against the exact revision it was
+drafted from — each changed section, every addition and removal — and
+after it **View changes** opens the entry on its first changed passage,
+marked in words and outline rather than colour alone, with **Previous**
+and **Next change** and the write's saved, committed and shared states
+said apart. If someone edits the entry afterwards, the page says so and
+shows the historical diff rather than highlighting text the agent did
+not write ("Reviewing and navigating exact Brain changes" in
+`AGENTS.md`).
+
 Closing the panel does not lose what an agent does next. The header's
 **Activity** control, on every view, counts unread agent results and
 questions and opens a list of them — runs, Orchestrator answers, Brain
