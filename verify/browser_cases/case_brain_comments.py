@@ -16,7 +16,10 @@ page's own controls and keeps screenshots to look at:
   agent** (armed) → one Brain Agent request, its conversation opened in
   the shared panel; **Apply** there → the thread reads *Resolved by the
   applied edit*, with **View changes**, and the other comment stays open;
-- a filed review says it is discussed on its card;
+- (a filed review's page refusing annotation and routing its discussion
+  to its card is driven in `case_brain_reviews.py`, which has the review
+  fixture; the backend's 409 `review-immutable` is in
+  `tests/test_braincomments.py`);
 - 1280 and 390 pixels, both themes, nothing overflowing;
 - and nothing else moved: the application and the cards are unchanged.
 """

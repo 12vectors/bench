@@ -456,6 +456,22 @@ class Asking(Threads):
         t = self.comments()["threads"][0]
         self.assertEqual(len(t["links"]), 2)
         self.assertEqual([m["kind"] for m in t["messages"]], ["open", "reply"])
+        # the follow-up's own proposal, applied, resolves the same thread —
+        # by that edit, and with the whole attributed history kept
+        draft = self.settle(follow["draft"])
+        body = brain.entry("e-exports")["body"].replace(
+            "written by the export module", "written by export.py (with a BOM)")
+        done = self.apply(draft, body=body)
+        self.assertEqual(done["draft"]["status"], "applied")
+        self.assertIn("export.py (with a BOM)", self.entry_file.read_text("utf-8"))
+        brainthreads.settle(follow["draft"])
+        t = self.comments()["threads"][0]
+        self.assertEqual(t["id"], out["thread"])
+        self.assertEqual(t["state"], "resolved")
+        self.assertEqual(t["resolution"]["by"], "edit")
+        self.assertEqual(t["resolution"]["draft"], follow["draft"])
+        self.assertEqual([m["kind"] for m in t["messages"]], ["open", "reply"])
+        self.assertEqual(len(self.comments()["threads"]), 1)
 
 
 class VendoredAsking(drafting.Vendored, Asking):
@@ -517,6 +533,33 @@ class Committed(Threads):
         self.assertIn("push", again)
         files = git(self.work, "show", "--name-only", "--format=", "HEAD").split()
         self.assertEqual(files, ["brain/comments/e-exports.md"])
+
+
+def _site():
+    from tests.test_site_pages import BuiltSite
+    return BuiltSite
+
+
+class TheWebsiteCarriesIt(_site()):
+    """The site cuts its pages out of AGENTS.md: the section has a page of
+    its own, and the exact-changes page stops where it starts."""
+
+    @staticmethod
+    def prose(page: str) -> str:
+        import html
+        import re
+        return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
+
+    def test_comments_have_their_own_page_and_no_other_page_carries_them(self):
+        own = self.prose(self.page("/concepts/brain-comments/"))
+        for phrase in ("Two ways to a passage", "The anchor is the source Markdown",
+                       "Ask agent is a separate, armed request",
+                       "Resolved only by what the edit did", "The record, version 1"):
+            self.assertIn(phrase, own)
+        changes = self.prose(self.page("/concepts/brain-changes/"))
+        self.assertIn("View changes", changes)
+        self.assertNotIn("Two ways to a passage", changes)
+        self.assertNotIn("Resolved only by what the edit did", changes)
 
 
 if __name__ == "__main__":
