@@ -65,6 +65,7 @@ from pathlib import Path
 
 import agents
 import brain
+import brainchange
 import brainwrite
 import config
 import gitrepo
@@ -948,6 +949,10 @@ def _launch(draft: dict, *, continue_request: str) -> None:
     _start_round(draft, round_no, continue_request, agent_id, found, prompt,
                  Path(app["root"]), {
                      "targetRevision": entry["revision"] if entry else None,
+                     # the exact entry this round read (task 209): its
+                     # proposal is reviewed against it, and the change
+                     # record after Apply is made from it
+                     "base": _snapshot(entry) if entry else None,
                      "app": {"root": app["root"], "commit": app["commit"]},
                      "sources": [{"ref": s["ref"], "sha256": s["sha256"],
                                   **({"entry": s["entry"]} if s.get("entry") else {})}
@@ -2472,18 +2477,158 @@ def _reconcile_apply(draft: dict) -> None:
         draft["status"] = "proposed"
         if op is None or op.get("status") == "done":
             draft.pop("applyRequest", None)
+            draft.pop("applyBase", None)
         _save(draft)
+
+
+def _snapshot(entry: dict | None) -> dict | None:
+    """An entry as a change record compares it: its revision, the three
+    header fields a draft may change, and its body."""
+    if not entry or entry.get("state") not in ("entry", "tombstone"):
+        return None
+    return {"revision": entry.get("revision"), "title": entry.get("title") or "",
+            "summary": entry.get("summary") or "", "kind": entry.get("entryKind") or "",
+            "body": entry.get("body") or ""}
+
+
+def _entry_now(entry_id: str | None) -> dict | None:
+    if not entry_id:
+        return None
+    try:
+        return brain.entry(entry_id)
+    except brain.NotAnId:
+        return None
+
+
+def _proposal_round(draft: dict) -> dict | None:
+    return next((r for r in draft.get("rounds") or []
+                 if r["n"] == draft.get("proposalRound")), None)
+
+
+def _base_of(draft: dict) -> dict | None:
+    """The exact entry the proposal was drafted from: the copy the round
+    retained, or — for a round made before task 209 — the entry now, only
+    while it still is that revision. None when neither holds."""
+    if draft.get("mode") != "update":
+        return None
+    rnd = _proposal_round(draft) or {}
+    if rnd.get("base") and rnd["base"].get("revision") == rnd.get("targetRevision"):
+        return rnd["base"]
+    now = _snapshot(_entry_now(draft.get("target")))
+    if now and now["revision"] == rnd.get("targetRevision"):
+        return now
+    return None
+
+
+def _change_record(draft: dict, op: dict) -> dict:
+    """The retained record of what this Apply changed (task 209): the
+    request and round, the write operation, the base and resulting
+    revisions and the exact difference — read back from the entry's own
+    bytes, and only claimed when they are the revision the write saved."""
+    now = _entry_now(op.get("id"))
+    result = _snapshot(now)
+    if result is None or result["revision"] != op.get("revision"):
+        result = None
+    # an update whose base was not retained claims no diff (`exact` False)
+    base = draft.get("applyBase")
+    return brainchange.record(draft=draft["id"], round_no=draft.get("proposalRound"),
+                              request=draft.get("applyRequest"), entry_id=op.get("id"),
+                              file=op.get("file"), base=base, result=result, at=_now(),
+                              mode=draft.get("mode") or "update")
 
 
 def _applied(draft: dict, op: dict) -> None:
     draft.pop("error", None)
+    try:
+        draft["change"] = _change_record(draft, op)
+    except Exception as exc:          # the write landed; a record we could not make is said
+        draft["change"] = {"v": brainchange.CONTRACT, "kind": brainchange.KIND,
+                           "draft": draft["id"], "entry": op.get("id"), "exact": False,
+                           "request": draft.get("applyRequest"),
+                           "resultRevision": op.get("revision"), "body": None,
+                           "fields": [], "at": _now(),
+                           "why": f"the change record could not be made ({type(exc).__name__})"}
+    draft.pop("applyBase", None)
     draft.update(status="applied", applied={
         "id": op.get("id"), "file": op.get("file"), "revision": op.get("revision"),
         "what": op.get("what"), "request": draft.get("applyRequest"),
+        "base": (draft.get("change") or {}).get("baseRevision"),
         "at": _now()})
     _say(draft, "you", "applied", f"applied the draft — {op.get('id')} "
          f"{op.get('what')}")
     _save(draft)
+
+
+def review_changes(draft: dict) -> dict | None:
+    """The proposal against its exact base, before Apply (task 209): the
+    base revision and text, the header fields and the body's hunks with
+    the sections they change. A read; None where there is no proposal."""
+    if draft.get("mode") in (SEED_MODE, EVAL_MODE) or not draft.get("proposal") \
+            or draft.get("status") not in ("proposed", "applying"):
+        return None
+    p = draft["proposal"]
+    proposed = {"title": p.get("title") or "", "summary": p.get("summary") or "",
+                "kind": p.get("kind") or "", "body": p.get("body") or ""}
+    if draft.get("mode") == "create":
+        return {"base": None, "fields": brainchange.fields(None, proposed),
+                "body": brainchange.diff("", proposed["body"])}
+    base = _base_of(draft)
+    rnd = _proposal_round(draft) or {}
+    if base is None:
+        return {"base": None, "baseRevision": rnd.get("targetRevision"),
+                "missing": "the entry this draft read was not retained and has changed "
+                           "since, so its exact base cannot be shown; applying will be "
+                           "refused — ask for a revised draft"}
+    now = _entry_now(draft.get("target"))
+    return {"base": base, "baseRevision": base["revision"],
+            "currentRevision": (now or {}).get("revision"),
+            "fields": brainchange.fields(base, proposed),
+            "body": brainchange.diff(base["body"], proposed["body"])}
+
+
+def change_view(draft_id) -> dict:
+    """An applied request's change, read now (task 209): the retained
+    record, where each change is in the entry today, the entry's state,
+    and the write's saved, committed and shared states — each read again.
+    A read: it writes, fetches and launches nothing."""
+    with LOCK:
+        draft = _get(draft_id)
+        rec = draft.get("change")
+        status = draft.get("status")
+        applied = dict(draft.get("applied") or {})
+        mode, target = draft.get("mode"), draft.get("target")
+    if status != "applied":
+        raise Refused("this request has not applied a change", 404, code="not-applied")
+    if not rec:
+        rec = {"v": brainchange.CONTRACT, "kind": brainchange.KIND, "draft": draft_id,
+               "entry": applied.get("id"), "exact": False, "body": None, "fields": [],
+               "request": applied.get("request"), "resultRevision": applied.get("revision"),
+               "why": "this request was applied before change records were kept"}
+    now = _entry_now(rec.get("entry"))
+    st = (now or {}).get("state") or "unknown"
+    if st == "entry":
+        state_word = "current" if now.get("revision") == rec.get("resultRevision") \
+            else "changed-since"
+    elif st == "tombstone":
+        state_word = "retired"
+    elif st == "unknown":
+        state_word = "missing"
+    else:
+        state_word = "unreadable"
+    locations = brainchange.locate(rec, now.get("body"), current_revision=now.get("revision")) \
+        if st == "entry" else []
+    op = None
+    if rec.get("request"):
+        try:
+            op = brainwrite.operation(rec["request"])
+        except brainwrite.Refused:
+            op = None
+    return {"change": rec, "state": state_word, "draft": draft_id, "mode": mode,
+            "target": target,
+            "entry": {"id": rec.get("entry"), "state": st,
+                      "revision": (now or {}).get("revision"),
+                      "title": (now or {}).get("title")},
+            "locations": locations, "operation": op}
 
 
 def apply(payload: dict) -> dict:
@@ -2554,6 +2699,9 @@ def apply(payload: dict) -> dict:
             if payload.get("reason") is not None:
                 write["reason"] = payload.get("reason")
         draft["applyRequest"] = write["request"]
+        # the exact base the change record is made from, kept before the
+        # write so a restart part way still has it (task 209)
+        draft["applyBase"] = _base_of(draft) if kind == "edit" else None
         draft["status"] = "applying"
         _save(draft)
         try:
@@ -2561,6 +2709,7 @@ def apply(payload: dict) -> dict:
         except brainwrite.Refused as exc:
             draft["status"] = "proposed"
             draft.pop("applyRequest", None)
+            draft.pop("applyBase", None)
             if exc.extra.get("stale"):
                 draft["conflict"] = {"code": "destination-changed", "why": str(exc),
                                      "at": _now()}
@@ -2576,8 +2725,9 @@ def apply(payload: dict) -> dict:
         else:
             draft["status"] = "proposed"
             draft.pop("applyRequest", None)
+            draft.pop("applyBase", None)
             _save(draft)
-        out = {"draft": public(draft), "operation": op}
+        out = {"draft": public(draft, full=True), "operation": op}
     state.broadcast({"type": "brain"})
     return out
 
@@ -5040,11 +5190,38 @@ PUBLIC = ("v", "kind", "id", "request", "text", "mode", "target", "targetTitle",
           "proposalRound", "error", "conflict", "applied", "origin", "applyBy")
 
 
-def public(draft: dict) -> dict:
+def _change_summary(rec: dict | None) -> dict | None:
+    if not rec:
+        return None
+    body = rec.get("body") or {}
+    return {"id": rec.get("id"), "entry": rec.get("entry"), "exact": bool(rec.get("exact")),
+            "baseRevision": rec.get("baseRevision"),
+            "resultRevision": rec.get("resultRevision"),
+            "sections": body.get("sections") or [],
+            "changes": len(body.get("hunks") or []),
+            "added": body.get("added", 0), "removed": body.get("removed", 0),
+            "fields": [f["field"] for f in rec.get("fields") or []],
+            "why": rec.get("why")}
+
+
+def public(draft: dict, full: bool = False) -> dict:
     """What the page is sent: no log path, no pinned path, no prompt, no
     manifest — the request, the public conversation, the validated
-    proposal and its bindings, and the rounds' public facts."""
+    proposal and its bindings, and the rounds' public facts. `full` (one
+    request, read by id) adds the proposal's exact changes against its
+    base (task 209); the listing leaves them out."""
     out = {k: draft[k] for k in PUBLIC if k in draft}
+    if draft.get("status") == "applied":
+        out["change"] = _change_summary(draft.get("change")) or {
+            "exact": False, "changes": 0, "sections": [],
+            "why": "this request was applied before change records were kept"}
+    if full:
+        try:
+            changes = review_changes(draft)
+        except Exception:               # a read: a failure is said, never raised
+            changes = {"base": None, "missing": "the exact changes could not be read"}
+        if changes is not None:
+            out["changes"] = changes
     out["round"] = len(draft.get("rounds") or [])
     out["maxRounds"] = config.BRAIN_DRAFT_ROUNDS
     rnd = _current(draft)
@@ -5099,4 +5276,4 @@ def get(draft_id) -> dict:
     launched here, and the one write is retention — a private seed draft
     past it has its text removed before it is shown."""
     with LOCK:
-        return public(_get(draft_id))
+        return public(_get(draft_id), full=True)

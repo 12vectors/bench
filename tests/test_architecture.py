@@ -840,6 +840,8 @@ ROUTES: dict[str, str] = {
     # person's steps — Generate and Continue launch one bounded run each
     "GET /api/brain/draft/preflight": "read",
     "GET /api/brain/drafts": "read",
+    # what one applied request changed (task 209): a read
+    "GET /api/brain/change": "read",
     "POST /api/brain/draft/start": "browser-mutation",
     "POST /api/brain/draft/continue": "browser-mutation",
     "POST /api/brain/draft/cancel": "browser-mutation",
@@ -1132,7 +1134,7 @@ def eager_problems(facts) -> list[str]:
 # Stdlib leaves (check 10): modules that import nothing from core and
 # nothing outside the standard library, anywhere in the file. Each joins
 # the list in the package that builds it (WP03a: gitproc).
-STDLIB_LEAVES = ("gitproc", "records", "redact")
+STDLIB_LEAVES = ("gitproc", "records", "redact", "brainchange")
 
 
 def leaf_problems(core: Path) -> list[str]:
@@ -1214,7 +1216,7 @@ class DocumentIsTheSource(unittest.TestCase):
         """AGENTS.md's one-line map is a summary for people; it may not
         drift from the block that is the source."""
         text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith("gitproc / records / redact < config < "))
+        line = next(l for l in text.splitlines() if l.startswith("gitproc / records / redact / brainchange < config < "))
         tiers = [set(t.replace("/", " ").split()) for t in line.split(" < ")]
         self.assertEqual(tiers, [set(l) for l in self.blocks["current"]["layers"]])
 

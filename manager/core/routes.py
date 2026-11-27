@@ -1537,6 +1537,17 @@ def get_brain_drafts(req) -> None:
         req.reply(exc.status, {"error": str(exc), **exc.extra})
 
 
+def get_brain_change(req) -> None:
+    # What one applied Brain Agent request changed (task 209): the retained
+    # change record, where each change is in the entry now, and the write's
+    # saved, committed and shared states. A read: nothing is written,
+    # fetched or launched.
+    try:
+        req.reply(200, braindraft.change_view(_q(req, "draft")))
+    except braindraft.Refused as exc:
+        req.reply(exc.status, {"error": str(exc), **exc.extra})
+
+
 BRAIN_DRAFT_STEPS = {"start": braindraft.start, "continue": braindraft.continue_,
                      "cancel": braindraft.cancel, "discard": braindraft.discard,
                      "retarget": braindraft.retarget, "apply": braindraft.apply}
@@ -2809,6 +2820,7 @@ ROUTES = (
     Route("GET", "/api/reports/filing", "read", get_report_filing),
     Route("GET", "/api/brain/draft/preflight", "read", get_brain_draft_preflight),
     Route("GET", "/api/brain/drafts", "read", get_brain_drafts),
+    Route("GET", "/api/brain/change", "read", get_brain_change),
 
     Route("POST", "/api/move", "browser-mutation", post_move),
     Route("POST", "/api/events", "event-ingest", post_events),
