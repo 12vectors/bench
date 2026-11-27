@@ -410,9 +410,10 @@ class EachSourceSaysWhatItIs(Isolated):
         self.assertEqual(found["brain:bd-1"]["state"], "proposal-ready")
         self.assertIn("not applied", found["brain:bd-1"]["label"])
         self.assertEqual(found["brain:bd-2"]["state"], "applied")
-        self.assertIn("whether it is committed and shared is shown on the entry",
-                      found["brain:bd-2"]["label"])
-        self.assertEqual(found["brain:bd-2"]["href"], "/brain/e/e-x")
+        self.assertIn("View changes opens the passages it changed, with whether it is "
+                      "committed and shared", found["brain:bd-2"]["label"])
+        # the result link reaches the exact change (task 209)
+        self.assertEqual(found["brain:bd-2"]["href"], "/brain/e/e-x?change=bd-2")
         self.assertEqual(found["brain:bd-3"]["state"], "needs-answer")
         self.assertEqual(found["brain:bd-4"]["owner"], "policy")
         self.assertEqual(found["brain:bd-4"]["open"], {"agent": "brainjob", "target": {"draft": "bd-4"}})

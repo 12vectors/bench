@@ -121,12 +121,21 @@ def diff(before: str | None, after: str | None) -> dict:
         added = removed = 0
         first_change_b = first_change_a = None
         renamed = []
+        touches: list[str] = []
         for tag, i1, i2, j1, j2 in group:
             if tag == "equal":
                 rows.extend(["=", _clip(x)] for x in a[i1:i2])
                 continue
             if first_change_b is None:
                 first_change_b, first_change_a = j1, i1
+            # every section a change falls in: the new text's, and the old
+            # text's for what was removed
+            named = [section_at(heads_b, j) for j in range(j1, j2)] if b else []
+            if not named or i2 > i1:
+                named += [section_at(heads_b, j1) if b else section_at(heads_a, i1)]
+            for name in named:
+                if name not in touches:
+                    touches.append(name)
             gone, came = a[i1:i2], b[j1:j2]
             rows.extend(["-", _clip(x)] for x in gone)
             rows.extend(["+", _clip(x)] for x in came)
@@ -155,6 +164,7 @@ def diff(before: str | None, after: str | None) -> dict:
             "kind": kind,
             "section": section_at(heads_b, first_change_b if first_change_b is not None
                                   else after_at) if b else section_at(heads_a, before_at),
+            "sections": touches,
             "beforeSection": section_at(heads_a, first_change_a or 0) if a else None,
             "beforeAt": first_change_a if first_change_a is not None else before_at,
             "afterAt": first_change_b if first_change_b is not None else after_at,
@@ -169,8 +179,9 @@ def diff(before: str | None, after: str | None) -> dict:
         truncated = True
     changed = []
     for h in hunks:
-        if h["section"] not in changed:
-            changed.append(h["section"])
+        for name in h["sections"]:
+            if name not in changed:
+                changed.append(name)
     return {"hunks": hunks, "sections": changed,
             "renamed": [r for h in hunks for r in h["renamed"]],
             "added": sum(h["added"] for h in hunks),
