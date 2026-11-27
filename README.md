@@ -64,6 +64,17 @@ shows the historical diff rather than highlighting text the agent did
 not write ("Reviewing and navigating exact Brain changes" in
 `AGENTS.md`).
 
+Select a passage in a Brain entry and **Comment** on it, or **Ask agent**
+about it — or use **Choose a passage…** with the keyboard or on a phone.
+A comment is an attributed thread kept with the entry in the work state
+(`brain/comments/`), and posting one starts nothing. Ask agent starts one
+Brain Agent update request about that exact passage; its proposal is
+reviewed and applied as above, and the thread reads resolved only when
+the applied edit changed its passage. A passage the entry no longer holds
+in one recognisable place reads outdated or detached and is re-anchored
+by a person, never moved by guesswork ("Comments on selected text" in
+`AGENTS.md`).
+
 Closing the panel does not lose what an agent does next. The header's
 **Activity** control, on every view, counts unread agent results and
 questions and opens a list of them — runs, Orchestrator answers, Brain

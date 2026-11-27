@@ -170,6 +170,13 @@ gitproc / records / redact / brainchange < config < githost / assets / agreement
   to it; `observe` writes a `stale` record when a stacked decision's
   parent moves, lands, goes back or vanishes (see "Choosing a work base:
   main, or committed work in Review")
+- `braincomments.py` — comments on selected Brain text (task 210): the
+  version 1 record under `brain/comments/`, a selection mapped onto the
+  entry's Markdown (refused when it is not there or repeats unresolved),
+  and where each passage is now — current, relocated only on a unique
+  match with its context, outdated or detached otherwise. Imports
+  `brain`, `brainchange` and `redact`; writes nothing (see "Comments on
+  selected text")
 - `adoption.py` — legacy `reference/` material (task 172): the inventory
   and one file's preview, read and written nowhere, and the freeze the
   Brain's writer asks under its lock before an `adopt` write. It imports
@@ -475,6 +482,12 @@ gitproc / records / redact / brainchange < config < githost / assets / agreement
   bounds a Repair (task 200). Beside `recovery`, above `braindraft` (see
   "Reconciling classifications from work events" and "Maintenance health:
   whole-Brain reconciliation")
+- `brainthreads.py` — comment threads and the Brain Agent (task 210): a
+  person's comment writes through `brainwrite`, Ask agent as exactly one
+  `braindraft.start` request carrying the passage and the instruction,
+  and the settling of a linked thread against what the applied change
+  record actually touched. Owns no store. Beside `brainreconcile`, above
+  `braindraft` (see "Comments on selected text")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -3532,7 +3545,152 @@ read route, and the page's block marking run in node.
 `verify/browser_cases/case_brain_changes.py` drives the review, Apply,
 View changes, Previous/Next by pointer and keyboard, a reload, the return
 to the conversation, the inbox link and a later edit at 1280 and 390
-pixels in both themes. Selection-anchored comments are task 210.
+pixels in both themes. Selection-anchored comments are the next section.
+
+### Comments on selected text
+
+A person reading a maintained Brain entry can select a passage and
+comment on it, or ask the Brain Agent to work on it, without leaving the
+text (task 210, `braincomments.py` and `brainthreads.py`). It extends the
+drafting request and the change record above. There is no second agent
+stack, store or writer.
+
+**Two ways to a passage.** Selecting text in the entry's body shows a
+small toolbar with **Comment** and **Ask agent**; pressing it keeps the
+selection. **Choose a passage…**, under the entry, lists its paragraphs,
+items and headings as buttons, for the keyboard and touch. Either way the
+composer shows the selected text, which can be narrowed, and a field for
+the comment or the instruction.
+
+**The anchor is the source Markdown, not the page.** The page sends what
+the reader saw (the selection and a little either side) and the server
+maps it onto the entry's Markdown by its letters and digits alone, which
+is the one thing rendering never changes. Emphasis marks, link targets,
+list numbers, task boxes, code-fence lines and HTML comments are left
+out on the source side, and spacing and punctuation on both. The anchor
+records the entry's revision, the source character and line positions,
+the section, the quote, and up to 32 letters and digits either side
+within the same block. A selection that is not in the entry
+(`no-match`), holds too little text (`too-short`), or repeats with
+nothing around it to say which (`ambiguous`) is refused, with nothing
+written. It is never attached to a guess.
+
+**Where a passage is now** (`braincomments.locate`), said in words on
+each thread and never by colour alone:
+
+| state | when | shown |
+| --- | --- | --- |
+| In place (`current`) | the entry is the revision the comment was anchored at | marked in the text |
+| Found again (`relocated`) | the entry changed, and the quote with its recorded context occurs exactly once | marked in the text |
+| Outdated | the quote is there, but its context changed or it repeats | not marked; **Re-anchor to a passage…** |
+| Detached | the quote is gone, or the entry was retired or is missing | not marked; **Re-anchor to a passage…** |
+
+A marked passage is an outlined, underlined `mark` with an accessible
+name; **Show in text** scrolls to it and moves focus there. Nothing is
+re-anchored by itself: re-anchoring is a person's write, held to the
+entry revision their page read.
+
+**Post comment writes the discussion and starts nothing.** **Reply**,
+**Resolve with this note** and **Reopen with this note** are the same
+kind of write. A reply never resolves anything. Resolving and reopening
+each need a note and keep the whole attributed history.
+
+**Ask agent is a separate, armed request.** Its first press arms it, and
+its second writes the thread's opening (or, on an open thread, the
+follow-up as a reply). Then it starts exactly one Brain Agent update
+request through `braindraft.start`, the existing authorized drafting path
+with its preflight, profile, budget and refusals. The request carries
+the entry, the exact passage (its section, its lines and the quote at
+that revision) and the instruction. The thread is then linked to the
+request, and its conversation opens in the shared panel. The entry is
+unchanged until a person reviews the proposal there and presses
+**Apply**, exactly as before. Every step is keyed by the person's request
+identity: a double click, a resend after a lost reply, or a restart part
+way finds the one thread, the one drafting request and the one link
+already there. A request that cannot start (a harness that cannot run the
+`brain` intent, say) keeps the comment and records the reason
+(`not-launched`).
+
+**Resolved only by what the edit did** (`brainthreads.settle`, run after
+an Apply, Cancel or Discard and at start-up). An applied request resolves
+a linked thread only when its change record is exact, was made from the
+revision the thread was asked about, and its edits touch the anchored
+lines. That thread reads *Resolved by the applied edit*, with **View
+changes**. Everything else stays open and says why:
+
+| outcome | when |
+| --- | --- |
+| `unrelated` | the edit was applied and did not change this passage |
+| `unverified` | there is no exact change record, or it was made from a later revision than the passage was asked about |
+| `conflict` | Apply was refused (a source or the entry changed); nothing was written |
+| `cancelled`, `discarded` | the request was ended without an edit |
+| `not-launched` | the request could not start |
+
+Comments nobody asked the agent about are never touched by an edit, and
+a person's reopen is not undone by a later settlement or restart.
+
+**The record, version 1.** One file per entry,
+`brain/comments/<entry id>.md`, beside the entries in the work state, and
+not an entry itself (the Brain's reading skips the directory). It is
+append-only: one `<!-- bench:brain-comment {…} -->` record per event,
+newest last, each followed by a readable line the board writes and never
+reads back. Events are `open` (the thread, its mode `comment` or `ask`,
+the anchor and the text), `reply`, `resolve` (`by` a person or an
+`edit`, with the request and the change id), `reopen`, `reanchor`,
+`link` (the drafting request, and the revision and lines it was asked
+about) and `outcome`. Every write goes through `brainwrite`'s own path.
+It is held to the record's revision the page read (`none` before the
+first), journalled under its request identity before the file is touched,
+committed alone as `board: brain <entry> comment <thread> …` under
+`BOARD_COMMIT_MOVES`, and published by sync. **Saved**, **Committed** and
+**Shared** are read as for any Brain write. A refused stale write keeps
+the person's text on the page, and a failed commit offers **Retry
+commit**. Text is bounded (2,000 characters a message, 600 a quote,
+512 KiB and 200 threads an entry), scrubbed of anything credential-shaped,
+stripped of control and direction-changing characters, and inert: angle
+brackets are escaped in the record, so no text can end a record or pose
+as markup. The record holds actors (this board's git identity), times,
+text and anchors, and never a transcript, prompt, path or unread state.
+Those stay machine-local with the drafting request.
+
+**What cannot be annotated.** Only a maintained entry takes comments. A
+retired entry keeps its comments readable and takes no new ones. A filed
+review in the Brain is the card's immutable text: its page says to
+discuss it on its card and links there, and `GET /api/brain/comments`
+with a review answers `409 review-immutable` with the card's address.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/comments?entry=` | the threads, each passage located now and each linked request's state on this board; a read |
+| `POST /api/brain/comments/open` | `{request, entry, expected, entryRevision, quote, prefix?, suffix?, text}` — Post comment; launches nothing |
+| `POST /api/brain/comments/reply`, `/resolve`, `/reopen` | `{request, entry, expected, thread, text}` |
+| `POST /api/brain/comments/reanchor` | `{request, entry, expected, entryRevision, thread, quote, prefix?, suffix?, text?}` |
+| `POST /api/brain/comments/ask` | the fields of `open` (a new thread) or `{…, thread, text}` (a follow-up) — writes the thread's event, starts one drafting request, links it |
+
+The POSTs sit behind the browser-mutation door. **What is proved, and
+what is not:** `tests/test_braincomments.py` holds anchoring (rich
+Markdown, Unicode, repeated quotes refused or told apart, link targets
+never selectable), locating (exact, relocated after an edit elsewhere and
+a section move, outdated on changed context or repetition, detached on an
+edit, a deletion or a retirement), the record (one write per request, a
+stale page refused, replies never resolving, resolve and reopen with
+history, bounds, scrubbing, inert markup, explicit re-anchoring), and,
+through the Claude adapter's real `run` with a stub vendor on #175's
+split fixture: Ask agent starting one request, repeats finding it, an
+applied edit of the passage resolving only its thread, an edit elsewhere,
+a refused Apply, a cancel and a request that could not start keeping the
+thread open, a follow-up linked to the same thread, and a scoped commit
+in a work-state repository of its own.
+`verify/browser_cases/case_brain_comments.py` drives a selection and the
+toolbar, Post comment with no request started, a reload, Show in text, a
+refused repeated line, Choose a passage and Ask agent by the keyboard,
+Apply in the shared panel and the resolved thread, at 1280 and 390
+pixels in both themes. Whether a real model edits the right passage is a
+separately approved, billable run that nothing starts by itself.
+
+**Not in this version:** a collaborative editor, comments on filed
+reviews or on card text, automatic relocation of an ambiguous anchor,
+automatic Apply, and per-comment unread state.
 
 ### Reviews in the Brain
 
