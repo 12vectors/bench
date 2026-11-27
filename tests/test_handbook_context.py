@@ -484,6 +484,40 @@ class Fallbacks(_Context):
         self.assertIn("handbook-not-delivered",
                       [d["code"] for d in found["handbook"]["diagnostics"]])
 
+    def test_a_copy_changed_after_the_manifest_was_filed_reaches_the_record(self):
+        """Launches file the manifest before they write the prompt; what the
+        prompt step learns about the handbook is written to the record too."""
+        self.populated()
+        found = self.launch(delivery="none")
+        stored = profiles.record("run-a", found)
+        self.assertEqual(profiles.recorded("run-a")["handbook"]["delivery"], "inline")
+        pinned = Path(self.item(stored)["pinned"])
+        pinned.chmod(0o644)
+        pinned.write_text("tampered")
+        self.assertEqual(profiles.handbook_block(stored), "")
+        kept = profiles.recorded("run-a")
+        self.assertEqual(kept["handbook"]["state"], "unreadable")
+        self.assertIn("handbook-not-delivered",
+                      [d["code"] for d in kept["handbook"]["diagnostics"]])
+        self.assertIs(self.item(kept)["delivered"], False)
+
+    def test_an_unrecorded_reading_writes_no_manifest(self):
+        self.populated()
+        found = self.launch(delivery="none")
+        pinned = Path(self.item(found)["pinned"])
+        pinned.chmod(0o644)
+        pinned.write_text("tampered")
+        profiles.handbook_block(found)
+        self.assertFalse((self.dir / "state" / "manifests").exists()
+                         and any((self.dir / "state" / "manifests").iterdir()))
+
+    def test_the_grantable_rule_is_the_claude_adapters_own(self):
+        """`profiles.grantable` copies the adapter's path rule; if the two
+        drift apart an adapter refusal of the whole launch comes back."""
+        self.assertEqual(profiles._GRANTABLE_PATH.pattern, hook_settings._SAFE_PATH.pattern)
+        for path in ("/a b/c.md", "/a/(b).md", "/a/é.md", "/a//b", "/a/../b", "/a/"):
+            self.assertFalse(profiles.grantable(path), path)
+
     def test_a_bundle_that_cannot_be_made_is_a_diagnostic_for_the_handbook_alone(self):
         self.populated()
         blocker = self.dir / "a-file"
