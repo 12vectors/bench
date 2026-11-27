@@ -40,6 +40,7 @@ import brainwrite  # noqa: E402
 import httpd  # noqa: E402
 import state  # noqa: E402
 
+import tests.test_braindraft as drafting  # noqa: E402
 from tests.test_braindraft import _Board, EXISTING  # noqa: E402
 
 
@@ -361,6 +362,68 @@ class Applied(_Board):
         self.assertEqual(self.entry_file.read_bytes(), before)
         self.assertEqual(self.calls(), calls)
         self.assertEqual([a for a in state.AGENTS.values() if a["status"] == "running"], [])
+
+
+class Upgrade(Applied):
+    """Requests written before task 209: a round with no retained base, and
+    an Apply with no change record — each said, never guessed."""
+
+    # the journeys above are Applied's; these two are the upgrade's own
+    test_the_review_shows_the_exact_base_and_its_changes = None
+    test_apply_keeps_a_record_that_leads_to_the_first_change = None
+    test_a_later_human_edit_reads_changed_since_and_never_highlights_other_text = None
+    test_a_retired_entry_is_said_and_nothing_is_located = None
+    test_a_lost_reply_is_settled_with_the_same_record_at_restart = None
+    test_a_conflict_records_no_change_and_keeps_the_human_edit = None
+    test_a_new_entry_is_recorded_as_one_insertion = None
+    test_the_route_reads_and_launches_nothing = None
+
+    def test_an_older_round_is_reviewed_against_the_entry_only_while_it_is_that_revision(self):
+        draft = self.drafted()
+        raw = braindraft.DRAFTS[draft["id"]]
+        for rnd in raw["rounds"]:
+            rnd.pop("base", None)              # as a pre-209 round was written
+        got = braindraft.get(draft["id"])["changes"]
+        self.assertEqual(got["baseRevision"], brain.entry("e-exports")["revision"])
+        self.assertTrue(got["body"]["hunks"])
+        self.entry_file.write_text(SECTIONED.replace("UTF-8.", "UTF-16."), encoding="utf-8")
+        got = braindraft.get(draft["id"])["changes"]
+        self.assertIsNone(got["base"])
+        self.assertIn("not retained", got["missing"])
+
+    def test_an_apply_without_a_record_says_so(self):
+        draft = self.drafted()
+        self.apply(draft, body=self.edited_body())
+        raw = braindraft.DRAFTS[draft["id"]]
+        raw.pop("change")                      # as a pre-209 Apply was recorded
+        view = braindraft.change_view(draft["id"])
+        self.assertFalse(view["change"]["exact"])
+        self.assertIn("before change records were kept", view["change"]["why"])
+        self.assertEqual(view["locations"], [])
+        self.assertFalse(braindraft.get(draft["id"])["change"]["exact"])
+
+
+class VendoredChange(drafting.Vendored):
+    """The same record in a vendored layout (#175's fixture): the work
+    root, the tool and its state inside the application checkout."""
+
+    # the vendored drafting journeys are test_braindraft's own
+    test_the_journey_holds_and_the_boundary_is_the_deny_rules = None
+    test_a_citation_of_bench_private_state_through_the_app_is_refused = None
+
+    def test_a_vendored_update_keeps_an_exact_record(self):
+        self.entry_file.write_text(SECTIONED, encoding="utf-8")
+        before = brain.entry("e-exports")
+        draft = self.start("propose", target="e-exports", expected=before["revision"])
+        self.assertEqual(draft["status"], "proposed", draft.get("error"))
+        body = before["body"].replace("Comma separated.", "Semicolon separated.")
+        self.apply(draft, body=body)
+        view = braindraft.change_view(draft["id"])
+        self.assertEqual(view["state"], "current")
+        self.assertTrue(view["change"]["exact"])
+        self.assertEqual(view["change"]["baseRevision"], before["revision"])
+        lines = brainchange.lines_of(brain.entry("e-exports")["body"])
+        self.assertEqual(lines[view["locations"][0]["start"]], "Semicolon separated.")
 
 
 class ThePageMarks(unittest.TestCase):
