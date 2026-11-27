@@ -61,7 +61,7 @@ private name of another, and `board.py` imports every core module at
 startup:
 
 ```
-gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask < routes / watch < httpd < board
+gitproc / records / redact < config < githost / assets / agreements / operations / decisiontrace < state / reports / templates / gitrepo / verifierreport / workbase < taskfiles < plans / profiles / execowner / movements / decisions / brain < gatepolicy / reviews / inputs / basechoice / handbook / adoption < evidence / resultidentity / artifacts / seedsources < staleness < verify < progress / checkload < acceptance / callers < gates / brainreviews < required / orchestrator < doctor < commands / drive / events / sync < changes / brainwrite / reportfiling / integration < completion < stacks < delivery / stackactions / results / cycletime < agentsettings < settings < setupbase / appinspect < agents / previews / readiness < setuptasks < setupguide < phases < phasescope / archiveall < refine / reasoning / coordinate / braindraft < recovery / brainreconcile < scheduler < ask / attention < routes / watch < httpd < board
 ```
 
 - `gitproc.py` — running git so a read stays a read: the read verbs, the
@@ -453,14 +453,20 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   no entry itself (see "Drafting with the Brain Agent"). Its `evaluate`
   mode (task 196) proposes classifications for selected entries, applied
   as a batch of classification-only items (see "Evaluating
-  classifications with evidence")
+  classifications with evidence"), and — task 199 — an update of one
+  section of the existing explanation each concerns, in the same batch
+  (see "Maintaining the existing explanation from evidence")
 - `brainreconcile.py` — keeping Brain classifications reconciled with the
   work (task 197): the off-by-default policy and its two authorities
   (evaluate, apply), the durable queue an entry joins when a card it cites
   changes, on enablement, a Rebuild or a Refresh sources, and the bounded
   launch of `braindraft`'s own evaluation and its policy-attributed Apply.
-  Only the designated execution installation runs it. Beside `recovery`,
-  above `braindraft` (see "Reconciling classifications from work events")
+  Only the designated execution installation runs it. Its `health` reads
+  the whole Brain's maintenance health — affected explanations, broken
+  transition links, coverage and what was not inspected — and its preview
+  bounds a Repair (task 200). Beside `recovery`, above `braindraft` (see
+  "Reconciling classifications from work events" and "Maintenance health:
+  whole-Brain reconciliation")
 - `coordinate.py` — delivering a card in review (task 142; a phase
   scope's members and final head, task 143):
   its required checks, an independent review once the reviewer's
@@ -491,6 +497,14 @@ gitproc / records / redact < config < githost / assets / agreements / operations
   conversations read back from cards and the work state's
   `orchestration/conversations/`. It executes nothing an answer suggests
   (see "Asking the orchestrator")
+- `attention.py` — agent activity and its inbox (task 207): one list
+  projected from records other modules keep (runs' progress records,
+  Orchestrator questions and replies, Brain drafts, card refinements,
+  open owner questions), each with one state word, and the one thing
+  none of them keeps — which transition a person on this installation
+  acknowledged — in a bounded, machine-local record. Its beat wakes on
+  the frames that announce a change; it launches, retries and schedules
+  nothing (see "Agent activity and the inbox")
 - `watch.py` — 2s disk poller narrating moves made outside the API, and
   the gate that keeps a move a pull applied from triggering anything
 - `routes.py` — every HTTP route: its method and path, its request
@@ -1895,9 +1909,16 @@ with evidence, and a person's reviewed Apply writes only classification
 metadata (task 196, "Evaluating classifications with evidence"), and —
 only once a person turns it on — the same evaluation is queued when a
 card an entry cites changes, with applying a separate authority (task
-197, "Reconciling classifications from work events"). What it does not do
-yet, said so nobody looks for it: write or maintain an entry's prose
-(phase 6). A run is given no
+197, "Reconciling classifications from work events"), and the same
+evaluation proposes an update of the existing explanation it concerns —
+one section, applied with the classification in one batch, a person's
+section and a working agreement each needing that person's explicit
+decision (task 199, "Maintaining the existing explanation from
+evidence"). **Maintenance health** reads, across the whole Brain, the
+explanations a change has affected, the coverage gaps and broken
+Historical/Current links, what was not inspected, and offers a
+preview-bound **Repair** through the same queue (task 200, "Maintenance
+health: whole-Brain reconciliation"). A run is given no
 Brain entry because it exists: being in the Brain is not being approved
 context. The one agent that reads the Brain is the **Brain Agent**, which
 a person asks to draft one entry and whose draft a person applies (task
@@ -2841,10 +2862,12 @@ Apply and at start-up. **Saved**, **Committed** and **Shared** are said
 apart afterwards, with **Retry commit** and **Push now** / **Retry
 push**, exactly as for a person's own write.
 
-**Not in this version:** writing or repairing handbook prose, and
-classifying review projections (a review's classification record stays a
-person's, under `brain/reviews/`). Classifying on a card's update and
-rebuilding every entry's classification are the next section's.
+**Not in this version:** handbook membership, and classifying review
+projections (a review's classification record stays a person's, under
+`brain/reviews/`). Classifying on a card's update and rebuilding every
+entry's classification are the next section's; updating the explanation
+an evaluation concerns is "Maintaining the existing explanation from
+evidence".
 
 **What is proved, and what is not.** `tests/test_brainevaluate.py` drives
 the lifecycle through the Claude adapter's real `run` against a stub
@@ -2886,6 +2909,10 @@ things, shown apart:
 | --- | --- | --- |
 | **evaluate** | launch read-only evaluations of entries whose inputs moved | waits for a person's review in Evaluate (**Review in Evaluate**) |
 | **apply** (needs evaluate) | apply the proposals bench selects by default — bound evidence, a changed classification, nothing blocking | is written under the policy; each history line says *applied under the Brain reconciliation policy*. Never a correction, never Unclassified, never an entry with a manual override |
+| **maintain** (needs apply; task 199) | apply, with such a classification, its factual update of a new section or one bench maintains in the existing explanation | written in the same batch, its provenance line saying *applied under the Brain reconciliation policy*. Never a person's section, a working-agreement change or an edit; without this authority every update is left for a person and the classification's history line says it is pending |
+
+A policy written before task 199 has no `maintain` key and reads exactly
+as it did, granting none. Revoking apply revokes maintain with it.
 
 Both are read from disk again immediately before every launch and every
 apply. Turning reconciliation off, or revoking apply, while a round runs
@@ -2971,6 +2998,230 @@ drives the panel by pointer and keyboard at 1280 and 390 pixels in both
 themes. Turning it on for a real project, and whether a real model
 evaluates well, are separate, authorized acts.
 
+### Maintaining the existing explanation from evidence
+
+A classification says an investigation is now history. The explanation
+of what was built has to say so too, and it must not become one new
+article per card (task 199). So an evaluation's proposal for an entry may
+carry, beside its classification, an optional **update of the existing
+explanation** — `maintain` in the answer — and Apply writes both halves
+in the same all-or-none batch. It is the evaluation of "Evaluating
+classifications with evidence" throughout: the same preview, approval,
+read-only round, validation, review, request identity, writer, journal,
+commit and sync. No new route, agent or store.
+
+**What can be updated.** One `##` section of one entry that exists, is
+live and Current, is a Guide, Decision or Investigation, was pinned in
+the round, still holds the bytes the round read, and that the evaluated
+entry evidently concerns: it is the entry's linked Current explanation,
+the two are related, they cite the same card, or it is the evaluated
+entry itself while it stays Current. Anything else is refused — bench
+does not guess which explanation to update, and never creates one. When
+no explanation exists, the classification says *Current explanation
+pending* and nothing is invented. The update **appends** a new section
+(before a draft's own `## Sources and claims`, which stays last) or
+**replaces** an existing one.
+
+**What a section says.** Its heading; a provenance line bench writes —
+`_Maintained from evidence — Brain Agent evaluation bd-…, round n, date;
+a factual update applied by a person._`; the explanation; and every claim
+with what the evidence supports it as:
+
+| status | needs | shown as |
+| --- | --- | --- |
+| `implemented` | evidence in the code (`app:`); a card's stage, a plan or a PR is refused | Implemented in the source |
+| `agreed-future` | the card, plan or entry where it was agreed | Agreed, not built |
+| `unresolved`, `unknown` | nothing | Unresolved, Not known |
+| `deployed` | — always refused: bench binds no deployment evidence. A person records a `deploy:` binding on the entry | — |
+
+What the evidence does not support is listed under *Not supported by the
+evidence yet*, and the item's uncertainty under *Uncertain*, so a partial
+implementation updates only what is supported and says the rest. A claim
+may say its authority: `inferred-convention` is shown as *observed
+convention, not an approved agreement*; `documented-policy` needs scope
+policy and the card, plan or entry that documents it. The section's text
+holds `###` and below only — no `#`/`##` heading, no HTML comment, no
+unclosed fence, no provenance line of its own, nothing credential-shaped.
+The explanation also gains the evaluated entry in **Related**, what the
+update cites in **Source**, and an `app:<path>@<commit>` **Binding** for
+each cited file, so its source authority can say whether the code moved
+since. Its classification, history, title, kind and every other section
+are kept.
+
+**Who owns the text.** A `##` section whose first line is that provenance
+line is bench-maintained; the opening, every other section and a draft's
+`## Sources and claims` are a person's. Removing the provenance line hands
+a section back to people.
+
+| the update | selected by default | to apply it |
+| --- | --- | --- |
+| a new section, or one bench maintains, factual, unedited | yes | Apply |
+| your edit of its text | — | your edit is what is written; select it |
+| a person's section (`human-owned`) | no | choose **Replace this person's section**, or leave it out |
+| a working agreement (`policy-authorization`) — the agent says scope policy, the entry records **Policy:**, or the handbook links it under Ways of working | no | say why you authorize it: your name and reason go into the provenance line. **Policy:** is never written, so an inferred convention never becomes an approved agreement |
+
+**Both halves, never one passed off as the whole.** The review says, per
+entry, *The classification and the explanation update apply together*,
+*Explanation update pending — the classification applies without it*, or
+*Classification pending — only the explanation update applies*. The
+classification's history line says *its explanation was updated in the
+same batch* or *its explanation update is pending*, and the request's
+record keeps the pairs left pending. An explanation reclassified in the
+same batch is not maintained in it (`reclassified`).
+
+**Guards, read again at Apply.** The update is held to the revision of
+the explanation the round read (`destination-changed`), the bytes of what
+it cites (`source-drift`), and the section it replaces (`section-missing`);
+each refuses that half with nothing written, and the person's edits stay
+on the page. Whether it is a working-agreement change is read again too:
+a **Policy:** field or a Ways of working link added since the round makes
+it one, and a handbook record that cannot be read holds it as one. Under
+the reconciliation policy an update is applied only with a classification
+the same batch applies — never alone. A reverted or reopened implementation is a new evaluation:
+the investigation may go back to Current, and the bench-maintained
+section is replaced — git keeps every earlier version, and the classification
+history keeps every line.
+
+**The receipt.** After Apply, the request records each update — the
+explanation and section, the text before and after, who applied it
+(*a person* or *the reconciliation policy*) and any authorization — with
+the writer's request identity, so a restart mid-Apply settles to the same
+receipt, and **Saved**, **Committed** and **Shared** are said apart as for
+any batch. Automatic classification applies an update only under its own
+`maintain` authority (see "Reconciling classifications from work events").
+
+**What is proved, and what is not.** `tests/test_brainmaintain.py` drives
+it through the Claude adapter's real `run` against a stub vendor on #175's
+split fixture: an append and a later replace, no new entry, the code
+bound, implemented, deployed and agreed claims held, a forged provenance
+line and a second heading refused, an unrelated explanation not guessed
+at, a person's section and a working agreement each held for their
+decision, an edit, destination and source drift, a deselected half, a
+restart mid-Apply and the policy path with and without `maintain`.
+`verify/browser_cases/case_brain_maintain.py` drives the review, a
+keyboard deselect, an edit and Apply at 1280 and 390 pixels in both
+themes. Whether a real model writes a good section is a separately
+approved, billable run nothing starts by itself. Finding every
+explanation and coverage gap a change affects across the project is the
+next section's.
+
+### Maintenance health: whole-Brain reconciliation
+
+The queue above answers *is this entry still classified right?* one entry
+at a time. **Maintenance health** (task 200, `brainreconcile.health`), a
+panel on the Brain's list below Automatic classification, answers the
+whole-Brain question a maintainer asks: *what has the work affected, what
+is broken, what is not covered — and what did nobody look at?* It is a
+reading over records bench already keeps — the queue's own reading, the
+Brain's index, the handbook's source authority — and adds no crawler,
+scheduler, agent or writer. Opening it is **Read maintenance health**;
+it is not polled, because it runs local git reads.
+
+**What it finds**, each with the entry, why and one concrete next action
+and who holds it:
+
+| finding | when | next |
+| --- | --- | --- |
+| Never reconciled | an entry the queue has never evaluated against its inputs — every entry written before reconciliation was turned on, until a Rebuild or Repair | Repair, or turn reconciliation on |
+| A card it cites changed | the inputs moved since it was evaluated | the queue's next pass |
+| Code changed since it was evaluated | the checkout moved on past the commit it was evaluated at (code outside card events) | Repair (a refresh) |
+| A bound source has moved | an `app:` or `work:` binding is stale, gone, off the branch or names an unknown commit | Repair, or fix the binding |
+| It cites a card not on this board | a `#n` source no card here carries | edit its sources |
+| Historical with no Current explanation | no live Current entry is linked (by **Related** or its history's *explained now by*) | ask the Brain Agent for one, or link one |
+| Its recorded explanation is no live Current entry | the history names one that was retired, removed or reclassified | link a live one |
+| Superseded with no live successor | no successor and no invalidation, or a chain ending at an entry that is not live and Current | point it at the live successor |
+| It links an entry that is not here | a related or supersession id no entry carries | edit the link |
+| Unclassified; an outcome unresolved; applied and not yet shared | the classification, the queue (failed, blocked, waiting for review) or the push is open | Classify, Retry, Review in Evaluate, Push now |
+| The handbook does not cover this yet | a section is empty, not covered or partial | Organize the section — **shown, never required**: no merge or launch waits for it |
+| A file could not be read as an entry; a binding was not checked | its content, or the binding, was not inspected | fix the file; open the entry |
+
+**Unknown is never complete.** The reading is one of *Needs attention*
+(a problem above), *Incomplete — part of the Brain was not inspected*
+(only never-reconciled entries, unchecked bindings, unreadable files or
+coverage gaps), *Assessed — no gap found in what was inspected*, or *No
+maintained entries yet*. There is no "healthy": the assessed scope puts
+every live entry in exactly one bucket — reconciled against its current
+inputs, never reconciled, inputs changed since, queued or being
+evaluated, *last round ended without an assessment*, or held by an
+override — so the counts add up to the live entries; it also says which
+are excluded (a manual override, retired), how many bindings were checked
+and how many not (one shared budget of 80 git reads), and the newest and
+oldest assessment. **Only a round that assessed counts:** a proposal
+(applied, waiting, or unchanged) is an assessment; a failed, refused,
+cancelled or not-evaluated round is an ending, never counted as assessed
+and never moving the last-assessed time — the queue keeps the last real
+assessment apart from the newest ending.
+What it never inspects is listed in the panel: claims inside an entry's
+body, code no entry binds and cards no entry cites, plans/ and
+reference/ files named as plain sources, and an entry under an override.
+
+**Repair, previewed and bound.** The preview says exactly which entries a
+Repair would queue (never reconciled, code changed, a binding moved),
+the effective authority now (evaluate, apply, explanation update,
+whether this installation executes), how many evaluations that is
+against the launches left today, and what an evaluation may read and do
+(the evaluation's own preflight: harness, model, pinned work-root
+sources, read-only). **Repair** is armed, then fired:
+`POST /api/brain/reconcile/action` `{action: "repair", request, entries,
+preview}` — a Refresh of exactly those entries at the application's
+current commit, queued with reason `repair`. A preview that no longer
+matches (an entry, the authority or the budget moved) is refused
+(`preview-stale`) with the current preview; an entry it did not name is
+refused (`not-affected`); the same request again answers once; with
+reconciliation off, or on a replica, it is refused as every queue action
+is, and without the evaluate authority it is refused (`not-available`)
+exactly as the preview says. An entry already queued or being evaluated
+is not offered, and one Repair names at most 200 entries — the rest are
+counted as *more*, offered by the next Repair once these are queued. Its click launches nothing, creates no entry, widens no source
+selection and changes no gate; the queue launches within its budget,
+one evaluation at a time, and a repeated or replayed card event still
+coalesces into one place in the queue.
+
+**History and receipts.** The panel lists every classification
+transition across the Brain (newest 40), each with who and how — *a
+person*, *an evaluation, applied by a person*, or *the policy* — and its
+reason, including *explained now by* links; the proposals waiting for a
+person apart from what was applied (with its sync state); and every
+manual override.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/brain/health` | the scope, findings, coverage, history, overrides and the repair preview; a read |
+
+**Operating it.** Turn reconciliation on in Automatic classification
+(evaluate only, at first); read Maintenance health; Repair what it names,
+or Rebuild to reconcile every entry; review the proposals in Evaluate
+and correct what is wrong (a correction is a person's, and a manual
+override keeps an entry out of automation until cleared); grant apply,
+and then the explanation-update authority, only once the proposals have
+earned it. Recovery is the queue's: a failed or cancelled round is a
+**Retry**, a restart closes a running round as failed and nothing reruns
+by itself, a lost Apply reply is answered from the Brain's journal, and
+a failed push is **Push now**.
+
+**What is proved, and what is not.** `tests/test_brainhealth.py` holds,
+on #175's split fixture with a stub vendor through the Claude adapter's
+real `run`: a passive reading, pre-enable entries never reconciled,
+coverage as a gap and never a gate, every broken-link kind, a moved and
+an unchecked binding, Repair refused while off or without the evaluate
+authority, preview-bound, bounded and answered once, a failed, refused
+and cancelled round never counted as assessed (and a later failure
+keeping when the entry was really assessed), coalesced duplicate events,
+and the combined journey — baseline, a disposable code change and its
+card's review, a policy Apply that makes the investigation Historical and
+updates the same explanation, no new page, the trail attributed to the
+policy, and a reversion read as affected work.
+`verify/browser_cases/case_brain_health.py` drives the panel and the
+same combined journey through the page: the baseline read as never
+reconciled, the review opened at its Brain address, the policy's Apply
+seen in the health panel's trail and on both entry pages with the
+review's card unchanged, and the reversion said as affected work at 390
+pixels in both themes. Restart, upgrade and commit or push failure are
+the queue's and the writer's, held by #197's and #199's tests, not
+repeated against the health reading. Whether a real model evaluates well is a separately
+approved, billable run nothing starts by itself; and a fixture is not
+the operator's installed board.
+
 ### Drafting with the Brain Agent
 
 Nobody should have to write the Brain's articles by hand (task 175).
@@ -2981,7 +3232,14 @@ correct or add. A launched, read-only coding agent reads the project,
 asks follow-up questions only when it must, and proposes **one** entry.
 A person reviews it, edits it and applies it. Writing the entry yourself
 stays one click away (**Write it yourself instead**), and **Edit** works
-exactly as before.
+exactly as before. Since task 205 the request is held in the shared
+conversation panel beside the Brain ("The shared agent conversation"):
+the entry it is about stays in view while you read the draft, one
+conversation is kept per target (a new entry, or each entry being
+updated), and reading other entries, leaving the Brain or reloading
+keeps its request, answers and edits. **New entry** after a request has
+ended (applied, cancelled, discarded or failed) starts a new one; an
+ended request stays listed under **Brain Agent requests**.
 
 **The journey, and what each step costs.**
 
@@ -3232,7 +3490,25 @@ typed source) or its card (`#168`) are listed under **Cited by**; a
 reads **Unclassified**, and nothing is written to say so: the list is
 rebuilt from the cards and the records on every reading, so a rebuild can
 lose no reason. **Classify** and **Set override** / **Clear override**
-write one small file per review under `brain/reviews/`:
+write one small file per review under `brain/reviews/`.
+
+**A closed ticket's PR reviews read Historical** (task 201). A PR review
+round on a card in `done/` or the archive, with no record, reads
+**Historical** in the list, the filters and counts and on its page,
+marked *closed ticket* / *from the closed ticket*. It is derived on every
+reading from where the card is — nothing is written, no model is asked,
+and it holds the same for a card closed long ago, a review filed after
+closing, a move by hand or one a sync brought. It is a lifecycle default:
+not a person's decision, not an agent's assessment, and not a claim that
+the review failed, was superseded or that its code was merged or
+deployed. A record always wins (a person's classification, an override
+with it; an override set on an unrecorded closed review fixes
+Historical). Reopening the card — out of Done or the archive — stops the
+default: an unrecorded review reads Unclassified again, never Current,
+and every record and its history stay as they were. Relevance reviews and
+maintained entries are not touched by the rule; the report, its verdict,
+its bindings, its identity and its address never change. A record looks
+like this:
 
 ```markdown
 # Review classification: #168 rl-0a1b2c3d4e
@@ -9267,17 +9543,29 @@ order will this phase deliver?" A person asks those on the board itself
 this card** (**Ask about this phase** on a phase card) in a card's
 Overview, beside its Orchestration line. Asking explains; it never acts.
 
-**How to ask.** Choose what the question is about — **Board**, a
-**Phase** or a **Card** (from a card, that card is already chosen) —
-write the question, and press **Ask**; it arms, and the second press
-sends it. Above the button the page says what that costs before you
-send: the harness and model the `reason` intent resolves to (Settings →
-Agents), that it is one read-only reasoning run, and how it is counted.
-A reply appears in the conversation; **Ask follow-up** asks again in the
-same conversation without restating the subject, and **New
-conversation** starts another. Opening the section, reloading it,
-choosing a conversation and reconnecting launch nothing: only a
-submission does.
+**How to ask.** Since task 205 the question is asked in the shared
+conversation panel (see "The shared agent conversation", below), and
+what it is about is inferred from where you asked: **Ask orchestrator**
+on the Board's bar or the Orchestrator page asks about the whole board,
+**Ask about this card** / **this phase** about that card or phase. The
+panel's **About** chip names the target; **Change** picks another, which
+opens that target's own conversation and keeps this one. There is no
+Board/Phase/Card form to fill in first. Write the question and press
+**Ask**; it arms, and the second press sends it. What that costs — the
+harness and model the `reason` intent resolves to (Settings → Agents),
+that it is one read-only reasoning run, and how it is counted — is in
+the composer's **Technical details** fold; a reason it cannot be asked
+now (a harness that cannot run it, no free slot) is shown above the
+button instead. A reply appears in the conversation; **Ask follow-up**
+asks again in the same conversation without restating the subject, and
+**New conversation** starts another. A question naming another card
+(`#44`, `card 44`, `phase 44`) offers **Ask about #44 instead** and
+never switches by itself; a number naming two cards says so and
+switches nothing. The **Ask orchestrator** section lists the board's
+conversations, each opening in the panel, and its old address
+`/orchestrator/ask?card=<card>` opens that card's conversation there.
+Opening the section or the panel, reloading, choosing a conversation and
+reconnecting launch nothing: only a submission does.
 
 **One reasoning run, the shared lifecycle.** A question is the `ask`
 reasoning need, asked by a person (`reasoning.request(…, "ask",
@@ -9407,6 +9695,304 @@ board scopes, follow-ups, duplicates, retry, cancel, drift, hostile text
 and persistence — and `verify/browser_cases/case_task_questions.py` the page. Whether
 the installed CLI with a real model answers well is the opt-in, billable
 `develop/reasoning-probe.py`, which nothing runs by itself.
+
+### The shared agent conversation
+
+One right-hand conversation panel (task 205, `web/lib/panel.js`) holds
+every conversation a person has with an agent on this page: the
+Orchestrator's questions ("Asking the orchestrator") and the Brain
+Agent's single-entry drafts ("Drafting with the Brain Agent") — and,
+since task 206, card refinement, the Brain's seed and evaluation drafts,
+the reconciliation queue and implementation, repair and review runs to
+inspect (see "Every agent purpose, and what it supports", below). It is a
+presentation shell over the routes those already own — `/api/ask*`,
+`/api/brain/draft*`, `/api/card/discussion` and `/api/card/refine*`,
+`/api/progress` — with no agent, job, store or route of its own.
+
+**Where it opens, and about what.**
+
+| entry point | the conversation is about |
+| --- | --- |
+| **Ask orchestrator** on the Board's bar, on the Orchestrator page | the whole board (the card or phase the Orchestrator address names, if any) |
+| **Ask about this card** / **this phase** in a card's Overview | that card or phase |
+| `/orchestrator/ask?card=<card>` (kept from task 181) | that card or phase, opened in the panel once per arrival |
+| an earlier conversation in Orchestrator → Ask orchestrator | that conversation's target |
+| **New entry** on the Brain | a new Brain entry |
+| **Ask Brain Agent** on an entry | that entry |
+| **Open** under Brain Agent requests | that request |
+
+The header names the agent and what it can do (*Answers questions about
+the work; does not change it* — *Drafts one entry from the project;
+writes nothing until you apply it*). The **About** chip names the
+target; **Change** (the Orchestrator's) lists the board and every card
+and phase, and choosing one opens that target's own conversation —
+never retargets this one. **Conversations** switches between the ones
+open in this tab.
+
+**A conversation follows its target, never the page.** Each target has
+one slot: its conversation, its unsent text and the request identity of
+its next submission. Navigating to another card leaves the panel about
+the card it was about; asking about the other card opens a second slot
+beside it, and the first keeps everything typed in it. The slots are
+kept in this tab's `sessionStorage` (`bench-agent-panel`), so a reload
+gives back the open panel, its target and its unsent text. They are this
+tab's only: not shared, not committed, and gone with the tab — the
+conversations themselves are where they always were (the card's
+Orchestration record, the board's conversation file, the Brain's private
+requests).
+
+**Nothing starts by itself.** Opening, reading, switching, changing the
+target, resizing and closing the panel read and launch nothing, and
+**Close** (or Escape, with focus given back to the control that opened
+it) stops nothing: a running question or draft goes on and is there
+when the panel is opened again. **Cancel this question**, **Cancel** on a
+running draft and the Brain's **Discard** are the separate, armed acts
+they always were. Every submission — Ask, Generate, Continue, Apply — is
+still armed, and still carries a request identity kept with its slot
+before it is sent: a double click, a resend after a lost reply or a
+reload resends the same identity, and the server's own request journal
+answers it with the first outcome, so it launches at most one run.
+
+**What leads, and what folds.** The conversation and the composer lead.
+For the Orchestrator: each question, its replies (the four parts, the
+recorded facts with evidence, the gaps, the suggestions), a run in
+flight as bench observes it, and Ask; the harness, model, access and
+accounting are in **Technical details**, and only a reason the question
+cannot be asked now is shown above the button. For the Brain Agent: the
+request, the conversation, then **Observed** — the round's state as
+bench recorded it — apart from what the agent reported (done, now,
+remaining, waiting on) and its last tool activity, which is activity,
+not progress; what the agent would read and may do stays in its fold.
+No percentage is drawn, and a run that reports nothing says so.
+
+**Layout.** Beside the content on a desktop (a grip on its edge resizes
+it, remembered per browser as `bench-agent-w`), **Widen**, **Full
+screen** and back from the header, and always full screen below 760px,
+with Close as the way back. A card's detail view moves aside so both can
+be read at once. Its repaint holds while a person types or presses in
+it, keeps the caret, and follows a new reply only for a reader already
+at the end of the conversation.
+
+#### Every agent purpose, and what it supports
+
+Since task 206 every agent purpose this board ships meets the same panel,
+and `web/lib/agentpurposes.js` is the one matrix that says how — read by
+the adapters, the page and the tests, so a purpose cannot quietly gain a
+composer it does not have. Standardizing is presentation, not authority:
+no purpose gains a route, a grant or an action by it. The common pieces
+(`web/lib/agentshell.js`) own the layout and status words — **What you
+can do here**, progress as reported apart from tool activity and the
+observed process, the transcript, and the link to a workspace — and each
+purpose's adapter owns its truthful actions and identities.
+
+| purpose | in the panel | follow-up | cancel | live reporting |
+| --- | --- | --- | --- | --- |
+| Orchestrator question | a conversation (`orch`) | Ask follow-up | Cancel this question | no — the run is observed |
+| Brain Agent draft | a conversation (`brain`) | Continue: answers or a revision | Cancel a round; Discard | bench's observations |
+| Brain seed draft | its transcript and progress (`brainjob`); **Open the Seed Brain workspace** | answers and a redraft, in the workspace | in the workspace | bench's observations |
+| Brain classification evaluation | its transcript and progress (`brainjob`); **Open Evaluate classifications** | answers, in the workspace | in the workspace | bench's observations |
+| Automatic classification | observed activity (`reconcile`) | **not supported** — nobody converses with the queue | the queue's own Cancel, Retry, Rebuild on the Brain | each entry's queue state |
+| Card refinement | a conversation (`refine`) | another comment with Update card with agent | Cancel a running refinement | no — the refinement is observed |
+| Update card from a relevance review | the same conversation, linked to the review | another comment on the review | Cancel | no |
+| Implementation run | a run to inspect (`run`) | **not supported** — the card's next action continues the work | ‖ hold on the card | agent-reported, where the harness gives a channel |
+| PR repair run | a run to inspect (`run`) | **not supported** — ↻ act on PR asks for another | ‖ hold on the card | agent-reported |
+| PR review run | a run to inspect (`run`) | **not supported** — ◔ review PR asks for a new review | ‖ hold on the card | agent-reported |
+| Relevance review run | a run to inspect (`run`) | **not supported** — comment on it, or update the card from it | ‖ hold on the card | agent-reported |
+| Orchestrator reasoning and recovery | not a conversation: Orchestrator → Decisions and Recovery | an owner question is answered there | pause the scope, or mark an incident handled | observed |
+
+**Where each opens.** Card refinement: **Open in conversation panel** in
+a card's Discussion (Brief) and under each relevance review's composer.
+A run: **Inspect this run** beside the Overview's Progress fact, and
+**Inspect in panel** in Focus and in a session's header in Sessions. A
+seed or evaluation draft: **Follow in the conversation panel** in the
+draft's own section. The queue: **Observe in the conversation panel** in
+Automatic classification. Every address that opened them before opens
+what it always did (`/cards/<card>?tab=brief`, `…?tab=reviews&review=<id>`,
+`/focus/<session>`, `/sessions/<session>`, `/brain/seed`, `/brain`).
+
+**Card refinement in the panel** is the Discussion's own contract, drawn
+again: the same comments, decisions and proposals read from the card
+(`/api/card/discussion`), the same routes, and the same buttons wired by
+one function, so the panel and the Brief cannot act differently. **Add
+comment** saves and starts nothing; **Update card with agent** is armed
+and asks for one proposal; a proposal changes nothing; only an armed
+**Apply** changes the brief, and **Discard** keeps it. The panel's
+composer and the Brief's share the unsent text and the request identity,
+kept with the slot, so a reload or a resend after a lost reply is the
+same request. Opened from a relevance review, the conversation is about
+that review and is a slot of its own (`refine:<card>::<review>`): it
+draws the review's comments only, its **Comment** is linked to the review
+and its armed **Update card from this review** sends the review's report
+with the instruction — exactly what the review's own composer sends,
+sharing its unsent text and request identities. A relevance review stays
+exactly as it was filed; its comment and decision links and every
+attribution are the card's history, so they survive an upgrade and a
+re-open.
+
+**A run inspected** shows who it is (its name, id, model, purpose and
+card), its progress exactly as Focus draws it — agent-reported, apart
+from the last tool activity and the process bench observed — any
+failure's tail, the report it filed on the card, and the exact records:
+Focus, its session, the card, the review at its own address on the card
+and in the Brain, and each evidence record the run named, as bench reads
+that record now, with its log linked (`/api/evidence/log?id=`), and the
+evidence ids bench recorded with the filed report. The report is matched
+by the run identity bench wrote under the report's heading when it filed
+it (`acceptance.reports` returns it as `agent`, and the recorded evidence
+as `evidence`); a report filed before that is never claimed for a run. A
+run whose intent nothing on this board recorded says its purpose is not
+recorded rather than guessing one.
+There is no composer: a coding run takes no follow-up, and the panel says
+which existing control is the supported next step. Inspection relaunches
+nothing and writes nothing.
+
+**A seed or evaluation draft** shows its observed round, its transcript
+and progress, and any questions waiting — and a link to its workspace,
+because source approval, the frozen approval digest, the private draft,
+the section or proposal review and the all-or-none Apply keep their
+existing safety semantics there. The panel draws no answer, review or
+Apply control for them. **The queue** is shown as observed activity:
+evaluations the reconciliation policy launched, not the reader's.
+
+**Typing is never a command.** No composer in any purpose starts or stops
+work, runs a check, or changes a merge rule, a budget, an agreement or a
+grant; the only submissions are the armed, existing ones each purpose
+already had.
+
+**Not in this version:** anchored comments and per-change navigation of
+Brain edits (phase 208). Live steering of a running coding job is not
+supported and is not planned by this phase. Finding a result after the
+panel is closed is the next section's.
+
+### Agent activity and the inbox
+
+Closing a conversation, going to another view, reloading or restarting
+the board does not lose what an agent did meanwhile (task 207). The
+header's **Activity** control, on every view and never folded behind
+**More**, says how many agent results and questions are unread here and
+whether agents are running, and opens a list of them.
+
+**One list, projected, not a second registry.** `attention.py` reads
+records bench already keeps and owns none of them:
+
+| source | item | its states |
+| --- | --- | --- |
+| a run's progress record (`progress`) — implementation, repair, review | `run:<agent>` | running; finished (*not yet reviewed*; a review *is a review, not an acceptance*); returned — not ready; failed; cancelled (‖ hold); interrupted — its ending was not observed |
+| an Orchestrator conversation (`decisions`, `reasoning`) | `ask:<conversation>` | running; answer ready (*an interpretation; nothing was executed*); failed; cancelled; outcome unknown |
+| a Brain Agent draft, seed or evaluation (`braindraft`) | `brain:<draft>` | running; needs your answer; ready for your review — not applied; applied (*whether it is committed and shared is shown on the entry*); failed; cancelled |
+| a card refinement (`refine`) | `refine:<job>` | running; proposal ready (*the brief is unchanged until you apply it*); applied; failed; cancelled |
+| an open owner question on a card (`decisions`) | `question:<card>:<id>` | needs your answer, until it is answered or withdrawn |
+
+An item's state is always re-read from its source, so nothing in the
+list can launch, retry, cancel, apply or schedule anything, and nothing
+is invented: a run a restart closed reads **Interrupted**, never
+finished; a question with no run and no reply reads **Outcome unknown**;
+a draft's proposal is never *applied*, and *applied* is never *shared*.
+An evaluation the reconciliation policy launched says so. An item whose
+source no longer holds it (removed, retired, expired) stays listed as
+**No longer on this board** and opens nothing in its place; an owner
+question someone answered stops asking.
+
+**Unread is a transition nobody here acknowledged.** Each item has a
+transition key (its state and the round, answer or ending it is about).
+It is unread while its state is one to notice — needs your answer,
+answer ready, ready for review, applied, finished, returned, failed,
+cancelled, interrupted, unknown — and the acknowledged key is not its
+current one. So the same transition seen again (a replayed frame, a
+reconnect, a second tab, a restart) is still one; a newer transition of
+the same item — a follow-up answered — is unread again; and
+acknowledging an older key never hides a newer one (the reply names it,
+and it stays unread). Running, discarded and superseded are never
+unread. The first time an installation reads its sources, what is
+already over is recorded as read, so turning this on does not raise
+every old result; what still waits on you — an open owner question, a
+proposal to review — stays unread.
+
+**Nothing is marked read by looking.** Opening the list, filtering it,
+closing it, opening the panel or visiting a card mark nothing. Only a
+person's click does:
+
+| control | does |
+| --- | --- |
+| **Open** | opens that item's exact conversation, proposal or run in the shared panel — the Orchestrator conversation with its replies, the Brain request, the card's refinement (on its relevance review, where it came from), the run to inspect — and marks that one transition read |
+| **Go there** | for an owner question: its card in Orchestrator → Decisions, and that transition read |
+| the card, the run's page | a plain link (a new tab may take it); marks nothing |
+| **Mark read**, **Mark unread** | one item, at the key the list showed |
+| **Mark all N read** | exactly the unread transitions the list shows |
+
+Nothing navigates, opens or takes focus by itself. A transition that
+arrives while a page is open gets one toast — announced to a screen
+reader in the polite region, focus left where it was — and the inbox is
+the durable record, not the toast. A page's first reading announces
+nothing: what arrived while it was closed is counted on the control.
+
+**Browser notifications are off until you turn them on**, in the list's
+footer. That click is when — and the only time — the browser is asked
+for permission; nothing prompts on a first question or a first result.
+Turned on, a notification is shown only while a bench page is open and
+hidden, at most three at once, carrying the kind of agent, its state and
+a card number — never a title, a question, an answer or a draft's text —
+and a click brings the page forward and opens the item. Unsupported,
+denied, or the browser closed: nothing is delivered and nothing claims it
+was; the list holds everything. There is no push service, email or chat
+behind any of it. The preference, and which transitions this browser
+already announced (so two tabs announce one transition once), are kept in
+the browser's own storage and never leave it.
+
+**Where it is kept, and for whom.** `manager/local/state/attention/inbox.json`
+— machine-local, never committed, never synced — holds each item's
+identity, state, transition key, when it was first and last seen, and the
+key acknowledged. It holds no draft text, prompt, answer body or
+credential: titles are a card's title, a question's opening line (already
+shared work history) or a Brain entry's id. This board has no
+authentication, so the inbox is **this installation's**: every tab and
+every person reaching this board read and acknowledge one inbox, and it
+is synchronized to no other board or device. A record a later version
+wrote, or one that cannot be read, is set aside beside it
+(`inbox.unreadable-<time>.json`), never written over, and the list starts
+again from a baseline, saying so.
+
+**Bounds, said.** At most `BOARD_ATTENTION_MAX` items (200), each
+removed `BOARD_ATTENTION_RETENTION_DAYS` (30) after it last changed —
+here or in its source — the oldest by their source's own time first past
+the cap; the list's footer says both and how many each has removed. A
+running item is never expired. The sources are not bounded (every run
+record on disk, say), so the same bounds decide what is listed: an item
+whose source dates it past retention, or that would be the first to go
+past the cap, is not listed, and the footer counts those as held back.
+So a removed result never returns as new and unread while its source
+still holds it, and **Mark all read** stays read. A source that cannot
+be read on a beat marks none of its items gone: they keep what they last
+said until a reading succeeds.
+
+**When it is read.** The beat reads the sources at start-up — after the
+restart recoveries, so an ending they closed is read at once — then when a
+frame announces a change (`board`, `agents`, `progress`, `brain`) and at
+the latest every `BOARD_ATTENTION_INTERVAL` seconds (30). A change sends
+one `attention` frame and every open page reads the list again; a page
+that reconnects reads it again too.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/attention` | the list: items newest change first, each with its state, label, whether it is unread, where it opens and whether it is gone; the bounds and what they removed; the identity scope. A read of the record — nothing is projected, written or launched |
+| `POST /api/attention/ack` | `{items: [{id, key}], unread?}` — at most 400; a key that is no longer the item's is reported `stale` and leaves the newer transition unread |
+
+The POST sits behind the browser-mutation door. **What is proved:**
+`tests/test_attention.py` (each source's states, baseline, deduplication,
+stale and concurrent acknowledgements, restart, bounds, an unreadable
+record, a read that writes nothing), `tests/node/attention.test.mjs` (no
+announcement or permission prompt on a first reading, one announcement
+across replays and tabs, bounded notification words, a gone item opening
+nothing, Open acknowledging exactly its transition) and
+`verify/browser_cases/case_task_attention.py` (a refinement's result
+arriving with the panel closed, counted on every top-level view and
+across a reload and a board restart, the list by pointer and keyboard,
+Open reaching the exact conversation, no permission prompt, at 1440
+pixels in the night theme and 390 in daylight).
+
+**Not in this version:** cross-device unread synchronization, per-person
+inboxes (there is no identity to key them by), push, email or chat
+delivery, and any automatic retry or relaunch.
 
 ### The Orchestrator view
 

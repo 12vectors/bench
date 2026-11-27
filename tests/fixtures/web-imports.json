@@ -35,7 +35,7 @@
   "views/detail/discussion.js -> app/data.js": 2,
   "views/detail/discussion.js -> views/card.js": 3,
   "views/detail/discussion.js -> views/delivery.js": 3,
-  "views/detail/discussion.js -> views/detail/sections.js": 4,
+  "views/detail/discussion.js -> views/detail/sections.js": 5,
   "views/detail/discussion.js -> views/gates.js": 1,
   "views/detail/drawer.js -> app/data.js": 2,
   "views/detail/drawer.js -> views/card.js": 7,

@@ -773,7 +773,10 @@ def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
             "Nothing was written. Read it again and decide again.", 409, stale=True,
             current=brainreviews.review(number, rid))
     history = brain.split_record(data.decode("utf-8"))["history"] if data is not None else []
-    fields = {"Classification": rec["classification"] if rec else "Unclassified",
+    # with no record yet, an override fixes what the review reads as now —
+    # Historical on a closed card by the lifecycle default (task 201)
+    unrecorded = brainreviews.default_classification(card, review)
+    fields = {"Classification": rec["classification"] if rec else unrecorded,
               "Override": rec["override"] if rec else None,
               "Superseded by": rec["supersededBy"] if rec else None,
               "Invalidated": rec["invalidated"] if rec else None}

@@ -69,7 +69,7 @@ L27 phasescope archiveall
 L28 refine reasoning coordinate braindraft
 L29 recovery brainreconcile
 L30 scheduler
-L31 ask
+L31 ask attention
 L32 routes watch
 L33 httpd
 L34 board
@@ -196,7 +196,11 @@ own off-by-default policy grants the apply authority — applies through
 `braindraft.evaluate_auto_apply`, the same batch a person's Apply takes,
 reading `brainwrite.operation` for the receipt. It has no writer of its
 own: the one writer of an entry stays `brainwrite`. `routes` and `board`
-(its beat) import it.
+(its beat) import it. Since task 200 it also reads the Brain's
+maintenance health (`health`): its own queue reading, the Brain's index
+and the handbook's source authority (`handbook.authority` under one
+shared `handbook.budget`), writing nothing; its preview-bound Repair is
+an action on the same queue.
 
 `stackactions` (task 119, WP10b) sits beside `delivery`, directly above
 `stacks`, and neither imports the other: it performs the three explicit,
@@ -479,7 +483,7 @@ L26 phasescope archiveall
 L27 refine reasoning coordinate braindraft
 L28 recovery brainreconcile
 L29 scheduler
-L30 ask
+L30 ask attention
 L31 watch routes
 L32 httpd
 L33 board
@@ -591,6 +595,7 @@ artifacts.ingest
 artifacts.ingest_report
 artifacts.sweep
 artifacts.withhold
+attention._save
 braindraft._save
 brainreconcile._save
 brainreconcile.set_policy
@@ -805,5 +810,5 @@ function-imports 0
 private-reaches 0
 dynamic-patch-targets 3
 provider-vocabulary 180
-routes 192
+routes 195
 ```

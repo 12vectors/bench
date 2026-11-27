@@ -41,6 +41,17 @@ PAGES = {
                                           "in the phase branch, not delivered"),
     "/guides/ask-orchestrator/": ("Ask about this card", "Ask is not act",
                                   "Where replies are kept", "Asking needs no orchestration authority"),
+    # task 205: the panel both agents talk in
+    "/concepts/agent-conversation/": ("A conversation follows its target, never the page",
+                                      "Nothing starts by itself", "launches at most one run",
+                                      # task 206: every purpose, and its limits
+                                      "Every agent purpose, and what it supports",
+                                      "Typing is never a command", "A run inspected"),
+    # task 207: what an agent did after the panel closed
+    "/concepts/agent-activity/": ("One list, projected, not a second registry",
+                                  "Unread is a transition nobody here acknowledged",
+                                  "Nothing is marked read by looking",
+                                  "Browser notifications are off until you turn them on"),
     "/concepts/orchestrator-view/": ("Nine sections",
                                      # task 184
                                      "The decision trace: why it acted",

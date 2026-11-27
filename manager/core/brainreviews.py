@@ -19,6 +19,17 @@ What this module promises, and what it does not:
   no record reads **Unclassified**, and nothing is written to say so:
   every reading rebuilds the list from the cards and the records, so a
   rebuild cannot lose a person's reason.
+- **A closed ticket's PR reviews read Historical (task 201).** A PR review
+  round on a card in `done/` or the archive, with no classification record,
+  reads **Historical** — derived on every reading from where the card is,
+  never written. Its `source` says so (`closed-ticket`): it is a lifecycle
+  default, not a person's decision and not an agent's assessment, and it
+  says nothing about failure, supersession, merging or deployment. A
+  record — any classification a person wrote, an override with it — always
+  wins. Reopening the card (moving it out of done/ or the archive) stops
+  the default, so an otherwise unclassified review reads Unclassified
+  again, never Current; the records and their history are untouched.
+  Relevance reviews and maintained entries are not touched by the rule.
 - **Provenance is what bench recorded, or unknown.** A review filed since
   task 168 carries a `<!-- bench:review … -->` line under its heading,
   written by the board when it filed the report: the brief revision the
@@ -323,13 +334,38 @@ def record_for(number: str | None, review_id: str) -> dict | None:
     return records()["records"].get((taskfiles.canonical_number(number), review_id))
 
 
-def _classification(rec: dict | None) -> dict:
+# where a card is closed: delivered, or archived
+CLOSED_STAGES = ("done", "archive")
+CLOSED_TICKET_WHY = ("the card is closed (in Done or the archive), so this PR review reads "
+                     "Historical by default — a lifecycle default, not a person's decision or "
+                     "an agent's assessment, and not a claim the code was merged or deployed")
+
+
+def closed_default(card: dict | None, r: dict | None) -> bool:
+    """Whether the closed-ticket default applies to a review with no
+    record: a PR review round on a card in done/ or the archive."""
+    return bool(card and r and r.get("type") == "pr" and card.get("stage") in CLOSED_STAGES)
+
+
+def default_classification(card: dict | None, r: dict | None) -> str:
+    """What a review with no record reads as: Historical on a closed card's
+    PR review, else Unclassified."""
+    return "Historical" if closed_default(card, r) else "Unclassified"
+
+
+def _classification(rec: dict | None, card: dict | None = None, r: dict | None = None) -> dict:
     if rec is None:
-        # no passive write says so: a review nobody has classified simply
-        # reads Unclassified, with no record behind it
+        # no passive write says so: a review nobody has classified reads
+        # Unclassified — or, on a closed card, Historical by the lifecycle
+        # default — with no record behind it either way
+        if closed_default(card, r):
+            return {"classification": "Historical", "recorded": False, "override": None,
+                    "history": [], "revision": None, "file": None,
+                    "source": "closed-ticket", "why": CLOSED_TICKET_WHY}
         return {"classification": "Unclassified", "recorded": False, "override": None,
-                "history": [], "revision": None, "file": None}
-    return {"classification": rec["classification"], "recorded": True,
+                "history": [], "revision": None, "file": None, "source": "none", "why": None}
+    return {"classification": rec["classification"], "recorded": True, "source": "record",
+            "why": None,
             "override": rec["override"], "history": rec["history"],
             "supersededBy": rec["supersededBy"], "invalidated": rec["invalidated"],
             "revision": rec["revision"], "file": f"reviews/{rec['file']}"}
@@ -347,7 +383,7 @@ def _title(card: dict, r: dict) -> str:
 
 
 def _listed(card: dict, r: dict, rec: dict | None, numbers: dict) -> dict:
-    klass = _classification(rec)
+    klass = _classification(rec, card, r)
     return {"key": f"{_card_id(card)}/{r['id']}", "address": address(card, r["id"]),
             "card": card["number"], "cardId": _card_id(card), "file": card["file"],
             "stage": card["stage"], "archived": card["archived"],
@@ -358,6 +394,7 @@ def _listed(card: dict, r: dict, rec: dict | None, numbers: dict) -> dict:
             "label": r["label"], "reportSha": r["reportSha"],
             "provenance": "recorded" if r["provenance"] else "not-recorded",
             "classification": klass["classification"], "classified": klass["recorded"],
+            "classificationSource": klass["source"],
             "override": bool(klass["override"]),
             "sharedNumber": bool(card["number"]) and numbers.get(card["number"], 0) > 1}
 
@@ -382,7 +419,10 @@ def index() -> dict:
             if rec:
                 held.add((card["number"], r["id"]))
             listed.append(_listed(card, r, rec, numbers))
-            digest.update(f"{card['file']}\0{r['id']}\0{r['reportSha']}\n".encode())
+            # the stage is in it: a card closing or reopening changes what
+            # its PR reviews read as, so the page reads them again
+            digest.update(f"{card['file']}\0{card['stage']}\0{r['id']}\0{r['reportSha']}\n"
+                          .encode())
     for line in recs["revisions"]:
         digest.update(line.encode() + b"\n")
     listed.sort(key=lambda x: (x["at"] or "", x["key"]), reverse=True)
@@ -583,7 +623,7 @@ def review(card_id: str, review_id: str) -> dict:
                    "clipped": clip.group(0) if clip else None},
         "provenance": prov,
         "assessment": _assessment(card, r, prov),
-        "classification": _classification(rec),
+        "classification": _classification(rec, card, r),
         "linkedFrom": _linked_from(card["number"], review_id),
         "others": [{"review": x["id"], "round": x["round"], "at": x["at"],
                     "verdict": x["verdict"] or x["verdictLine"],

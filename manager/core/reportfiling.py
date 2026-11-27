@@ -874,8 +874,10 @@ def rebuild(payload: dict) -> dict:
     state.broadcast({"type": "brain"})
     return {"revision": revision, "reviews": len(reviews["reviews"]), "added": added,
             "missing": kept_missing, "reconciled": reconciled,
-            "classificationRecords": len(reviews["reviews"]) - reviews["counts"].get(
-                "Unclassified", 0) + len(reviews["orphans"])}
+            # records, not readings: a closed card's PR review reads
+            # Historical with no record behind it (task 201)
+            "classificationRecords": sum(1 for r in reviews["reviews"] if r.get("classified"))
+            + len(reviews["orphans"])}
 
 
 __all__ = ["Refused", "file", "retry", "reconcile", "reading", "rebuild", "operation",

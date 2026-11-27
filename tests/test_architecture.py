@@ -832,6 +832,8 @@ ROUTES: dict[str, str] = {
     "POST /api/brain/evaluate/review": "browser-mutation",
     "POST /api/brain/evaluate/apply": "browser-mutation",
     "GET /api/brain/reconcile": "read",
+    # maintenance health (task 200): a read; its Repair rides the action
+    "GET /api/brain/health": "read",
     "POST /api/brain/reconcile/policy": "policy-mutation",
     "POST /api/brain/reconcile/action": "browser-mutation",
     # drafting it with the Brain Agent (task 175): two reads, and a
@@ -920,6 +922,8 @@ ROUTES: dict[str, str] = {
     "POST /api/ask": "browser-mutation",
     "POST /api/ask/retry": "browser-mutation",
     "POST /api/ask/cancel": "browser-mutation",
+    "GET /api/attention": "read",
+    "POST /api/attention/ack": "browser-mutation",
     "POST /api/card/acceptance/track": "browser-mutation",
     "POST /api/card/comment": "browser-mutation",
     "POST /api/card/delivery/check-remote": "browser-mutation",

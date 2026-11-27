@@ -1007,6 +1007,19 @@ PROGRESS_MIN_GAP = max(0.0, float(setting("BOARD_PROGRESS_MIN_GAP", "20")))
 BRAIN_DRAFT_TIMEOUT = max(30.0, float(setting("BOARD_BRAIN_DRAFT_TIMEOUT", "900")))
 BRAIN_DRAFT_ROUNDS = max(1, min(8, int(setting("BOARD_BRAIN_DRAFT_ROUNDS", "4") or 4)))
 
+# Agent activity and its attention inbox (attention.py, task 207). What
+# this installation keeps of agent results and questions so they stay
+# discoverable after the panel closes, the page reloads or the board
+# restarts: at most ATTENTION_MAX items, each removed ATTENTION_RETENTION_DAYS
+# after it last changed. Machine-local, never committed. ATTENTION_INTERVAL
+# is the longest the activity list waits before reading the records again
+# when nothing announced a change.
+ATTENTION_DIR = STATE / "attention"
+ATTENTION_MAX = max(20, min(2000, int(setting("BOARD_ATTENTION_MAX", "200") or 200)))
+ATTENTION_RETENTION_DAYS = max(1.0, min(365.0, float(
+    setting("BOARD_ATTENTION_RETENTION_DAYS", "30") or 30)))
+ATTENTION_INTERVAL = max(2.0, float(setting("BOARD_ATTENTION_INTERVAL", "30") or 30))
+
 # Card information readiness (inputs.py, task 132). Remote references in a
 # card's brief are retrieved only from hosts the operator listed here —
 # exact host names, comma-separated, empty by default — and never with a

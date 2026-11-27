@@ -21,6 +21,7 @@ import { arming, phaseOf } from '../lib/arm.js';
 import { $, esc } from '../lib/dom.js';
 import { md } from '../lib/md.js';
 import { syncRoute } from '../lib/nav.js';
+import { activeSlot, closePanel, dropSlot, openAgent, registerAgent, renderPanel, savePanel, slotsOf } from '../lib/panel.js';
 import { pressHold } from '../lib/press.js';
 import { toast } from '../lib/toast.js';
 import { evalField, evalHtml, openEvaluation, setEvalRepaint, wireEvaluate } from './evaluate.js';
@@ -374,7 +375,9 @@ function rowHtml(e) {
     : entryLink(e);
   return `<li class="b-row${e.tombstone ? ' b-tomb' : ''}${e.review ? ' b-reviewrow' : ''}"><div class="b-rowhead">${link}` +
     classChip(e.classification) + (e.tombstone ? chip('b-c-removed', 'Removed') : '') +
-    (e.review && !e.review.classified ? chip('b-note', 'not yet classified', 'no classification is recorded for this review') : '') +
+    (e.review && !e.review.classified ? (e.review.classificationSource === 'closed-ticket'
+      ? chip('b-note', 'closed ticket', 'Historical because its card is in Done or the archive — a lifecycle default, not a person\'s decision')
+      : chip('b-note', 'not yet classified', 'no classification is recorded for this review')) : '') +
     (e.override ? chip('b-override', 'Manual override', 'a person fixed this classification') : '') +
     (e.review && e.review.indexed === false ? chip('b-note', 'not indexed',
       'on its card and listed here; this board\'s review index does not list it yet') : '') +
@@ -1687,9 +1690,16 @@ function reviewClassHtml(v) {
   const c = v.classification;
   const history = c.history.length
     ? '<ol class="b-history">' + c.history.slice().reverse().map(historyItem).join('') + '</ol>'
-    : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
-      'and nothing was written to say so.</p>';
+    : c.source === 'closed-ticket'
+      ? '<p class="b-none" data-closed-default>Nobody has classified this review. It reads Historical because ' +
+        'its card is closed — in Done or the archive. That is a lifecycle default, not a person\'s decision or ' +
+        'an agent\'s assessment, and it does not mean the review failed, was superseded or that its code was ' +
+        'merged or deployed. Nothing was written to say so; reopening the card returns it to Unclassified, and ' +
+        'a classification you record here takes precedence.</p>'
+      : '<p class="b-none">Nothing has been recorded about this review yet: it reads Unclassified, ' +
+        'and nothing was written to say so.</p>';
   return `<div class="b-panel"><h2>Classification</h2><p>${classChip(c.classification)} ` +
+    (c.source === 'closed-ticket' ? chip('b-note', 'from the closed ticket') + ' ' : '') +
     `<span class="b-note">${esc(ABOUT[c.classification] || '')}</span></p>` +
     (c.override ? `<p class="b-note">Manual override: ${esc(c.override)}</p>` : '') +
     (c.supersededBy ? `<p class="b-note">Superseded by <a href="${esc(entryHref(c.supersededBy))}" data-route>${esc(c.supersededBy)}</a></p>` : '') +
@@ -1878,59 +1888,134 @@ async function loadDraft(id) {
   try {
     const res = await fetch('/api/brain/drafts?id=' + encodeURIComponent(id));
     const data = await res.json().catch(() => ({}));
-    drafts.one[id] = { data: data.draft || null, error: data.error || null, at: Date.now() };
+    // a request this board does not have (a tab kept it from another board,
+    // or it expired) is gone for good: the poll stops asking for it
+    drafts.one[id] = { data: data.draft || null, error: data.error || null, gone: res.status === 404, at: Date.now() };
   } catch (e) {
     drafts.one[id] = { ...(drafts.one[id] || {}), error: 'the board could not be asked', at: Date.now() };
   }
   inflight.delete(k);
   const d = drafts.one[id].data;
-  if (ag && ag.draftId === id && d) seedEdit(d);
+  // every conversation about this request starts its edit from the draft
+  if (d) for (const s of slotsOf('brain')) if (s.data.draftId === id) seedEdit(d, s.data);
   renderBrain();
 }
 
-async function loadPreflight() {
-  if (!ag || inflight.has('pf')) return;
-  inflight.add('pf');
+async function loadPreflight(a = ag) {
+  if (!a || a.pfLoading) return;
+  a.pfLoading = true;
   const q = new URLSearchParams();
-  if (ag.target) q.set('target', ag.target);
-  if (ag.text) q.set('text', ag.text.slice(0, 2000));
+  if (a.target) q.set('target', a.target);
+  if (a.text) q.set('text', a.text.slice(0, 2000));
   try {
     const res = await fetch('/api/brain/draft/preflight?' + q.toString());
     const data = await res.json().catch(() => ({}));
-    if (ag) ag.preflight = data.preflight || { error: data.error || 'the board could not say' };
+    a.preflight = data.preflight || { error: data.error || 'the board could not say' };
   } catch (e) {
-    if (ag) ag.preflight = { error: 'the board could not be asked' };
+    a.preflight = { error: 'the board could not be asked' };
   }
-  inflight.delete('pf');
+  a.pfLoading = false;
   // a reading arriving, not a person's act: it never replaces the button
   // under a pressed pointer (the release repaints), and it paints under
   // the person's typing with their caret kept
   renderBrain('live');
 }
 
-function openComposer(target, revision, title) {
-  ag = { mode: 'compose', target: target || null, expected: revision || null, targetTitle: title || null,
-         text: '', request: agRequest(), preflight: null, busy: false, error: null };
-  loadPreflight();
+/* The Brain Agent's conversations live in the shared panel (task 205): one
+   per target — a new entry, an entry to update, or a request opened from
+   the list — each kept with its unsent text while the person reads other
+   entries or leaves the Brain. `ag` is the one the panel shows. */
+function composerAg(target, revision, title) {
+  return { mode: 'compose', target: target || null, expected: revision || null, targetTitle: title || null,
+           text: '', request: agRequest(), preflight: null, busy: false, error: null };
 }
 
-function openDraft(id) {
-  ag = { mode: 'draft', draftId: id, answers: {}, note: '', edit: null, view: 'rendered',
-         busy: false, error: null, request: agRequest() };
-  loadDraft(id);
+function draftAg(id) {
+  return { mode: 'draft', draftId: id, answers: {}, note: '', edit: null, view: 'rendered',
+           busy: false, error: null, request: agRequest() };
 }
 
-function currentDraft() {
-  return ag && ag.draftId && drafts.one[ag.draftId] ? drafts.one[ag.draftId].data : null;
+function openComposer(target, revision, title, from) {
+  const s = openAgent('brain', target ? { entry: target, title: title || null } : { entry: null },
+                      { fresh: true, revision, title, from });
+  // a resumed, unsent request is held to the entry as it reads now
+  if (s && s.data.mode === 'compose' && target && revision && s.data.expected !== revision) {
+    s.data.expected = revision;
+    savePanel();
+  }
+}
+
+function openDraft(id, from) {
+  // the adapter's resolve finds the slot already holding this request
+  openAgent('brain', { draft: id }, { from });
+}
+
+function currentDraft(a = ag) {
+  return a && a.draftId && drafts.one[a.draftId] ? drafts.one[a.draftId].data : null;
+}
+
+// a request in one of these is history: asking again starts a new one (a
+// failed one stays listed under Brain Agent requests, to retry or discard)
+const AG_DONE = ['applied', 'cancelled', 'discarded', 'failed'];
+
+function registerBrainAgent() {
+  registerAgent('brain', {
+    label: 'Brain Agent',
+    capability: 'Drafts one entry from the project; writes nothing until you apply it.',
+    key: (t) => t.draft ? `brain:d:${t.draft}` : t.entry ? `brain:e:${t.entry}` : 'brain:new',
+    create: (t, opts) => t.draft ? draftAg(t.draft) : composerAg(t.entry, opts.revision, t.title || opts.title),
+    // a request asked in this tab stays in the slot it was composed in
+    // (`brain:new`, `brain:e:<entry>`): opening it by its id, from the
+    // list or from the Activity inbox, resumes that slot, never a second
+    resolve: (t, slots) => {
+      if (!t || !t.draft) return null;
+      const have = slots.find(s => s.data && s.data.draftId === t.draft);
+      return have ? have.key : null;
+    },
+    // a request that has ended is history: asking again starts a new one
+    finished: (s) => {
+      const d = currentDraft(s.data);
+      return s.data.mode === 'draft' && !!d && AG_DONE.includes(d.status);
+    },
+    about: (s) => {
+      const a = s.data;
+      const d = currentDraft(a);
+      const entry = (d && d.target) || a.target;
+      if (entry) {
+        const e = (cache.entries['e:' + entry] || {}).data;
+        return `Updating ${(e && e.title) || a.targetTitle || entry}`;
+      }
+      return a.mode === 'draft' && !d ? `Request ${a.draftId}` : 'A new Brain entry';
+    },
+    body: (s) => { ag = s.data; return agentPanelHtml(); },
+    opened: (s) => {
+      ag = s.data;
+      if (ag.mode === 'compose' && !ag.preflight) loadPreflight(ag);
+      if (ag.draftId) loadDraft(ag.draftId);
+    },
+    persist: (s) => {
+      const a = s.data;
+      return { mode: a.mode, target: a.target || null, expected: a.expected || null, targetTitle: a.targetTitle || null,
+               text: a.text || '', request: a.request, draftId: a.draftId || null, answers: a.answers || {},
+               note: a.note || '', view: a.view || 'rendered', edit: a.edit || null };
+    },
+    revive: (d) => {
+      if (d.mode !== 'compose' && d.mode !== 'draft') return null;
+      if (d.mode === 'draft' && typeof d.draftId !== 'string') return null;
+      return { ...(d.mode === 'draft' ? draftAg(String(d.draftId || '')) : composerAg(d.target, d.expected, d.targetTitle)),
+               ...d, preflight: null, busy: false, error: null, pfLoading: false };
+    },
+    wire: wireAgentPanel,
+  });
 }
 
 /* The person's edit starts as the proposal, once per proposal round; a
    repaint or a re-read never overwrites what they typed. */
-function seedEdit(d) {
-  if (!ag || d.status !== 'proposed' || !d.proposal) return;
-  if (ag.edit && ag.edit.round === d.proposalRound) return;
+function seedEdit(d, a = ag) {
+  if (!a || d.status !== 'proposed' || !d.proposal) return;
+  if (a.edit && a.edit.round === d.proposalRound) return;
   const p = d.proposal;
-  ag.edit = { round: d.proposalRound, title: p.title, kind: p.kind, summary: p.summary || '',
+  a.edit = { round: d.proposalRound, title: p.title, kind: p.kind, summary: p.summary || '',
               body: p.body, sources: (p.sources || []).join('\n'), related: (p.related || []).join(', '),
               classification: p.classification || 'Unclassified',
               reason: p.classificationWhy || '' };
@@ -2032,6 +2117,12 @@ function composerHtml() {
 function progressHtml(d) {
   const p = d.progress || {};
   const tool = p.toolActivity;
+  // nothing reported is said as that, never as "nothing remaining" (task 205)
+  if (!p.doing && !p.blocked && !(p.done || []).length && !(p.remaining || []).length) {
+    return '<div class="b-progress" aria-live="polite"><p class="b-note">No progress reported for this request' +
+      (tool ? ` · last tool activity ${tool.last ? esc(new Date(tool.last * 1000).toLocaleTimeString()) : 'none yet'}` +
+        ' — activity, not progress' : '') + '.</p></div>';
+  }
   return '<div class="b-progress" aria-live="polite">' +
     (p.doing ? `<p><strong>Now:</strong> ${esc(p.doing)}</p>` : '') +
     (p.blocked ? `<p class="b-warn"><strong>Waiting on:</strong> ${esc(p.blocked)}</p>` : '') +
@@ -2046,8 +2137,9 @@ function conversationHtml(d) {
   const lines = (d.conversation || []).map(c => `<li class="b-conv-${esc(c.who)}"><span class="b-note mono">${esc(c.at || '')}</span> ` +
     `<strong>${c.who === 'you' ? 'You' : c.who === 'agent' ? 'Brain Agent' : 'Board'}</strong> · ${esc(c.kind)}: ${esc(c.text)}` +
     (c.questions ? '<ul>' + c.questions.map(q => `<li>${esc(q)}</li>`).join('') + '</ul>' : '') + '</li>');
-  return '<details class="b-panel"><summary>Conversation (' + lines.length + ')</summary><ol class="b-history">' +
-    lines.join('') + '</ol></details>';
+  // the conversation is the panel's primary content (task 205), not a fold
+  return lines.length ? '<section class="b-transcript" aria-label="Conversation"><h3>Conversation</h3>' +
+    '<ol class="b-history">' + lines.join('') + '</ol></section>' : '';
 }
 
 function proposalHtml(d) {
@@ -2151,7 +2243,7 @@ function draftHtml() {
   const d = slot && slot.data;
   if (!d) {
     return `<section class="b-panel b-agent"><h2>Brain Agent</h2><p class="b-note" role="status" aria-busy="true">` +
-      `${esc((slot && slot.error) || 'Reading the request…')}</p>${button('ag-close', 'Close')}</section>`;
+      `${esc((slot && slot.error) || 'Reading the request…')}</p></section>`;
   }
   const state = AG_STATUS[d.status] || d.status;
   const tone = { failed: ' b-bad', cancelled: '', discarded: '' }[d.status] || '';
@@ -2180,18 +2272,36 @@ function draftHtml() {
     body += `<p class="b-note">${d.status === 'cancelled' ? 'Cancelled: nothing was written, and this request cannot be applied.'
       : 'Discarded: the Brain is unchanged.'}</p>`;
   }
+  // the transcript leads: the request, then each turn, then where it stands
   return `<section class="b-panel b-agent${tone}" aria-labelledby="bag-h" data-agdraft="${esc(d.id)}">` +
     `<h2 id="bag-h" tabindex="-1">Brain Agent · ${esc(state)}</h2>` +
     `<p class="b-note">${d.mode === 'update' ? `Updating <span class="mono">${esc(d.target)}</span>` : 'A new entry'} · ` +
     `round ${esc(String(d.round))} of ${esc(String(d.maxRounds))} · <span class="mono">${esc(d.id)}</span></p>` +
-    `<blockquote class="b-request">${esc(d.text)}</blockquote>` + body +
+    `<blockquote class="b-request">${esc(d.text)}</blockquote>` + conversationHtml(d) + observedHtml(d) + body +
     (ag.error ? `<p class="b-warn" role="alert">${esc(ag.error)}</p>` : '') +
-    conversationHtml(d) +
-    `<p class="b-note">${esc(d.local || '')}. ${button('ag-close', 'Close')}</p></section>`;
+    `<p class="b-note">${esc(d.local || '')}. Closing the panel stops nothing; the request is kept here and listed under Brain Agent requests.</p></section>`;
 }
 
-function agentHtml() {
+/* What bench itself observed of the request, apart from what the agent
+   reported (task 205): the round's state as recorded, never a percentage */
+function observedHtml(d) {
+  const words = {
+    running: 'a round is running — bench is watching its process',
+    questions: 'the round ended with questions for you',
+    proposed: 'the round ended with a draft',
+    ready: 'waiting for you to continue',
+    applying: 'writing the entry', applied: 'ended: applied', failed: 'ended: failed',
+    cancelled: 'ended: cancelled', discarded: 'ended: discarded',
+  };
+  return `<p class="b-note ap-observed"><strong>Observed:</strong> ${esc(words[d.status] || d.status)}.</p>`;
+}
+
+function agentPanelHtml() {
   if (!ag) return '';
+  const d = currentDraft();
+  // the entry an update is against: read for its exact changes
+  const target = d ? d.target : ag.target;
+  if (target && !cache.entries['e:' + target]) load('e:' + target);
   return ag.mode === 'compose' ? composerHtml() : draftHtml();
 }
 
@@ -2208,21 +2318,38 @@ function requestsHtml() {
       `${button('ag-open', 'Open', { arg: d.id })}</p></li>`).join('') + '</ul></section>';
 }
 
-async function agAct(name, arg) {
-  if (name === 'ag-new') { openComposer(null); return true; }
+/* The panel slot `ag` belongs to, so a request's answer lands on the
+   conversation it was sent from whichever one the panel shows by then. */
+function slotOfAg(a) { return slotsOf('brain').find(s => s.data === a) || null; }
+
+async function agAct(name, arg, from) {
+  if (name === 'ag-new') { openComposer(null, null, null, from); return true; }
   if (name === 'ag-ask') {
     const e = currentEntry();
-    if (e) openComposer(e.id, e.revision, e.title);
+    if (e) openComposer(e.id, e.revision, e.title, from);
     return true;
   }
-  if (name === 'ag-manual') { ag = null; startWrite('create', null); if (!cache.index) load('index'); return true; }
-  if (name === 'ag-close') { ag = null; armed.sweep(k => !k.startsWith('ag-')); return true; }
-  if (name === 'ag-open') { openDraft(arg); return true; }
-  if (name === 'ag-view' && ag) { ag.view = arg; return true; }
+  if (name === 'ag-manual') {
+    const s = slotOfAg(ag);
+    if (s) dropSlot(s.key);
+    startWrite('create', null);
+    if (!cache.index) load('index');
+    return true;
+  }
+  if (name === 'ag-close') {
+    // Cancel on an unsent request: it is put away, and nothing was sent
+    const s = slotOfAg(ag);
+    armed.sweep(k => !k.startsWith('ag-'));
+    if (s) dropSlot(s.key); else closePanel();
+    return true;
+  }
+  if (name === 'ag-open') { openDraft(arg, from); return true; }
+  if (name === 'ag-view' && ag) { ag.view = arg; savePanel(); return true; }
   if (name === 'ag-target' && ag) {
     const hit = ((ag.preflight || {}).related || []).find(r => r.id === arg);
     ag.target = arg; ag.targetTitle = hit ? hit.title : arg; ag.expected = null; ag.preflight = null;
-    loadPreflight();
+    loadPreflight(ag);
+    savePanel();
     return true;
   }
   const costly = { 'ag-generate': 1, 'ag-continue': 1, 'ag-apply': 1, 'ag-discard': 1, 'ag-cancel': 1, 'ag-retarget': 1 };
@@ -2231,16 +2358,17 @@ async function agAct(name, arg) {
   if (said === 'armed') return true;
   if (said === 'busy') return true;
   armed.disarm(name);
-  const d = currentDraft();
+  const mine = ag;
+  const d = currentDraft(mine);
   let url, body;
   if (name === 'ag-generate') {
     url = '/api/brain/draft/start';
-    body = { request: ag.request, text: ag.text, target: ag.target || undefined, expected: ag.expected || undefined };
+    body = { request: mine.request, text: mine.text, target: mine.target || undefined, expected: mine.expected || undefined };
   } else if (name === 'ag-continue' && d) {
     url = '/api/brain/draft/continue';
-    body = { id: d.id, request: ag.request, round: d.round, answers: ag.answers, note: ag.note };
-  } else if (name === 'ag-apply' && d && ag.edit) {
-    const e = ag.edit;
+    body = { id: d.id, request: mine.request, round: d.round, answers: mine.answers, note: mine.note };
+  } else if (name === 'ag-apply' && d && mine.edit) {
+    const e = mine.edit;
     url = '/api/brain/draft/apply';
     body = { id: d.id, request: ag.request, round: d.proposalRound, title: e.title, kind: e.kind,
              summary: e.summary, body: e.body,
@@ -2254,38 +2382,44 @@ async function agAct(name, arg) {
   } else if (name === 'ag-retarget' && d) {
     url = '/api/brain/draft/retarget'; body = { id: d.id, round: d.round, target: arg };
   } else return true;
-  ag.busy = true; ag.error = null;
+  mine.busy = true; mine.error = null;
+  // the identity is kept before it is sent: a reload resends the same one
+  savePanel();
   renderBrain(true);
-  const mine = ag;
   let res = await post(url, body);
   if (res.status === 0 && (name === 'ag-generate' || name === 'ag-continue' || name === 'ag-apply')) {
     // no answer: the same request identity again is answered from the record
     res = await post(url, body);
   }
   mine.busy = false;
-  if (ag !== mine) return true;
   if (!res.ok) {
-    ag.error = res.error || 'refused';
+    mine.error = res.error || 'refused';
     if (res.data && res.data.draft) drafts.one[res.data.draft.id] = { data: res.data.draft, at: Date.now() };
-    if (ag.draftId) loadDraft(ag.draftId);
+    if (mine.draftId) loadDraft(mine.draftId);
     renderBrain(true);
     return true;
   }
-  ag.request = agRequest();
+  mine.request = agRequest();
   const got = res.data.draft;
   if (got) drafts.one[got.id] = { data: got, at: Date.now() };
-  if (name === 'ag-generate') { openDraft(got.id); drafts.one[got.id] = { data: got, at: Date.now() }; }
-  if (name === 'ag-continue') { ag.answers = {}; ag.note = ''; }
+  if (name === 'ag-generate' && got) {
+    // the composer becomes the request it started, in the same slot
+    Object.assign(mine, draftAg(got.id), { target: got.target || mine.target || null, targetTitle: mine.targetTitle });
+    seedEdit(got, mine);
+  }
+  if (name === 'ag-continue') { mine.answers = {}; mine.note = ''; }
+  savePanel();
   if (name === 'ag-apply' && res.data.operation) {
     const op = res.data.operation;
-    ops[op.id] = { request: (got.applied || {}).request || '', op, at: Date.now() };
+    ops[op.id] = { request: ((got && got.applied) || {}).request || '', op, at: Date.now() };
     forget();
     toast(`Applied: ${op.id} ${op.what}` + (op.commit && op.commit.state === 'failed' ? ' — the commit failed' : ''),
       !!(op.commit && op.commit.state === 'failed'));
   }
   drafts.at = 0;
   renderBrain(true);
-  $('#bshell #bag-h')?.focus();
+  // focus follows the answer only on the conversation still shown
+  if (ag === mine) $('#agentpanel #bag-h')?.focus();
   return true;
 }
 
@@ -2396,16 +2530,16 @@ function currentEntry() {
   return slot && slot.data && (slot.data.state === 'entry' || slot.data.state === 'tombstone') ? slot.data : null;
 }
 
-function act(name, arg) {
+function act(name, arg, from) {
   if (name.startsWith('ag-')) {
     // the agent's own steps: what is synchronous (opening, switching a
     // view) has happened by the time this paints; a POST paints again
     // when its answer arrives
-    agAct(name, arg);
+    agAct(name, arg, from);
     renderBrain(true);
-    if (['ag-new', 'ag-ask', 'ag-target'].includes(name)) $('#bshell [data-ag="text"]')?.focus();
+    if (['ag-new', 'ag-ask', 'ag-target'].includes(name)) $('#agentpanel [data-ag="text"]')?.focus();
     if (name === 'ag-manual') $('#bshell .b-form input')?.focus();
-    if (name === 'ag-close') $('#bshell .b-title')?.focus();
+    if (name === 'ag-close' && !document.querySelector('#agentpanel:not([hidden])')) $('#bshell .b-title')?.focus();
     return;
   }
   if (name.startsWith('rf-')) { rfAct(name, arg); return; }
@@ -2506,7 +2640,7 @@ function wire(el) {
     }
     const b = ev.target.closest && ev.target.closest('[data-bact]');
     if (!b || !el.contains(b) || b.disabled) return;
-    act(b.dataset.bact, b.dataset.barg);
+    act(b.dataset.bact, b.dataset.barg, b);
   });
   const onField = (ev) => {
     const f = ev.target;
@@ -2525,26 +2659,6 @@ function wire(el) {
       if (ev.type !== 'change' || find.show[f.dataset.bshow] === f.checked) return;
       find.show[f.dataset.bshow] = f.checked;
       renderBrain(true);
-      return;
-    }
-    if (ag && f.dataset && (f.dataset.ag || f.dataset.agq || f.dataset.age)) {
-      // the Brain Agent's fields: kept here, sent nothing until a button
-      if (f.dataset.ag === 'text') ag.text = f.value;
-      else if (f.dataset.ag === 'note') ag.note = f.value;
-      else if (f.dataset.agq) ag.answers[f.dataset.agq] = f.value;
-      else if (f.dataset.age && ag.edit) ag.edit[f.dataset.age] = f.value;
-      // Generate becomes available once there is a request; the preflight
-      // is asked again for the words typed (a read) when the field is left.
-      // Leaving it is usually a press on Generate, so nothing is forced:
-      // the repaint waits for that click to be dispatched
-      if (ev.type === 'change' && f.dataset.ag === 'text' && ag.mode === 'compose') {
-        if (!ag.target) loadPreflight();
-        renderBrain();
-      } else if (ev.type === 'input' && f.dataset.ag === 'text') {
-        const gen = el.querySelector('[data-bact="ag-generate"]');
-        const blocked = ag.preflight && ag.preflight.blockers && ag.preflight.blockers.length;
-        if (gen) gen.disabled = ag.busy || !ag.text.trim() || !!blocked;
-      } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
       return;
     }
     if (hb && f.dataset && (f.dataset.hb || f.dataset.hbrep)) {
@@ -2622,14 +2736,65 @@ function wire(el) {
   document.addEventListener('click', () => pressing().done(), true);
   document.addEventListener('pointerup', () => pressing().up(), true);
   document.addEventListener('pointercancel', () => pressing().done(), true);
-  // a request the Brain Agent is working on is read again while it works;
-  // a request waiting on the person is not (it changes only when they act)
+}
+
+/* The Brain Agent's half of the shared panel (task 205): its buttons and
+   its fields, wired once on the panel. Typing is kept on the conversation
+   it was typed into and sends nothing until a button. */
+function wireAgentPanel(el) {
+  el.addEventListener('click', (ev) => {
+    const b = ev.target.closest && ev.target.closest('[data-bact]');
+    if (!b || !el.contains(b) || b.disabled || !b.dataset.bact.startsWith('ag-')) return;
+    const s = activeSlot();
+    if (!s || s.purpose !== 'brain') return;
+    ag = s.data;
+    act(b.dataset.bact, b.dataset.barg, b);
+  });
+  const onField = (ev) => {
+    const s = activeSlot();
+    if (!s || s.purpose !== 'brain') return;
+    ag = s.data;
+    agField(ev.target, ev, el);
+  };
+  el.addEventListener('input', onField);
+  el.addEventListener('change', onField);
+  // a request the Brain Agent is working on is read again while it works,
+  // wherever the person is; one waiting on the person is not
   setInterval(() => {
-    if (S.view !== 'brain' || !ag || !ag.draftId) return;
-    const slot = drafts.one[ag.draftId];
-    const d = slot && slot.data;
-    if (!d || ['running', 'applying'].includes(d.status)) loadDraft(ag.draftId);
+    for (const s of slotsOf('brain')) {
+      if (!s.data.draftId) continue;
+      const slot = drafts.one[s.data.draftId];
+      const d = slot && slot.data;
+      if (slot && slot.gone) continue;
+      if (!d || ['running', 'applying'].includes(d.status)) loadDraft(s.data.draftId);
+    }
   }, 2000);
+}
+
+function agField(f, ev, el) {
+  if (!ag || !f.dataset || !(f.dataset.ag || f.dataset.agq || f.dataset.age)) return false;
+  // the Brain Agent's fields: kept here, sent nothing until a button
+  if (f.dataset.ag === 'text') {
+    // a changed request is a new submission; the same text resent is not
+    if (ag.mode === 'compose' && ag.text !== f.value && ev.type === 'input') ag.request = agRequest();
+    ag.text = f.value;
+  } else if (f.dataset.ag === 'note') ag.note = f.value;
+  else if (f.dataset.agq) ag.answers[f.dataset.agq] = f.value;
+  else if (f.dataset.age && ag.edit) ag.edit[f.dataset.age] = f.value;
+  if (ev.type === 'change') savePanel();
+  // Generate becomes available once there is a request; the preflight
+  // is asked again for the words typed (a read) when the field is left.
+  // Leaving it is usually a press on Generate, so nothing is forced:
+  // the repaint waits for that click to be dispatched
+  if (ev.type === 'change' && f.dataset.ag === 'text' && ag.mode === 'compose') {
+    if (!ag.target) loadPreflight(ag);
+    renderBrain();
+  } else if (ev.type === 'input' && f.dataset.ag === 'text') {
+    const gen = el.querySelector('[data-bact="ag-generate"]');
+    const blocked = ag.preflight && ag.preflight.blockers && ag.preflight.blockers.length;
+    if (gen) gen.disabled = ag.busy || !ag.text.trim() || !!blocked;
+  } else if (ev.type === 'change' && f.dataset.age === 'classification') renderBrain(true);
+  return true;
 }
 
 function pressing() {
@@ -2683,6 +2848,8 @@ function renderBrain(force) {
   // `live` (the Brain Agent's preflight arriving) paints under a person's
   // typing — the caret is kept below — but never under a pressed pointer
   const typing = isField(document.activeElement) && el.contains(document.activeElement);
+  // the shared panel paints by its own rules (it holds under its own typing)
+  if (activeSlot() && activeSlot().purpose === 'brain') renderPanel(force === true || force === 'live' ? force : false);
   if (force === 'live' ? pressing().held() : !force && (typing || pressing().held())) return;
   let html;
   // a destination has not arrived until its reading has: an entry's own
@@ -2707,7 +2874,6 @@ function renderBrain(force) {
     loading = !slot;
     html = !slot ? '<p class="b-loading" role="status" aria-busy="true">Reading the review…</p>'
       : reviewHtml(slot, k);
-    if (ag && !ed) html = agentHtml() + html;
   } else {
     const slot = k === 'index' ? cache.index : cache.entries[k];
     if (!slot || Date.now() - slot.at > FRESH_MS) load(k);
@@ -2735,14 +2901,8 @@ function renderBrain(force) {
       html = back + formHtml(null);
     }
     if (k === 'index' && (!drafts.list || Date.now() - drafts.at > 10000)) loadDrafts();
-    if (ag && !ed) {
-      // the Brain Agent's request is drawn wherever the person is in the
-      // Brain: alone on the list's page, above the entry on an entry's
-      const d = currentDraft();
-      const target = d ? d.target : ag.target;
-      if (target && !cache.entries['e:' + target]) load('e:' + target);
-      html = k === 'index' ? back + agentHtml() : agentHtml() + html;
-    }
+    // the Brain Agent's request is drawn in the shared panel beside the
+    // page (task 205), so the entry it is about stays in view
   }
   const arrived = k !== paintedKey && !loading;
   if (html !== painted) {
@@ -2802,5 +2962,5 @@ function renderBrain(force) {
 }
 
 export {
-  renderBrain
+  registerBrainAgent, renderBrain
 };

@@ -8,6 +8,7 @@
 
    Imports only lib/. */
 import { esc } from './dom.js';
+import { askAttrs } from './panel.js';
 import { formatRoute } from './route.js';
 
 /* The sections, with the words the navigation uses. */
@@ -201,8 +202,11 @@ function cardEntryHtml(task, state, id) {
   const dec = ((state && state.decisions) || {})[task.file];
   const held = o && o.configured ? (o.cards || {})[task.file] : null;
   // a question about the card is always open to ask (task 181): it
-  // launches nothing until it is submitted, there
-  const askLink = ` <a class="o-asklink" data-route data-o="ask-card" href="${esc(orchHref('ask', id))}">` +
+  // launches nothing until it is submitted. A plain click opens the shared
+  // panel beside the card (task 205); a new tab still takes the address
+  const target = { kind: task.isPhase ? 'phase' : 'card', card: String(id) };
+  const askLink = ` <a class="o-asklink" data-route data-o="ask-card" href="${esc(orchHref('ask', id))}"` +
+    `${askAttrs('orch', target)}>` +
     `${task.isPhase ? 'Ask about this phase' : 'Ask about this card'}</a>`;
   if (!held && !dec) return askLink.trim();
   const words = [];

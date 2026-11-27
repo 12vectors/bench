@@ -3155,9 +3155,10 @@ MAX_SIGNALS = 6
 EVAL_TOP_KEYS = {"v", "kind", "draft", "round", "outcome", "summary", "questions",
                  "evaluations"}
 EVAL_ITEM_KEYS = {"entry", "current", "proposed", "reason", "evidence", "supersededBy",
-                  "invalidation", "explanation", "missing", "uncertainty", "signals"}
+                  "invalidation", "explanation", "missing", "uncertainty", "signals",
+                  "maintain"}
 EVAL_CHOICE_KEYS = {"entry", "selected", "classification", "reason", "supersededBy",
-                    "invalidation", "explanation"}
+                    "invalidation", "explanation", "maintain"}
 # The longest a reason may be, the agent's or a person's, so that the one
 # history line Apply writes always keeps its attribution and explanation
 # whole: that line is the only durable record of "Historical, explained now
@@ -3305,9 +3306,10 @@ def evaluate_preflight(payload) -> dict:
         "budget": r["budget"],
         "approval": r["approval"],
         "authority": ("the run may read; it cannot edit, run a command, fetch from the "
-                      "web or write the Brain. It proposes classifications only; your "
-                      "separate Apply writes the ones you choose, and only their "
-                      "classification metadata"),
+                      "web or write the Brain. It proposes classifications and, where "
+                      "the evidence supports it, an update of one section of an existing "
+                      "Current explanation; your separate Apply writes the ones you "
+                      "choose as one batch"),
         "enforcement": ("the vendor's permission rules and tool roster, not an "
                         "operating-system sandbox"),
         "rules": [
@@ -3317,6 +3319,14 @@ def evaluate_preflight(payload) -> dict:
             "Superseded names the replacing entry or an explicit invalidation",
             "Unclassified says what evidence is missing and how to get it",
             "an entry with a manual override is never reclassified by an evaluation",
+            "an explanation update changes one section of an existing Current "
+            "explanation, never creates an entry, and is held to the revision the "
+            "round read",
+            "a person's section is replaced only by your explicit choice; a working-"
+            "agreement change needs your authorization and is never applied by a "
+            "policy; no update writes **Policy:**",
+            "implemented needs evidence in the code; deployed is never claimed — "
+            "deployment stays unknown until a person records it",
         ],
     }
 
@@ -3406,6 +3416,19 @@ def eval_contract_text(draft: dict, round_no: int) -> str:
             "uncertainty": "what stays unknown or conflicting",
             "signals": ["reassessment signals you saw — a card's stage, a PR — "
                         "which are not proof"],
+            "maintain": {
+                "entry": "optional: the EXISTING Current explanation to update (a Guide, "
+                         "Decision or Investigation listed in your sources) — never a "
+                         "new page",
+                "operation": "append | replace",
+                "section": "the one ## heading appended or replaced, without the #",
+                "scope": "factual | policy (policy: it changes a working agreement)",
+                "body": "the section's Markdown, ### and below, no ## heading",
+                "claims": [{"claim": "one line", "status": " | ".join(CLAIM_STATUSES),
+                            "evidence": ["app:path/in/checkout.py"],
+                            "authority": "optional: " + " | ".join(AUTHORITIES)}],
+                "uncovered": ["what the evidence does not support yet"],
+            },
         }],
     }
     return json.dumps(example, indent=2, ensure_ascii=False)
@@ -3564,7 +3587,7 @@ def _eval_item(item, n: int, rnd: dict, chosen: dict, seen: set, reading: dict
            "uncertainty": uncertainty, "signals": signals,
            "revision": was["revision"], "override": was.get("override"),
            "supersededBy": None, "invalidation": None, "explanation": None,
-           "missing": None}
+           "missing": None, "maintain": None, "maintainRefused": None}
     for key in ("supersededBy", "invalidation", "explanation", "missing"):
         allowed = {"supersededBy": "Superseded", "invalidation": "Superseded",
                    "explanation": "Historical", "missing": "Unclassified"}[key]
@@ -3623,6 +3646,17 @@ def _eval_item(item, n: int, rnd: dict, chosen: dict, seen: set, reading: dict
     if proposed == "Unclassified":
         out["missing"] = _clean(item.get("missing"), f"{where}.missing", problems,
                                 cap=800)
+    if item.get("maintain") not in (None, {}) and not problems:
+        # an explanation update that does not pass is refused on its own: the
+        # classification proposal stands, and the review says the update was
+        # refused and why — never silently dropped
+        mproblems: list[str] = []
+        kept = _maint_item(item["maintain"], f"{where}.maintain", out, rnd, reading,
+                           mproblems)
+        if mproblems or kept is None:
+            out["maintainRefused"] = mproblems[:8] or [f"{where} was refused"]
+        else:
+            out["maintain"] = kept
     if problems:
         return None, problems
     return out, []
@@ -3696,6 +3730,18 @@ def validate_evaluate(draft: dict, rnd: dict, answer: dict) -> dict:
             who = item.get("entry") if isinstance(item, dict) else None
             refused.append({"entry": who if who in chosen else None,
                             "problems": why[:8]})
+    taken: set[tuple[str, str]] = set()
+    for k in kept_items:
+        m = k.get("maintain")
+        if not m:
+            continue
+        spot = (m["entry"], m["section"].lower())
+        if spot in taken:
+            k["maintain"] = None
+            k["maintainRefused"] = [f"another proposal in this answer already updates the "
+                                    f"section {m['section']!r} of {m['entry']}; one "
+                                    f"update per section"]
+        taken.add(spot)
     if not kept_items:
         return {"status": "failed", "error": {
             "code": "invalid", "why": "no entry's proposal passed validation: "
@@ -3705,12 +3751,507 @@ def validate_evaluate(draft: dict, rnd: dict, answer: dict) -> dict:
                and i not in {r["entry"] for r in refused}]
     bindings: list[dict] = []
     for k in kept_items:
-        for b in k["evidence"]:
+        for b in k["evidence"] + ((k.get("maintain") or {}).get("evidence") or []):
             if all(x["ref"] != b["ref"] for x in bindings):
                 bindings.append(b)
     return {"status": "proposed", "summary": summary, "bindings": bindings,
             "evaluation": {"items": kept_items, "refused": refused, "missing": missing,
                            "partial": bool(refused or missing), "round": rnd["n"]}}
+
+
+# ── maintaining the existing explanation (task 199) ───────────────────
+#
+# An evaluation may propose, beside a classification, an update to the
+# existing maintained explanation it concerns: one `##` section of one
+# live Current entry, appended or replaced. Never a new entry: an
+# implemented investigation is linked to the explanation that already
+# exists, or its explanation stays pending. The update is written in the
+# same all-or-none batch as the classification, held to the revision the
+# round read, and kept apart by who owns the text and whether it is a
+# fact or a working agreement.
+#
+# Ownership is read from the text itself. A `##` section whose first line
+# is the provenance line bench writes (`_Maintained from evidence …_`) is
+# bench-maintained; every other part of the body — the opening, a
+# person's section, an earlier draft's `## Sources and claims` — is a
+# person's. Replacing a person's section needs that person's explicit
+# resolution; removing the provenance line from a section hands it back to
+# people. Policy is the entry's own `**Policy:**`, its place under Ways of
+# working in the handbook, or the agent saying it changes an agreement:
+# such an update needs a person's authorization, recorded with who and
+# why in the provenance line, and is never applied by a policy — and it
+# never writes `**Policy:**`, so an inferred convention cannot become an
+# approved agreement.
+
+MAINT_KEYS = {"entry", "operation", "section", "scope", "body", "claims", "uncovered"}
+MAINT_CLAIM_KEYS = {"claim", "status", "evidence", "authority"}
+MAINT_CHOICE_KEYS = {"selected", "body", "resolution", "authorize"}
+MAINT_OPS = ("append", "replace")
+MAINT_SCOPES = ("factual", "policy")
+MAINT_KINDS = ("Guide", "Decision", "Investigation")
+MAINT_MARK = "_Maintained from evidence"
+MAINT_BODY_MAX = 24 * 1024
+MAINT_MAX_CLAIMS = 20
+MAINT_MAX_UNCOVERED = 10
+MAINT_HEADING_MAX = 120
+MAINT_RESERVED = ("sources and claims",)
+CLAIM_WORDS = {"implemented": "Implemented in the source", "deployed": "Deployed",
+               "agreed-future": "Agreed, not built", "unresolved": "Unresolved",
+               "unknown": "Not known"}
+AUTHORITY_WORDS = {"documented-policy": "documented policy",
+                   "inferred-convention": "observed convention, not an approved agreement",
+                   "proposed-agreement": "proposed, not agreed"}
+_HEADING_LINE = re.compile(r"^(#{1,2}) +(\S.*?)\s*$")
+
+
+def body_sections(body: str) -> list[dict]:
+    """A body's parts as maintenance reads them: the opening (before the
+    first heading) and each `#`/`##` section outside a code fence, with who
+    owns it — `bench` for a `##` section opening with the provenance line,
+    `person` for everything else."""
+    lines = body.split("\n") if body else []
+    fenced = brain.fence_marks(lines)
+    starts = []
+    for n, line in enumerate(lines):
+        m = None if fenced[n] else _HEADING_LINE.match(line)
+        if m:
+            starts.append((n, m.group(2).rstrip("#").strip(), len(m.group(1))))
+    out = []
+    first = starts[0][0] if starts else len(lines)
+    if any(x.strip() for x in lines[:first]):
+        out.append({"heading": None, "start": 0, "end": first, "owner": "person",
+                    "level": 0})
+    for k, (n, title, level) in enumerate(starts):
+        end = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+        nxt = next((x.strip() for x in lines[n + 1:end] if x.strip()), "")
+        owner = "bench" if level == 2 and nxt.startswith(MAINT_MARK) else "person"
+        out.append({"heading": title, "start": n, "end": end, "owner": owner,
+                    "level": level})
+    return out
+
+
+def _named_sections(body: str) -> dict[str, dict]:
+    return {s["heading"].lower(): s for s in body_sections(body)
+            if s["heading"] and s["level"] == 2}
+
+
+def section_text(body: str, heading: str) -> str | None:
+    s = _named_sections(body).get(heading.lower())
+    if s is None:
+        return None
+    return "\n".join(body.split("\n")[s["start"]:s["end"]]).strip("\n")
+
+
+def section_text_problems(text, where: str) -> list[str]:
+    """What keeps a section's own text — the agent's or a person's edit —
+    from being written: it is one section, so it has no `#`/`##` heading
+    of its own, opens no fence it does not close, carries no HTML comment,
+    control character, reserved provenance line or credential."""
+    if not isinstance(text, str) or not text.strip():
+        return [f"{where} must be non-empty Markdown"]
+    text = text.replace("\r\n", "\n")
+    if len(text.encode("utf-8")) > MAINT_BODY_MAX:
+        return [f"{where} is over {MAINT_BODY_MAX // 1024} KiB"]
+    problems = []
+    if _UNSAFE.search(text.replace("\t", " ")):
+        problems.append(f"{where} carries a control or direction-changing character")
+    if "<!--" in text:
+        problems.append(f"{where} carries an HTML comment, which the board reserves for "
+                        f"its own records")
+    lines = text.split("\n")
+    fenced = brain.fence_marks(lines)
+    for n, line in enumerate(lines):
+        if fenced[n]:
+            continue
+        if _HEADING_LINE.match(line):
+            problems.append(f"{where} has its own # or ## heading ({line[:60]!r}); a "
+                            f"section's text uses ### and below")
+            break
+        if line.strip().startswith(MAINT_MARK):
+            problems.append(f"{where} carries bench's provenance line, which only the "
+                            f"board writes")
+            break
+    if brain.fence_unclosed(lines):
+        problems.append(f"{where} opens a code fence it never closes")
+    if redact.scrub(text, "«redacted»") != text:
+        problems.append(f"{where} looks like it holds a credential")
+    return problems
+
+
+def _cards_cited(e: dict) -> set[str]:
+    out = set()
+    for s in e.get("sources") or []:
+        m = brain.CARD_REF_RE.match(str(s).split("/")[0])
+        if m:
+            out.add(str(int(m.group(1))))
+    return out
+
+
+def _policy_reasons(target: dict, scope: str) -> list[str]:
+    """Why an update of this entry is a change to a working agreement
+    rather than a factual update — empty when it is factual."""
+    out = []
+    if scope == "policy":
+        out.append("the Brain Agent says it changes a working agreement")
+    if target.get("policy"):
+        out.append(f"the entry records **Policy:** {target['policy']}")
+    try:
+        rec = handbook.read_record()
+        if rec.get("state") not in ("missing", "record") or rec.get("problems"):
+            # a refused, invalid or unsupported record cannot say this
+            # entry is not linked under Ways of working: fail closed
+            out.append("the handbook record cannot be read as a record, so whether it "
+                       "links this entry under Ways of working is not known")
+        elif target["id"] in ((rec.get("sections") or {}).get("ways-of-working") or []):
+            out.append("the handbook links it under Ways of working")
+    except Exception:
+        # an unreadable handbook record cannot say this entry is not a
+        # working agreement, so it is held as one: fail closed
+        out.append("the handbook record could not be read, so whether it links "
+                   "this entry under Ways of working is not known")
+    return out
+
+
+def _maint_item(raw, where: str, out: dict, rnd: dict, reading: dict,
+                problems: list[str]) -> dict | None:
+    """One proposed explanation update, validated on its own: an existing,
+    live, Current explanation the round read and the evaluated entry
+    evidently concerns; one section; text a section may hold; claims each
+    held to the evidence its status needs."""
+    if not isinstance(raw, dict):
+        problems.append(f"{where} is an object")
+        return None
+    extra = sorted(set(raw) - MAINT_KEYS)
+    if extra:
+        problems.append(f"{where} has unknown field(s) {', '.join(extra[:6])}")
+        return None
+    entry_id, proposed = out["entry"], out["proposed"]
+    by_id = {e["id"]: e for e in reading["entries"]}
+    target = raw.get("entry")
+    other = by_id.get(target) if isinstance(target, str) else None
+    if other is None or other.get("removed") is not None:
+        problems.append(f"{where}.entry names {str(target)[:70]!r}, which is no live entry "
+                        f"here: bench updates an existing explanation and never creates one "
+                        f"per card — leave the update out and say the explanation is "
+                        f"pending")
+        return None
+    if other.get("classification") != "Current":
+        problems.append(f"{where}.entry names {target}, which is "
+                        f"{other.get('classification')}: only the Current explanation is "
+                        f"maintained")
+        return None
+    if other.get("kind") not in MAINT_KINDS:
+        problems.append(f"{where}.entry names a {other.get('kind')} entry; an explanation "
+                        f"is a {', '.join(MAINT_KINDS)}")
+        return None
+    if target == entry_id and proposed != "Current":
+        problems.append(f"{where} updates {entry_id} itself while proposing it {proposed}: "
+                        f"update the Current explanation instead")
+        return None
+    mine = by_id.get(entry_id) or {}
+    expl = out.get("explanation") or {}
+    if not (target == entry_id or expl.get("entry") == target
+            or entry_id in (other.get("related") or [])
+            or target in (mine.get("related") or [])
+            or _cards_cited(other) & _cards_cited(mine)):
+        problems.append(f"{where}.entry names {target}, which neither explains {entry_id} "
+                        f"nor is related to it or cites one of its cards; bench does not "
+                        f"guess which explanation to update")
+        return None
+    bound, why = _bind(f"entry:{target}", rnd)
+    if bound is None:
+        problems.append(f"{where}.entry {target}: {why}")
+        return None
+    try:
+        now = _sha((brain.directory() / other["file"]).read_bytes())
+    except OSError:
+        now = None
+    if now != bound["sha256"]:
+        problems.append(f"{where}.entry {target} changed since the round read it; "
+                        f"evaluate again")
+        return None
+    op = raw.get("operation")
+    if op not in MAINT_OPS:
+        problems.append(f"{where}.operation is {' or '.join(MAINT_OPS)}")
+    heading = _clean(raw.get("section"), f"{where}.section", problems, cap=MAINT_HEADING_MAX)
+    named = _named_sections(other.get("body") or "")
+    owner = "new"
+    if heading:
+        if "\n" in heading or "#" in heading or _REASON_UNSAFE.search(heading):
+            problems.append(f"{where}.section is a plain one-line heading")
+        elif heading.lower() in MAINT_RESERVED:
+            problems.append(f"{where}.section {heading!r} is the draft's own evidence "
+                            f"section; it is not maintained here")
+        elif op == "replace":
+            if heading.lower() not in named:
+                problems.append(f"{where} replaces {heading!r}, which {target} does not "
+                                f"have; append it instead")
+            else:
+                owner = named[heading.lower()]["owner"]
+                heading = named[heading.lower()]["heading"]
+        elif op == "append" and heading.lower() in named:
+            problems.append(f"{where} appends {heading!r}, which {target} already has; "
+                            f"replace it instead")
+    scope = raw.get("scope")
+    if scope not in MAINT_SCOPES:
+        problems.append(f"{where}.scope is factual or policy")
+    body = raw.get("body")
+    problems.extend(section_text_problems(body, f"{where}.body"))
+    claims_raw = raw.get("claims")
+    claims, evidence = [], []
+    if not isinstance(claims_raw, list) or not claims_raw or \
+            len(claims_raw) > MAINT_MAX_CLAIMS:
+        problems.append(f"{where}.claims is a list of 1–{MAINT_MAX_CLAIMS}")
+        claims_raw = []
+    for n, c in enumerate(claims_raw):
+        cw = f"{where}.claims[{n}]"
+        if not isinstance(c, dict) or set(c) - MAINT_CLAIM_KEYS:
+            problems.append(f"{cw} names its claim, status, evidence and authority only")
+            continue
+        text = _clean(c.get("claim"), f"{cw}.claim", problems, cap=400)
+        if text and "\n" in text:
+            problems.append(f"{cw}.claim is one line")
+        status = c.get("status")
+        if status not in CLAIM_STATUSES:
+            problems.append(f"{cw}.status is one of {', '.join(CLAIM_STATUSES)}")
+        authority = c.get("authority")
+        if authority is not None and authority not in AUTHORITIES:
+            problems.append(f"{cw}.authority is one of {', '.join(AUTHORITIES)}")
+        refs = c.get("evidence") or []
+        bound_refs = []
+        if not isinstance(refs, list) or len(refs) > MAX_EVIDENCE:
+            problems.append(f"{cw}.evidence is a list of at most {MAX_EVIDENCE}")
+            refs = []
+        for m, ref in enumerate(refs):
+            b, why = _bind(ref, rnd)
+            if b is None:
+                problems.append(f"{cw}.evidence[{m}] {str(ref)[:80]!r}: {why}")
+                continue
+            if all(x["ref"] != b["ref"] for x in bound_refs):
+                bound_refs.append(b)
+        if status == "implemented" and not any(b["ref"].startswith("app:")
+                                               for b in bound_refs):
+            problems.append(f"{cw} says implemented without evidence in the code: a card's "
+                            f"stage, a plan or a pull request is not proof the work "
+                            f"shipped")
+        if status == "deployed":
+            problems.append(f"{cw} says deployed: bench binds no deployment evidence, so "
+                            f"say unknown — a person records a deploy: binding on the "
+                            f"entry")
+        if status == "agreed-future" and not bound_refs:
+            problems.append(f"{cw} says agreed without citing where it was agreed")
+        if authority == "documented-policy":
+            if scope != "policy":
+                problems.append(f"{cw} cites a documented policy: an update that restates "
+                                f"a working agreement is scope policy")
+            if not any(b["ref"].startswith("work:") for b in bound_refs):
+                problems.append(f"{cw} calls something documented policy without citing "
+                                f"the card, plan or entry that documents it")
+        if authority == "proposed-agreement" and status == "implemented":
+            problems.append(f"{cw} calls a proposed agreement implemented")
+        claims.append({"claim": text, "status": status, "authority": authority,
+                       "evidence": bound_refs})
+        for b in bound_refs:
+            if all(x["ref"] != b["ref"] for x in evidence):
+                evidence.append(b)
+    uncovered = []
+    raw_unc = raw.get("uncovered") or []
+    if not isinstance(raw_unc, list) or len(raw_unc) > MAINT_MAX_UNCOVERED:
+        problems.append(f"{where}.uncovered is a list of at most {MAINT_MAX_UNCOVERED}")
+        raw_unc = []
+    for n, u in enumerate(raw_unc):
+        kept = _clean(u, f"{where}.uncovered[{n}]", problems, cap=300)
+        if kept:
+            uncovered.append(_one_line(kept))
+    if problems:
+        return None
+    return {"entry": target, "title": other.get("title"), "revision": other["revision"],
+            "file": other["file"], "operation": op, "section": heading, "owner": owner,
+            "scope": scope, "policy": _policy_reasons(other, scope),
+            "body": body.replace("\r\n", "\n").strip("\n"), "claims": claims,
+            "uncovered": uncovered, "evidence": evidence}
+
+
+def maint_mark(draft: dict, ev: dict, *, by: str, authorization: dict | None) -> str:
+    """The provenance line bench writes under a maintained section's
+    heading: which evaluation and round, who applied it, and — for a
+    working-agreement change — who authorized it and why."""
+    rnd = next((r for r in draft.get("rounds") or [] if r["n"] == ev.get("round")), {})
+    ended = rnd.get("ended")
+    when = (str(ended)[:10] if isinstance(ended, str) else
+            time.strftime("%Y-%m-%d", time.gmtime(ended or draft.get("created")
+                                                  or time.time())))
+    said = f"Brain Agent evaluation {draft['id']}, round {ev.get('round')}, {when}; {by}"
+    if authorization:
+        said += (f"; policy wording authorized by {authorization['actor']}: "
+                 f"{authorization['reason']} (not an approved agreement unless the "
+                 f"entry's Policy says so)")
+    # an underscore inside would end the italics early
+    return f"{MAINT_MARK} — " + _one_line(said).replace("_", " ").rstrip(".") + "._"
+
+
+def render_section(heading: str, mark: str, body: str, claims: list[dict],
+                   uncovered: list[str], uncertainty: str | None) -> str:
+    """One maintained section as it is written: heading, provenance, the
+    explanation, every claim with what the evidence supports it as, what
+    is not supported yet and what stays uncertain."""
+    lines = [f"## {heading}", "", mark, "", body.strip("\n"), ""]
+    if claims:
+        lines += ["**Claims, as the evidence supports them**", ""]
+        for c in claims:
+            word = CLAIM_WORDS.get(c["status"], c["status"])
+            if c.get("authority"):
+                word += f" · {AUTHORITY_WORDS[c['authority']]}"
+            refs = ", ".join(f"`{b['ref']}`" for b in c["evidence"])
+            lines.append(f"- **{word}** — {c['claim']}"
+                         + (f" (evidence: {refs})" if refs else " (no evidence bound)"))
+        lines.append("")
+    if uncovered:
+        lines += ["**Not supported by the evidence yet:** " + "; ".join(uncovered), ""]
+    if uncertainty:
+        lines += [f"**Uncertain:** {' '.join(uncertainty.split())}", ""]
+    return "\n".join(lines).rstrip("\n")
+
+
+def apply_section(body: str, operation: str, heading: str, text: str) -> str:
+    """The body with one section replaced in place, or appended — before a
+    draft's own `## Sources and claims`, which stays last."""
+    lines = body.split("\n") if body else []
+    named = _named_sections(body)
+    new = text.split("\n")
+    if operation == "replace" and heading.lower() in named:
+        s = named[heading.lower()]
+        out = lines[:s["start"]] + new + ([""] if s["end"] < len(lines) else []) \
+            + lines[s["end"]:]
+    else:
+        ev = next((named[r] for r in MAINT_RESERVED if r in named), None)
+        at = ev["start"] if ev else len(lines)
+        head = lines[:at]
+        while head and not head[-1].strip():
+            head.pop()
+        out = head + ([""] if head else []) + new + ([""] if at < len(lines) else []) \
+            + lines[at:]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip("\n")
+
+
+def _maint_row(draft: dict, ev: dict, item: dict, mc: dict, by_id: dict,
+               moved: set[str]) -> dict:
+    """One proposed explanation update as the review shows it and Apply
+    would write it, read now: before and after, the person's edit, who
+    owns the section, whether it is factual or policy, and what holds it."""
+    m = item["maintain"]
+    now = by_id.get(m["entry"])
+    body = mc["body"].replace("\r\n", "\n").strip("\n") if isinstance(mc.get("body"), str) \
+        else m["body"]
+    edited = body != m["body"]
+    authorize = _one_line(mc.get("authorize") or "")
+    # whether this is a working-agreement change is read again now, not
+    # only when the round was validated: a handbook link under Ways of
+    # working (outside the entry's revision guard) or a **Policy:** field
+    # added since makes it one
+    reasons = list(m["policy"])
+    if now is not None:
+        for r in _policy_reasons(now, m["scope"]):
+            if r not in reasons:
+                reasons.append(r)
+    policy = bool(reasons)
+    owner = m["owner"]
+    if now is not None and m["operation"] == "replace":
+        found = _named_sections(now.get("body") or "").get(m["section"].lower())
+        owner = found["owner"] if found else "missing"
+    by = ("a factual update applied under the Brain reconciliation policy"
+          if draft.get("applyBy") == "policy" else
+          ("a working-agreement update applied by a person" if policy
+           else "a factual update applied by a person"))
+    authorization = ({"actor": taskfiles.actor_name() or "unknown", "reason": authorize}
+                     if policy and len(authorize) >= brainwrite.MIN_REASON else None)
+    after = render_section(m["section"], maint_mark(draft, ev, by=by,
+                                                    authorization=authorization),
+                           body, m["claims"], m["uncovered"], item.get("uncertainty"))
+    blocked = None
+    problems = section_text_problems(body, "your edit") if edited else []
+    if now is None or now.get("removed") is not None:
+        blocked = {"code": "gone", "why": f"{m['entry']} is no longer a live entry here"}
+    elif now["revision"] != m["revision"]:
+        blocked = {"code": "destination-changed", "why": (
+            f"{m['entry']} changed since the evaluation read it (read {m['revision']}, now "
+            f"{now['revision']}); evaluate again — your edits here are kept on this page")}
+    elif now.get("classification") != "Current":
+        blocked = {"code": "not-current", "why": f"{m['entry']} is no longer Current"}
+    elif any(b["ref"] in moved for b in m["evidence"]):
+        blocked = {"code": "source-drift", "why": (
+            "a source this update cites changed since it was read; evaluate again")}
+    elif problems:
+        blocked = {"code": "invalid-text", "why": problems[0]}
+    elif owner == "missing":
+        blocked = {"code": "section-missing", "why": f"{m['entry']} no longer has the "
+                   f"section {m['section']!r}"}
+    elif owner == "person" and mc.get("resolution") != "replace-human":
+        blocked = {"code": "human-owned", "why": (
+            f"the section {m['section']!r} of {m['entry']} is a person's text; replace it "
+            f"only by choosing to, or leave this update out")}
+    elif policy and authorization is None:
+        blocked = {"code": "policy-authorization", "why": (
+            "this changes a working agreement (" + "; ".join(reasons) + "): say why you "
+            "authorize it, or leave it out — a factual update never changes an agreement")}
+    default = (blocked is None and not policy and owner != "person" and not edited)
+    selected = bool(mc["selected"]) if "selected" in mc else default
+    before = section_text(now.get("body") or "", m["section"]) \
+        if now is not None and m["operation"] == "replace" else None
+    return {"entry": m["entry"], "title": m.get("title"), "operation": m["operation"],
+            "section": m["section"], "owner": owner, "scope": m["scope"],
+            "policy": reasons, "body": body, "proposedBody": m["body"],
+            "edited": edited, "claims": m["claims"], "uncovered": m["uncovered"],
+            "evidence": [dict(b, drifted=b["ref"] in moved) for b in m["evidence"]],
+            "before": before, "after": after, "revision": m["revision"],
+            "resolution": mc.get("resolution"), "authorize": authorize or None,
+            "authority": ("policy" if draft.get("applyBy") == "policy" else "person"),
+            "blocked": blocked, "defaultSelected": default, "selected": selected}
+
+
+def _maint_edits(rows: list[dict], by_id: dict) -> list[dict]:
+    """The batch's edit items: per explanation, every selected update
+    applied in turn to the body as it is now, its sources and bindings
+    gaining what the updates cite, and its Related list the investigations
+    it now explains — each held to the revision the round read."""
+    per: dict[str, list[tuple[dict, dict]]] = {}
+    for row in rows:
+        mr = row.get("maintain")
+        if mr and mr["selected"] and mr["blocked"] is None:
+            per.setdefault(mr["entry"], []).append((row, mr))
+    edits = []
+    for target, pairs in per.items():
+        now = by_id[target]
+        body = now.get("body") or ""
+        evidence: list[dict] = []
+        related = list(now.get("related") or [])
+        for row, mr in pairs:
+            body = apply_section(body, mr["operation"], mr["section"], mr["after"])
+            for b in mr["evidence"]:
+                if all(x["ref"] != b["ref"] for x in evidence):
+                    evidence.append(b)
+            if row["entry"] != target and row["entry"] not in related:
+                related.append(row["entry"])
+        srcs, rel = header_sources(evidence, target)
+        sources = list(now.get("sources") or [])
+        for s in srcs:
+            if s not in sources:
+                sources.append(s)
+        for r in rel:
+            if r not in related:
+                related.append(r)
+        bindings = [b["text"] for b in now.get("bindings") or [] if b.get("text")]
+        for b in evidence:
+            if b["ref"].startswith("app:") and b.get("commit"):
+                text = f"{b['ref']}@{b['commit']}"
+                if brain.parse_binding(text) and text not in bindings:
+                    bindings.append(text)
+        edits.append({"id": target, "expected": now["revision"], "title": now["title"],
+                      "kind": now["kind"], "summary": now.get("summary") or "",
+                      "sources": sources[:brain.MAX_LIST_ITEMS],
+                      "related": related[:brain.MAX_LIST_ITEMS], "body": body,
+                      "bindings": bindings[:brain.MAX_LIST_ITEMS]})
+    return edits
 
 
 def _eval_drifted(draft: dict) -> set[str]:
@@ -3753,11 +4294,13 @@ def _eval_explanation(item: dict, choice: dict, klass: str, by_id: dict
 
 
 def _eval_history_line(draft: dict, ev: dict, reason: str, corrected: bool,
-                       explanation: dict | None, evidence: list[dict]) -> str | None:
+                       explanation: dict | None, evidence: list[dict],
+                       coupling: str | None = None) -> str | None:
     """The one classification history line Apply writes, budgeted: the
-    reason, the attribution and the explanation are always whole — None
-    when they cannot fit — and then as many whole evidence references as
-    there is room for, with how many were left out."""
+    reason, the attribution, the explanation and — task 199 — what became
+    of its explanation's update are always whole — None when they cannot
+    fit — and then as many whole evidence references as there is room
+    for, with how many were left out."""
     by = ("applied under the Brain reconciliation policy"
           if draft.get("applyBy") == "policy" else "applied by a person")
     said = (f"{reason} — evaluated by the Brain Agent ({draft['id']}, round "
@@ -3766,6 +4309,10 @@ def _eval_history_line(draft: dict, ev: dict, reason: str, corrected: bool,
         said += f"; explained now by {explanation['entry']}"
     elif explanation:
         said += "; Current explanation pending"
+    if coupling == "updated":
+        said += "; its explanation was updated in the same batch"
+    elif coupling == "pending":
+        said += "; its explanation update is pending"
     said = _one_line(said)
     if len(reason) > EVAL_REASON_MAX or len(said) > brainwrite.MAX_REASON:
         return None
@@ -3787,8 +4334,9 @@ def _eval_plan(draft: dict, given=None) -> dict:
     """Everything Apply would do with these choices, read now: per entry,
     the classification before and after, the person's corrections, the
     evidence and its drift, the override and destination checks, the
-    explanation state; the batch Apply would write and the `preview` digest
-    Apply must name. A read."""
+    explanation state, and — task 199 — the update of its existing
+    explanation, with how the two halves are coupled; the batch Apply would
+    write and the `preview` digest Apply must name. A read."""
     ev = draft.get("evaluation") or {}
     if given is None:
         given = []
@@ -3800,7 +4348,16 @@ def _eval_plan(draft: dict, given=None) -> dict:
                 not isinstance(c.get("entry"), str):
             raise Refused("each choice names its entry, whether it is selected and, "
                           "optionally, a corrected classification, reason, replacement "
-                          "or invalidation — nothing else")
+                          "or invalidation, and its explanation update — nothing else")
+        mc = c.get("maintain")
+        if mc is not None and (not isinstance(mc, dict) or set(mc) - MAINT_CHOICE_KEYS
+                               or ("body" in mc and not isinstance(mc["body"], str))
+                               or ("authorize" in mc and not isinstance(mc["authorize"], str))
+                               or mc.get("resolution") not in (None, "replace-human")):
+            raise Refused("an explanation update's choice says whether it is selected, "
+                          "your edit of its text, `replace-human` to replace a person's "
+                          "section, and why you authorize a working-agreement change — "
+                          "nothing else")
         choices[c["entry"]] = c
     reading = brain.reading()
     by_id = {e["id"]: e for e in reading["entries"]}
@@ -3811,7 +4368,7 @@ def _eval_plan(draft: dict, given=None) -> dict:
     if policy != frozen.get("policyId"):
         blockers.append({"code": "policy-drift", "why": (
             "the execution policy changed since this evaluation ran; evaluate again")})
-    rows, batch = [], []
+    rows, staged = [], []
     for item in ev.get("items") or []:
         c = choices.get(item["entry"], {})
         now = by_id.get(item["entry"])
@@ -3832,7 +4389,8 @@ def _eval_plan(draft: dict, given=None) -> dict:
                "explanation": explanation, "missing": item.get("missing"),
                "uncertainty": item.get("uncertainty"), "signals": item.get("signals"),
                "evidence": [dict(b, drifted=b["ref"] in moved) for b in item["evidence"]],
-               "override": None, "blocked": None}
+               "override": None, "blocked": None, "maintain": None,
+               "maintainRefused": item.get("maintainRefused"), "coupling": None}
         said = _eval_history_line(draft, ev, reason, corrected, explanation,
                                   item["evidence"])
         if klass not in brain.CLASSIFICATIONS:
@@ -3871,18 +4429,64 @@ def _eval_plan(draft: dict, given=None) -> dict:
                    and bool(item["evidence"]))
         row["defaultSelected"] = default
         row["selected"] = bool(c["selected"]) if "selected" in c else default
+        if item.get("maintain"):
+            row["maintain"] = _maint_row(draft, ev, item, c.get("maintain") or {}, by_id,
+                                         moved)
+        staged.append((row, item, corrected, explanation, target, invalidation))
+        rows.append(row)
+    # an explanation reclassified in this batch is not maintained in it:
+    # the batch names each entry once, and an update of an entry that stops
+    # being the explanation would say the wrong thing
+    changing = {r["entry"] for r in rows if r["selected"] and r["blocked"] is None}
+    for r in rows:
+        mr = r["maintain"]
+        if mr and mr["blocked"] is None and mr["entry"] in changing:
+            mr["blocked"] = {"code": "reclassified", "why": (
+                f"{mr['entry']} is reclassified in this batch; apply that first, then "
+                f"evaluate its explanation again")}
+            mr["defaultSelected"] = False
+            if "selected" not in ((choices.get(r["entry"]) or {}).get("maintain") or {}):
+                mr["selected"] = False
+    batch = []
+    for row, item, corrected, explanation, target, invalidation in staged:
+        mr = row["maintain"]
+        changes_class = row["selected"] and row["blocked"] is None
+        updates = bool(mr and mr["selected"] and mr["blocked"] is None)
+        if mr and mr["selected"] and mr["blocked"] is not None:
+            blockers.append(dict(mr["blocked"], entry=mr["entry"], part="explanation"))
         if row["selected"] and row["blocked"] is not None:
             blockers.append(dict(row["blocked"], entry=item["entry"]))
-        if row["selected"] and row["blocked"] is None:
-            change = {"classification": klass, "reason": said}
-            if klass == "Superseded":
-                if target:
-                    change["supersededBy"] = target
-                else:
-                    change["invalidation"] = _one_line(invalidation)[:brainwrite.MAX_REASON]
-            batch.append({"id": item["entry"], "expected": item["revision"],
-                          "classify": change})
-        rows.append(row)
+        # how the two halves of one evaluation land together: one half is
+        # never shown as a complete maintained result
+        if mr and changes_class and not updates:
+            row["coupling"] = "explanation-pending"
+        elif mr and updates and not changes_class and \
+                row["classification"] != row["current"]:
+            row["coupling"] = "classification-pending"
+        elif mr and updates:
+            row["coupling"] = "complete"
+        if not changes_class:
+            continue
+        coupling = ("updated" if row["coupling"] == "complete" else
+                    "pending" if row["coupling"] == "explanation-pending" else None)
+        said = _eval_history_line(draft, ev, row["reason"], corrected, explanation,
+                                  item["evidence"], coupling)
+        if said is None:
+            row["blocked"] = {"code": "reason-too-long", "why": (
+                "the reason leaves no room for the explanation's state in the history "
+                "line; shorten it")}
+            blockers.append(dict(row["blocked"], entry=item["entry"]))
+            continue
+        change = {"classification": row["classification"], "reason": said}
+        if row["classification"] == "Superseded":
+            if target:
+                change["supersededBy"] = target
+            else:
+                change["invalidation"] = _one_line(invalidation)[:brainwrite.MAX_REASON]
+        batch.append({"id": item["entry"], "expected": item["revision"],
+                      "classify": change})
+    edits = _maint_edits(rows, by_id)
+    batch.extend(edits)
     payload = {"label": f"evaluation {draft['id']}", "entries": batch}
     if batch and not blockers:
         try:
@@ -3892,26 +4496,40 @@ def _eval_plan(draft: dict, given=None) -> dict:
                              **({"entry": exc.extra["id"]} if exc.extra.get("id") else {})})
     preview = brainwrite.digest({"rows": [{k: r[k] for k in (
         "entry", "classification", "reason", "selected", "supersededBy", "invalidation",
-        "explanation")}
+        "explanation", "coupling")}
         for r in rows], "batch": batch, "policy": policy,
+        "maintain": [{k: r["maintain"][k] for k in ("entry", "section", "selected",
+                                                    "after", "revision")}
+                     for r in rows if r["maintain"]],
         "revisions": {r["entry"]: (by_id.get(r["entry"]) or {}).get("revision")
                       for r in rows}})
+    classified = [b for b in batch if "classify" in b]
+    pending = [{"entry": r["entry"], "coupling": r["coupling"],
+                "explanation": (r["maintain"] or {}).get("entry")}
+               for r in rows if r["coupling"] in ("explanation-pending",
+                                                  "classification-pending")]
     return {"items": rows, "refused": ev.get("refused") or [],
             "missing": ev.get("missing") or [], "blockers": blockers,
             "ready": bool(batch) and not blockers,
-            "selected": len(batch), "preview": preview,
+            "selected": len(classified), "updates": len(edits), "pending": pending,
+            "preview": preview,
             "batch": payload if batch else None,
             "publication": {
                 "writes": [f"brain/{(by_id.get(b['id']) or {}).get('file', b['id'] + '.md')}"
                            for b in batch],
                 "changes": "the Classification field, its supersession link and one "
-                           "attributed classification history line per entry",
+                           "attributed classification history line per classified entry"
+                           + ("; for each updated explanation, the one section shown, its "
+                              "sources, bindings and related entries — every other part "
+                              "of its text, its classification and its history are kept"
+                              if edits else ""),
                 "commit": ("one board: brain commit in the work state" if config.COMMIT_MOVES
                            else "saved here; BOARD_COMMIT_MOVES is off, so not committed"),
                 "sync": ("published by sync" if config.SYNC else "not shared: BOARD_SYNC "
                          "is off"),
-                "never": "no entry text, no card, no review report or verdict, no "
-                         "application file, no handbook prose"}}
+                "never": "no new entry, no card, no review report or verdict, no "
+                         "application file, no handbook membership, no **Policy:** "
+                         "field"}}
 
 
 def evaluate_review(payload) -> dict:
@@ -3947,27 +4565,56 @@ def _reconcile_eval_apply(draft: dict) -> None:
     draft.pop("applyRequest", None)
     draft.pop("applyBatch", None)
     draft.pop("applyBy", None)
+    draft.pop("applyPlan", None)
     if op is not None and op.get("refused"):
         draft["conflict"] = {"code": op.get("refused"), "why": op.get("why"), "at": _now()}
     _save(draft)
+
+
+def _apply_receipt(plan: dict) -> dict:
+    """What a batch about to be written carries into the request's record,
+    so its receipt survives a restart: each explanation update's section
+    before and after with its authority, and the pairs left half done."""
+    return {"maintained": [
+        {"entry": r["maintain"]["entry"], "section": r["maintain"]["section"],
+         "operation": r["maintain"]["operation"], "before": r["maintain"]["before"],
+         "after": r["maintain"]["after"], "authority": r["maintain"]["authority"],
+         "authorized": r["maintain"]["authorize"] if r["maintain"]["policy"] else None,
+         "edited": r["maintain"]["edited"], "resolution": r["maintain"]["resolution"],
+         "for": r["entry"]}
+        for r in plan["items"]
+        if r.get("maintain") and r["maintain"]["selected"] and r["maintain"]["blocked"] is None],
+        "pending": plan.get("pending") or []}
 
 
 def _eval_applied(draft: dict, op: dict) -> None:
     draft.pop("error", None)
     draft.pop("conflict", None)
     files = op.get("files") or []
-    changes = {b["id"]: b["classify"]["classification"]
-               for b in (draft.get("applyBatch") or {}).get("entries") or []}
+    entries = (draft.get("applyBatch") or {}).get("entries") or []
+    changes = {b["id"]: b["classify"]["classification"] for b in entries if "classify" in b}
+    plan = draft.get("applyPlan") or {}
+    policy = draft.get("applyBy") == "policy"
     draft.update(status="applied", applied={
         "request": draft.get("applyRequest"), "at": _now(),
         "entries": [f["id"] for f in files], "files": [f["file"] for f in files],
-        "classifications": changes})
+        "classifications": changes,
+        # the retained receipt of each explanation update (task 199): what
+        # the section read before and after, who applied it and under what
+        # authority, kept with the request identity the writer journalled
+        "maintained": plan.get("maintained") or [],
+        "pending": plan.get("pending") or []})
     draft.pop("applyBatch", None)
-    policy = draft.get("applyBy") == "policy"
+    draft.pop("applyPlan", None)
+    updated = draft["applied"]["maintained"]
     _say(draft, "board" if policy else "you", "applied",
-         f"applied {len(files)} classification(s) as one batch"
-         + (" under the reconciliation policy" if policy else "") + ": "
-         + ", ".join(f"{k} → {v}" for k, v in changes.items()))
+         f"applied {len(changes)} classification(s)"
+         + (f" and {len(updated)} explanation update(s)" if updated else "")
+         + " as one batch" + (" under the reconciliation policy" if policy else "") + ": "
+         + ", ".join([f"{k} → {v}" for k, v in changes.items()]
+                     + [f"{m['entry']} § {m['section']} updated" for m in updated])
+         + (f"; {len(draft['applied']['pending'])} half-done pair(s) stay pending"
+            if draft["applied"]["pending"] else ""))
     _save(draft)
 
 
@@ -4032,10 +4679,11 @@ def evaluate_apply(payload: dict) -> dict:
                           stale=first["code"] in ("source-drift", "destination-changed",
                                                   "policy-drift"))
         if not plan["batch"]:
-            raise Refused("select at least one classification to apply; nothing was "
-                          "written")
+            raise Refused("select at least one classification or explanation update to "
+                          "apply; nothing was written")
         draft["applyRequest"] = key
         draft["applyBatch"] = plan["batch"]
+        draft["applyPlan"] = _apply_receipt(plan)
         draft["status"] = "applying"
         _save(draft)
         try:
@@ -4044,6 +4692,7 @@ def evaluate_apply(payload: dict) -> dict:
             draft["status"] = "proposed"
             draft.pop("applyRequest", None)
             draft.pop("applyBatch", None)
+            draft.pop("applyPlan", None)
             draft["conflict"] = {"code": exc.extra.get("code") or "destination-changed",
                                  "why": str(exc), "at": _now()}
             _save(draft)
@@ -4068,7 +4717,8 @@ def find_request(key: str) -> dict | None:
         return public(seen) if seen is not None else None
 
 
-def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict:
+def evaluate_auto_apply(draft_id: str, request: str, entries: list[str],
+                        maintain: bool = False) -> dict:
     """Apply an evaluation under the Brain reconciliation policy (task 197):
     the proposals bench selects by default — bound evidence, a changed
     classification, nothing blocking — for the named entries only, never a
@@ -4077,7 +4727,14 @@ def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict
     person. The caller authorized it immediately before; this refuses what
     a person's Apply refuses (an override, a changed entry or source, a
     policy change) with nothing written, and `nothing-selected` when no
-    named proposal is one bench would select by default."""
+    named proposal is one bench would select by default.
+
+    An explanation update (task 199) rides along only with `maintain` —
+    the policy's own `maintain` authority — and only one bench selects by
+    default: factual, in a section bench maintains or a new one, unedited.
+    A working-agreement change or a person's section is never applied by
+    a policy; without `maintain` every update is left out, and the history
+    line and the request's record say it is pending."""
     key = _request_key({"request": request})
     with LOCK:
         draft = _get(draft_id)
@@ -4103,9 +4760,34 @@ def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict
         wanted = set(entries)
         rows = (draft.get("evaluation") or {}).get("items") or []
         draft["applyBy"] = "policy"
+        def choices(riding: set[str]) -> list[dict]:
+            return [{"entry": r["entry"], "selected": False,
+                     **({"maintain": {"selected": False}} if r.get("maintain") else {})}
+                    if r["entry"] not in wanted else
+                    {"entry": r["entry"],
+                     **({"maintain": {"selected": False}}
+                        if r.get("maintain") and r["entry"] not in riding else {})}
+                    for r in rows]
+
         try:
-            plan = _eval_plan(draft, [{"entry": r["entry"], "selected": False}
-                                      for r in rows if r["entry"] not in wanted])
+            # an explanation update rides only with a classification this
+            # same batch applies: the policy's `maintain` authority is to
+            # apply an update *with* such a classification, never alone. So
+            # read which classifications bench would apply by default first,
+            # with every update left out, and let only theirs ride along.
+            plan = _eval_plan(draft, choices(set()))
+            riding = {r["entry"] for r in plan["items"]
+                      if r["selected"] and r["blocked"] is None} if maintain else set()
+            if riding & {r["entry"] for r in rows if r.get("maintain")}:
+                plan = _eval_plan(draft, choices(riding))
+            alone = [r["entry"] for r in plan["items"]
+                     if r.get("maintain") and r["maintain"]["selected"]
+                     and r["maintain"]["blocked"] is None
+                     and not (r["selected"] and r["blocked"] is None)]
+            if alone:
+                raise Refused("an explanation update would be applied without its "
+                              "classification — nothing was written", 409,
+                              code="classification-pending", entries=alone)
             if plan["blockers"]:
                 first = plan["blockers"][0]
                 raise Refused(f"{first['why']} — nothing was written", 409,
@@ -4120,13 +4802,14 @@ def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict
             raise
         draft["applyRequest"] = key
         draft["applyBatch"] = plan["batch"]
+        draft["applyPlan"] = _apply_receipt(plan)
         draft["status"] = "applying"
         _save(draft)
         try:
             op = brainwrite.write_batch(dict(plan["batch"], request=key))
         except brainwrite.Refused as exc:
             draft["status"] = "proposed"
-            for k in ("applyRequest", "applyBatch", "applyBy"):
+            for k in ("applyRequest", "applyBatch", "applyBy", "applyPlan"):
                 draft.pop(k, None)
             draft["conflict"] = {"code": exc.extra.get("code") or "destination-changed",
                                  "why": str(exc), "at": _now()}
@@ -4139,8 +4822,10 @@ def evaluate_auto_apply(draft_id: str, request: str, entries: list[str]) -> dict
         _eval_applied(draft, op)
         out = {"draft": public(draft), "operation": op,
                "items": [{k: r.get(k) for k in ("entry", "classification", "selected",
-                                                 "blocked", "explanation")}
-                         for r in plan["items"]]}
+                                                 "blocked", "explanation", "coupling")}
+                         for r in plan["items"]],
+               "maintained": draft["applied"].get("maintained") or [],
+               "pending": draft["applied"].get("pending") or []}
     state.broadcast({"type": "brain"})
     return out
 
@@ -4196,8 +4881,8 @@ def _eval_public(draft: dict) -> dict:
     return {"selected": draft.get("selected"), "frozen": draft.get("frozen"),
             "evaluation": draft.get("evaluation"),
             "applies": ("only through your review: the classifications you select, "
-                        "corrected as you choose, written as one all-or-none Brain "
-                        "batch that changes classification metadata only"),
+                        "corrected as you choose, and any explanation update you select, "
+                        "edited as you choose, written as one all-or-none Brain batch"),
             "applyRequest": draft.get("applyRequest") if draft.get("status") == "applying"
             else None}
 

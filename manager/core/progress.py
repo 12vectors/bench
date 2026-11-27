@@ -869,6 +869,17 @@ def claims_for(task: str) -> dict:
     return out
 
 
+def summaries() -> list[dict]:
+    """Every run this board holds a record of, as identity and ending only
+    — which card, which intent, when it opened, when and how it ended.
+    What the agent activity list projects (task 207). A read."""
+    with _LOCK:
+        return [{"agent": r["agent"], "task": r.get("task"), "intent": r.get("intent"),
+                 "opened": r.get("opened"), "closed": r.get("closed"),
+                 "outcome": r.get("outcome")}
+                for r in RUNS.values()]
+
+
 def board_public(tasks: set[str] | None = None) -> dict:
     """The compact reading the state payload carries: per card, its most
     recent run's progress (open or closed), without the history. A new run
