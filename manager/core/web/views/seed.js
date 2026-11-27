@@ -40,6 +40,7 @@ import { S } from '../app/state.js';
 import { fetch, post } from '../lib/api.js';
 import { esc } from '../lib/dom.js';
 import { md } from '../lib/md.js';
+import { askAttrs } from '../lib/panel.js';
 
 const ROOT_WORDS = { app: 'Application', work: 'Work repository' };
 const STATE_WORDS = { read: 'Read', absent: 'Absent', inaccessible: 'Inaccessible',
@@ -511,7 +512,11 @@ function draftHtml() {
     `<dt>Now</dt><dd>${esc(pr.doing || '—')}</dd>` +
     `<dt>Remaining</dt><dd>${list(pr.remaining)}</dd>` +
     `<dt>Blocked on</dt><dd>${esc(pr.blocked || 'nothing')}</dd></dl></div>` +
-    activity + questions + acts + refused +
+    activity + questions + acts +
+    // its conversation and progress follow in the shared panel (task 206);
+    // answers, the section review and the batch Apply stay here
+    `<p class="b-note"><button type="button" class="b-link ap-open"${askAttrs('brainjob', { draft: d.id, mode: 'seed' })}>` +
+    'Follow in the conversation panel</button> — its answers, review and Apply stay here.</p>' + refused +
     (out ? `<p>${out.sections.length} of ${out.expected.length} sections · ${out.contradictions} ` +
       `contradiction${out.contradictions === 1 ? '' : 's'} kept visible · claims: ` +
       Object.entries(out.claims).map(([k, n]) => `${esc(k)} ${n}`).join(', ') + '</p>' +

@@ -160,6 +160,24 @@ def _reason(value, what: str = "reason") -> str:
     return _line(value, what, cap=MAX_REASON, required=True, minimum=MIN_REASON)
 
 
+def _optional_reason(value, what: str = "reason") -> str:
+    """A person's optional comment on a classification (task 202): absent,
+    empty or whitespace-only is no comment at all, and a short one is as
+    good as a long one. Everything else `_line` holds a line to — text
+    only, one line, no control or direction-changing character, no markup
+    and the size cap — still holds. The required `_reason` stays for the
+    actions that need one: an override, a retirement, an invalidation."""
+    if value is None:
+        return ""
+    return _line(value, what, cap=MAX_REASON)
+
+
+def _with_reason(said: str, reason: str) -> str:
+    """A history line's words: what happened, then the comment if one was
+    given — never a filler explanation in its place."""
+    return f"{said}: {reason}" if reason else said
+
+
 def _title(value) -> str:
     text = _line(value, "title", cap=brain.MAX_TITLE_CHARS, required=True)
     if text.startswith("#"):
@@ -378,7 +396,9 @@ def render(title: str, fields: dict, body: str, history: list[str],
 
 
 def _history_line(at: str, klass: str, actor: str, reason: str) -> str:
-    return f"- {at} · {klass} · {actor} — {reason}"
+    """One classification history line. With no comment the line ends at
+    the actor: absence is written as absence, never as a made-up reason."""
+    return f"- {at} · {klass} · {actor}" + (f" — {reason}" if reason else "")
 
 
 def _parts(data: bytes) -> dict:
@@ -540,8 +560,7 @@ def _plan_create(payload: dict, reading: dict, actor: str) -> dict:
     if klass == "Superseded":
         raise Refused("a new entry cannot start Superseded; create it, then classify it "
                       "against the entry that replaces it", field="classification")
-    reason = (_reason(payload.get("reason")) if klass != "Unclassified" or payload.get("reason")
-              else "written; not yet assessed")
+    reason = _optional_reason(payload.get("reason"))
     entry_id = _allocate(reading, title)
     fields = {"Brain": str(brain.CONTRACT), "Id": entry_id, "Kind": kind,
               "Classification": klass, "Summary": summary,
@@ -580,7 +599,7 @@ def _plan_classify(payload: dict, reading: dict, actor: str) -> dict:
         raise Refused(f"{found['id']} is retired; a tombstone is kept as it is", 409)
     _guard_revision(found, payload, reading)
     klass = _classification(payload.get("classification"))
-    reason = _reason(payload.get("reason"))
+    reason = _optional_reason(payload.get("reason"))
     parts = _appendable(_parts(_current_bytes(brain.directory() / found["file"]) or b""), found)
     fields = dict(parts["fields"])
     fields["Classification"] = klass
@@ -599,10 +618,10 @@ def _plan_classify(payload: dict, reading: dict, actor: str) -> dict:
                      allow_tombstone=False)
             _no_cycle(reading, found["id"], target)
             fields["Superseded by"] = target
-            reason = f"superseded by {target}: {reason}"
+            reason = _with_reason(f"superseded by {target}", reason)
         elif invalidation:
             fields["Invalidated"] = _reason(invalidation, "invalidation")
-            reason = f"invalidated without a replacement: {reason}"
+            reason = _with_reason("invalidated without a replacement", reason)
         else:
             raise Refused("Superseded needs the entry that replaces this one, or an explicit "
                           "invalidation decision with its reason", field="supersededBy")
@@ -754,13 +773,16 @@ def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
             "Nothing was written. Read it again and decide again.", 409, stale=True,
             current=brainreviews.review(number, rid))
     history = brain.split_record(data.decode("utf-8"))["history"] if data is not None else []
-    fields = {"Classification": rec["classification"] if rec else "Unclassified",
+    # with no record yet, an override fixes what the review reads as now —
+    # Historical on a closed card by the lifecycle default (task 201)
+    unrecorded = brainreviews.default_classification(card, review)
+    fields = {"Classification": rec["classification"] if rec else unrecorded,
               "Override": rec["override"] if rec else None,
               "Superseded by": rec["supersededBy"] if rec else None,
               "Invalidated": rec["invalidated"] if rec else None}
-    reason = _reason(payload.get("reason"))
     at = _now()
     if kind == "review-classify":
+        reason = _optional_reason(payload.get("reason"))
         klass = _classification(payload.get("classification"))
         fields.update({"Classification": klass, "Superseded by": None, "Invalidated": None})
         if klass == "Superseded":
@@ -775,10 +797,10 @@ def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
                 _targets(reading, [target], "supersededBy", self_id=None,
                          allow_tombstone=False)
                 fields["Superseded by"] = target
-                reason = f"superseded by {target}: {reason}"
+                reason = _with_reason(f"superseded by {target}", reason)
             elif invalidation:
                 fields["Invalidated"] = _reason(invalidation, "invalidation")
-                reason = f"invalidated without a replacement: {reason}"
+                reason = _with_reason("invalidated without a replacement", reason)
             else:
                 raise Refused("Superseded needs the entry that replaces this review's "
                               "conclusions, or an explicit invalidation decision",
@@ -788,6 +810,7 @@ def _plan_review(kind: str, payload: dict, reading: dict, actor: str) -> dict:
         action = payload.get("action")
         if action not in ("set", "clear"):
             raise Refused("an override is set or cleared", field="action")
+        reason = _reason(payload.get("reason"))
         if action == "set":
             fields["Override"] = f"manual · {actor} · {at} — {reason}"
             said = f"manual override set: {reason}"

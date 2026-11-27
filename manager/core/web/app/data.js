@@ -362,6 +362,8 @@ function connectStream(hooks = {}) {
       // reading says otherwise, every frame is news
       reading.rev = -1; reading.known = -1;
       loadState();
+      // a frame missed while disconnected is read back, not lost
+      if (hooks.onAttention) hooks.onAttention();
     }
     S.sseDown = false; scheduleRender();
   };
@@ -414,6 +416,9 @@ function connectStream(hooks = {}) {
     } else if (msg.type === 'board_event') {
       S.state?.boardEvents.push(msg.event);
       scheduleRender();
+    } else if (msg.type === 'attention') {
+      // the agent activity inbox changed (task 207): re-read it whole
+      if (hooks.onAttention) hooks.onAttention();
     } else if (msg.type === 'completing') {
       // the cards this board is merging and cleaning up, and which step
       // each is on — whole map, so it can never go stale in pieces

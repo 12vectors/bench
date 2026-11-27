@@ -6,6 +6,7 @@ import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
 import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
 import { plainClick, syncRoute } from '../lib/nav.js';
+import { askAttrs } from '../lib/panel.js';
 import { activityScope, cardLabel, recordedCard, sessionsIn } from '../lib/context.js';
 import { cardId, formatRoute } from '../lib/route.js';
 import { ago, fmtClock, fmtShort } from '../lib/time.js';
@@ -145,6 +146,8 @@ function renderFlight() {
     `Focus on this session</a>` +
     `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'flight', session: sid, ctx }))}" ` +
     `aria-label="copy a link to this session">Copy link</button>` +
+    // the run in the shared panel (task 206): read, never relaunched
+    (agent && agent.id && meta.task ? `<button type="button" class="copylink ap-open"${askAttrs('run', { agent: agent.id, card: meta.task })}>Inspect in panel</button>` : '') +
     stopBtn + spark(events, meta);
   const stop = $('#stopagent');
   if (stop) stop.addEventListener('click', () => stopAgent(stop.dataset.aid));

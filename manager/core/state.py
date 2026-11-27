@@ -77,7 +77,18 @@ def broadcast(payload: dict) -> int | None:
             q.put_nowait(msg)
         except queue.Full:
             pass
+    # who else wants to know something changed (task 207: the attention
+    # beat wakes on it). Registered by composition only; a hook is told
+    # the frame's type and must return at once.
+    for hook in list(BROADCAST_HOOKS):
+        try:
+            hook(payload.get("type"))
+        except Exception:     # noqa: BLE001 — a listener never breaks a frame
+            pass
     return rev
+
+
+BROADCAST_HOOKS: list = []                 # called with each frame's type
 
 
 def persist(name: str, record: dict) -> None:

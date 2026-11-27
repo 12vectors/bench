@@ -36,6 +36,33 @@ shared first come, first served: a phase uses a slot only while a run
 of its own holds one, so an idle or finished phase never keeps
 standalone work waiting ("Shared capacity, first come first served").
 
+Talking to an agent happens beside the work, not on a separate form.
+**Ask orchestrator** (on the Board's bar, the Orchestrator, or a card's
+Overview) and the Brain's **New entry** and **Ask Brain Agent** open one
+right-hand conversation panel, already about the board, phase, card or
+entry you asked from — its **About** chip says which, and **Change** picks
+another without losing this one. The page stays in view, the conversation
+keeps its target and your unsent text while you move around, and a
+reload gives it back. Opening, reading and closing it launch nothing;
+only an explicit, armed Ask, Generate or Continue does ("The shared agent
+conversation" in `AGENTS.md`). The same panel holds a card's refinement
+(comment, then Update card with agent, then Apply or Discard), a Brain
+seed or evaluation draft's progress beside the workspace its review and
+Apply stay in, and any implementation, repair or review run opened to
+inspect — what it reported, what bench observed, its report and exact
+records — without a composer, because a coding run takes no follow-up
+("Every agent purpose, and what it supports").
+
+Closing the panel does not lose what an agent does next. The header's
+**Activity** control, on every view, counts unread agent results and
+questions and opens a list of them — runs, Orchestrator answers, Brain
+drafts, card refinements and owner questions, each with its state in
+words (a proposal is never *applied*, a run a restart cut short reads
+*interrupted*) — and **Open** takes you to the exact conversation,
+proposal or run. Unread survives navigation, reload and restart; nothing
+is marked read by looking. Browser notifications are off until you turn
+them on with a click ("Agent activity and the inbox" in `AGENTS.md`).
+
 **Docs: [bench.12vectors.com](https://bench.12vectors.com)** — guides,
 concepts, and a settings reference, every page of it generated from this
 repository's own markdown, so what the docs say and what bench does
@@ -342,16 +369,43 @@ explanation is linked or said to be pending. You correct and choose, and
 a manual override is never changed by it. See "Evaluating
 classifications with evidence" in `AGENTS.md`.
 
+The same evaluation keeps the explanation current rather than adding a
+page per card: beside an implemented investigation's Historical, it may
+propose one section for the **existing** explanation — each claim marked
+implemented (cited in the code), agreed, unresolved or not known, what
+the evidence does not support listed, and deployment never claimed. The
+review shows the section before and after; you can edit it. A section a
+person wrote is replaced only if you choose to, and a change to a
+working agreement only with your stated authorization; neither ever
+writes **Policy:**. Both halves land in one batch, and when you leave one
+out the other says it is pending. See "Maintaining the existing
+explanation from evidence" in `AGENTS.md`.
+
 To keep that up without asking each time, **Automatic classification**
 on the Brain re-evaluates an entry when a card it cites changes. It is
 off until you turn it on, and it has two separate authorities: *evaluate*
 queues bounded, read-only evaluations whose proposals wait for your
 review, and *apply* (granted separately) applies only the proposals bench
-selects by default, saying so in each entry's history. Code that changed
+selects by default, saying so in each entry's history — and a third,
+*explanation updates*, lets it apply a factual update of a section bench
+maintains along with its classification. Code that changed
 outside a card is shown as changed, never as fresh, until you press
 **Refresh sources**; a daily launch budget, bounded retries and one
 evaluation at a time keep it from calling the model on unchanged inputs.
 See "Reconciling classifications from work events" in `AGENTS.md`.
+
+**Maintenance health**, below it, reads the whole Brain at once: which
+explanations the work has affected (a card, code outside any card, a
+moved binding), which Historical entries have no Current explanation,
+which supersession or related links are broken, which outcomes are still
+open, what the handbook does not cover — and, as plainly, what it did not
+inspect. Entries written before reconciliation was turned on read *never
+reconciled*, so an unassessed Brain never reads as complete; there is no
+"healthy". **Repair** queues exactly the affected entries its preview
+names, on the authority and budget it shows, through the same queue;
+reading launches nothing, and a Repair's click creates no page and
+widens no source. See "Maintenance health: whole-Brain reconciliation"
+in `AGENTS.md`.
 
 ## Update
 

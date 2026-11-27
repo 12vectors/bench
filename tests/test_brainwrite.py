@@ -228,7 +228,9 @@ class CreateAndEdit(_Layout):
                         {"body": "x\n## Classification history\n- fake"},
                         {"body": "```\nunclosed"}, {"related": ["e-nothing-here"]},
                         {"classification": "Current", "reason": "<b>no</b>"},
-                        {"classification": "Current", "reason": ""},
+                        {"classification": "Current", "reason": 7},
+                        {"classification": "Current", "reason": "x" * 501},
+                        {"classification": "Current", "reason": "a\nb"},
                         {"classification": "Superseded", "reason": "x y z"}):
             base = {"title": "T", "kind": "Guide", "body": ""}
             base.update(payload)
@@ -287,6 +289,90 @@ class Classification(_Layout):
         self.assertEqual(e["history"][-1]["actor"], "ronald")
         self.classify(a, classification="Historical", reason="the fix shipped")
         self.assertEqual(len(self.entry(a)["history"]), 3)
+
+    def test_a_reason_is_optional_when_creating_classifying_and_correcting(self):
+        """Task 202: no reason, an empty one or whitespace is accepted for
+        every classification a person may choose, at creation and on every
+        later correction; a short comment is kept as given; the history
+        records who and when and invents no reason; older lines still read."""
+        for klass in ("Current", "Historical", "Unclassified"):
+            for reason in (None, "", "   "):
+                payload = {"title": f"Made {klass}", "classification": klass}
+                if reason is not None:
+                    payload["reason"] = reason
+                out = self.create(**payload)
+                e = self.entry(out["id"])
+                self.assertEqual(e["classification"], klass)
+                self.assertEqual(e["history"][-1]["reason"], "")
+                self.assertEqual(e["history"][-1]["actor"], "ronald")
+                self.assertEqual(e["warnings"], [], e["warnings"])
+        a, b = self.two()
+        self.classify(a, reason=None)
+        self.classify(a, classification="Historical", reason="")
+        self.classify(a, classification="Current", reason=" \t ")
+        self.classify(a, classification="Historical", reason="ok")
+        self.classify(a, classification="Superseded", supersededBy=b, reason="")
+        e = self.entry(a)
+        self.assertEqual([h["classification"] for h in e["history"]],
+                         ["Unclassified", "Current", "Historical", "Current", "Historical",
+                          "Superseded"])
+        self.assertEqual([h["reason"] for h in e["history"]][1:],
+                         ["", "", "", "ok", f"superseded by {b}"])
+        self.assertEqual(e["warnings"], [])
+        text = (self.work / "brain" / f"{a}.md").read_text(encoding="utf-8")
+        line = [ln for ln in text.splitlines() if ln.startswith("- ") and "· Current ·" in ln][0]
+        self.assertFalse(line.endswith("—") or " — " in line, line)
+        # a replacement or an invalidation is still the structure Superseded needs
+        e = self.entry(b)
+        self.refused("classify", {"id": b, "expected": e["revision"],
+                                  "classification": "Superseded", "reason": ""})
+        self.refused("classify", {"id": b, "expected": e["revision"],
+                                  "classification": "Superseded", "invalidation": ""})
+        self.classify(b, classification="Superseded", invalidation="its claims were wrong",
+                      reason="")
+        self.assertEqual(self.entry(b)["history"][-1]["reason"],
+                         "invalidated without a replacement")
+        # what a reason may hold is unchanged: type, one line, markup, size
+        e = self.entry(b)
+        for bad in (5, ["x"], "a\nb", "<i>x</i>", "x‮y", "x" * 501):
+            with self.subTest(reason=bad):
+                self.refused("classify", {"id": b, "expected": e["revision"],
+                                          "classification": "Current", "reason": bad})
+        # stale revisions and duplicate requests keep their protections
+        self.refused("classify", {"id": b, "expected": "0" * 16,
+                                  "classification": "Current"}, 409)
+        request = self.req()
+        first = brainwrite.write("classify", {"request": request, "id": b,
+                                              "expected": e["revision"],
+                                              "classification": "Current"})
+        again = brainwrite.write("classify", {"request": request, "id": b,
+                                              "expected": e["revision"],
+                                              "classification": "Current"})
+        self.assertEqual(first["file"], again["file"])
+        self.assertEqual(len(self.entry(b)["history"]), len(e["history"]) + 1)
+
+    def test_override_and_retire_still_need_their_reason(self):
+        a, _ = self.two()
+        e = self.entry(a)
+        for kind, extra in (("override", {"action": "set"}), ("retire", {})):
+            for reason in (None, "", "   ", "x"):
+                payload = {"id": a, "expected": e["revision"], **extra}
+                if reason is not None:
+                    payload["reason"] = reason
+                with self.subTest(kind=kind, reason=reason):
+                    self.refused(kind, payload)
+
+    def test_older_history_lines_still_read(self):
+        out = self.create(classification="Current", reason="explains shipped work")
+        e = self.entry(out["id"])
+        self.assertEqual(e["history"][-1]["reason"], "explains shipped work")
+        path = self.work / "brain" / out["file"]
+        path.write_text(path.read_text(encoding="utf-8") +
+                        "- 2026-11-19 · Historical · ada — the fix — shipped\n"
+                        "- 2026-11-20 · Current · ada\n", encoding="utf-8")
+        h = self.entry(out["id"])["history"]
+        self.assertEqual([(x["actor"], x["reason"]) for x in h[-2:]],
+                         [("ada", "the fix — shipped"), ("ada", "")])
 
     def test_superseded_needs_a_resolvable_replacement_or_an_invalidation(self):
         a, b = self.two()

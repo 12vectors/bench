@@ -3,6 +3,7 @@ import { agentFor, agentOnTask, allTasks, isLiveSession, loadSession, modelChip,
 import { S } from '../app/state.js';
 import { $, esc } from '../lib/dom.js';
 import { markScroll, restoreScroll } from '../lib/keep.js';
+import { askAttrs } from '../lib/panel.js';
 import { sessionStatusWord, sessionUnavailable } from '../lib/linkwords.js';
 import { activityScope, sessionsIn } from '../lib/context.js';
 import { formatRoute } from '../lib/route.js';
@@ -205,7 +206,10 @@ function renderFocus() {
     `<span class="r" id="celapsed">${sessionElapsed(meta)} on this</span>` +
     `<span class="r" data-sstatus>${esc(sessionStatusWord(meta, live))}</span>` +
     `<button class="copylink" data-copy-link="${esc(formatRoute({ view: 'focus', session: sid, ctx: S.activityCtx || undefined }))}" ` +
-    `aria-label="copy a link to Focus on this session">Copy link</button>${stopBtn}</div>` +
+    `aria-label="copy a link to Focus on this session">Copy link</button>` +
+    // the same run in the shared panel (task 206): read, never relaunched
+    (agent && agent.id && task ? `<button type="button" class="copylink ap-open"${askAttrs('run', { agent: agent.id, card: task.file })}>Inspect in panel</button>` : '') +
+    `${stopBtn}</div>` +
     `<div class="refline">${refBits.join('<span>·</span>')}</div>` +
     `<h1 class="focus-title">${esc(task ? task.title : 'Session')}</h1>` +
     progressSection(agent, meta, task) +

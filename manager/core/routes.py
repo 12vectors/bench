@@ -28,6 +28,7 @@ import acceptance
 import agreements
 import archiveall
 import ask
+import attention
 import agents
 import artifacts
 import assets
@@ -982,6 +983,26 @@ def get_ask_facts(req) -> None:
         req.reply(404, {"error": str(exc), "code": exc.code})
 
 
+def get_attention(req) -> None:
+    # The agent activity list and its inbox (task 207): what each agent is
+    # doing or has done, which results and questions are unread here, and
+    # where each opens. A read of the inbox record: nothing is projected,
+    # written or launched by asking.
+    req.reply(200, attention.reading())
+
+
+def post_attention_ack(req) -> None:
+    # A person marks the transitions they saw as read (or one as unread),
+    # each bound to the key the page showed. Machine-local attention state
+    # only: no card, draft, run or workflow record is touched.
+    try:
+        result = attention.acknowledge(req.body)
+    except attention.Refused as exc:
+        req.reply(400, {"error": str(exc), "code": exc.code})
+        return
+    req.reply(200, result)
+
+
 def post_ask(req) -> None:
     # Ask, retry or cancel: a person's explicit request, and the only way a
     # question launches a run. Asking explains — nothing here moves a card,
@@ -1459,6 +1480,13 @@ def get_brain_reconcile(req) -> None:
     # grants, the execution owner, the budget, and every entry's state with
     # its bound inputs and receipts. A read: nothing is queued or launched.
     req.reply(200, {"reconcile": brainreconcile.reading()})
+
+
+def get_brain_health(req) -> None:
+    # The Brain's maintenance health (task 200): assessed scope and what was
+    # not inspected, findings with their next action, coverage, transition
+    # history and the repair preview. A read: nothing is queued or launched.
+    req.reply(200, {"health": brainreconcile.health()})
 
 
 def post_brain_reconcile_policy(req) -> None:
@@ -2747,6 +2775,7 @@ ROUTES = (
     Route("GET", "/api/card/acceptance", "read", get_card_acceptance),
     Route("GET", "/api/card/decisions", "read", get_card_decisions),
     Route("GET", "/api/ask", "read", get_ask),
+    Route("GET", "/api/attention", "read", get_attention),
     Route("GET", "/api/ask/thread", "read", get_ask_thread),
     Route("GET", "/api/ask/facts", "read", get_ask_facts),
     Route("GET", "/api/card/inputs", "read", get_card_inputs),
@@ -2777,6 +2806,7 @@ ROUTES = (
     Route("POST", "/api/brain/evaluate/apply", "browser-mutation",
           post_brain_evaluate_apply),
     Route("GET", "/api/brain/reconcile", "read", get_brain_reconcile),
+    Route("GET", "/api/brain/health", "read", get_brain_health),
     Route("POST", "/api/brain/reconcile/policy", "policy-mutation",
           post_brain_reconcile_policy),
     Route("POST", "/api/brain/reconcile/action", "browser-mutation",
@@ -2905,6 +2935,7 @@ ROUTES = (
     Route("POST", "/api/ask", "browser-mutation", post_ask),
     Route("POST", "/api/ask/retry", "browser-mutation", post_ask),
     Route("POST", "/api/ask/cancel", "browser-mutation", post_ask),
+    Route("POST", "/api/attention/ack", "browser-mutation", post_attention_ack),
     Route("POST", "/api/card/inputs/check", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/inputs/classify", "browser-mutation", post_card_inputs),
     Route("POST", "/api/card/result/setting", "browser-mutation", post_card_result),

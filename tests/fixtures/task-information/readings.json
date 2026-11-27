@@ -22,6 +22,8 @@
    "removed": [],
    "reports": [
     {
+     "agent": null,
+     "evidence": [],
      "at": "2026-11-09 18:02",
      "by": "Juno",
      "headline": {
@@ -32,6 +34,8 @@
      "text": "Committed on task/164-initialize-work-directories and tested: install.py now creates the work state only at the resolved work root, and a release no longer ships tasks/, plans/ or reference/. The full unittest suite passed apart from twelve failures in modules this change does not touch, which come from the run's own settings leaking into the tests.\n\n### What changed\n\n- `install.py` resolves the layout from the persisted `.env` and the environment before any write.\n- The task template moved to the tool-owned `manager/core/seed/`.\n\n### To do\n\n- Read the bench-backend log before merging."
     },
     {
+     "agent": null,
+     "evidence": [],
      "at": "2026-11-10 12:14",
      "by": "Reed",
      "headline": {
@@ -726,6 +730,8 @@
    "removed": [],
    "reports": [
     {
+     "agent": null,
+     "evidence": [],
      "at": "2026-11-18 10:41",
      "by": "Wren",
      "headline": {
@@ -736,6 +742,8 @@
      "text": "Committed and tested on task/204: Activity timestamps now name the reader's zone and sort by the recorded instant. The UTC value is in the element's title only, so it is not yet reachable by keyboard."
     },
     {
+     "agent": null,
+     "evidence": [],
      "at": "2026-11-18 14:05",
      "by": "Olive",
      "headline": {

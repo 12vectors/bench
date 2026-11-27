@@ -339,6 +339,47 @@ class Classification(_Layout):
         history = brainreviews.review("7", rv)["classification"]["history"]
         self.assertEqual([h["classification"] for h in history], ["Current", "Historical"])
 
+    def test_a_reason_is_optional_and_the_override_reason_is_not(self):
+        """Task 202: a review is classified, and corrected, with no reason,
+        an empty one or whitespace; a short comment is kept as given; the
+        history says who and when either way and invents no reason. An
+        override still needs its reason, and the record stays guarded."""
+        rv = self.ids(self.card7)["pr"][0]
+        expected = None
+        for klass, reason in (("Current", None), ("Historical", ""),
+                              ("Unclassified", "   "), ("Current", "ok")):
+            if reason is None:   # the field left out altogether
+                brainwrite.write("review-classify", {
+                    "request": self.req(), "card": "7", "review": rv,
+                    "classification": klass, "expected": expected})
+            else:
+                self.classify(rv, classification=klass, reason=reason, expected=expected)
+            expected = brainreviews.review("7", rv)["classification"]["revision"]
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual([h["classification"] for h in got["history"]],
+                         ["Current", "Historical", "Unclassified", "Current"])
+        self.assertEqual([h["reason"] for h in got["history"]], ["", "", "", "ok"])
+        self.assertEqual({h["actor"] for h in got["history"]}, {"ronald"})
+        text = (self.work / "brain" / "reviews" / f"c7-{rv}.md").read_text(encoding="utf-8")
+        self.assertNotIn("—", text.split("## Classification history")[1].splitlines()[2])
+        # Superseded still needs its structure, not a reason
+        e = brainwrite.write("create", {"request": self.req(), "title": "Replacement",
+                                        "kind": "Guide"})
+        self.classify(rv, classification="Superseded", supersededBy=e["id"], reason="",
+                      expected=expected)
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual(got["supersededBy"], e["id"])
+        self.assertEqual(got["history"][-1]["reason"], f"superseded by {e['id']}")
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Superseded", "reason": ""}, 400)
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Current", "reason": 5}, 400)
+        self.refused("review-classify", {"card": "7", "review": rv, "expected": got["revision"],
+                                         "classification": "Current", "reason": "x" * 501}, 400)
+        for reason in ("", "  ", None):
+            self.refused("review-override", {"card": "7", "review": rv, "action": "set",
+                                             "expected": got["revision"], "reason": reason}, 400)
+
     def test_override_set_and_clear(self):
         rel = self.ids(self.card7)["rel"][0]
         brainwrite.write("review-override", {"request": self.req(), "card": 7, "review": rel,
@@ -443,6 +484,137 @@ class PassiveReads(_Layout):
                 brainreviews.review(r["cardId"], r["review"])
             brainreviews.review("7", "rv-0000000000")
         self.assertEqual(tree(self.dir), before)
+
+
+class ClosedTicketDefault(_Layout):
+    """Task 201: a closed card's PR reviews read Historical by a derived
+    lifecycle default, never written; records win; reopening undoes it."""
+
+    def close(self, where: str = "done") -> Path:
+        moved = self.tasks / where / self.card7.name
+        self.card7.rename(moved)
+        self.card7 = moved
+        return moved
+
+    def readings(self) -> dict:
+        listed = {r["review"]: r for r in brainreviews.index()["reviews"] if r["cardId"] == "7"}
+        detail = {rid: brainreviews.review("7", rid)["classification"] for rid in listed}
+        return {"listed": listed, "detail": detail}
+
+    def forbidden(self):
+        def boom(*a, **k):
+            raise AssertionError("a passive read did something")
+        return [mock.patch.object(subprocess, "run", boom),
+                mock.patch.object(subprocess, "Popen", boom),
+                mock.patch.object(records, "write_json", boom),
+                mock.patch.object(records, "write_bytes", boom),
+                mock.patch.object(urllib.request, "urlopen", boom),
+                mock.patch.object(agents, "launch", boom)]
+
+    def test_done_and_archive_make_pr_reviews_historical_without_a_write(self):
+        ids = self.ids(self.card7)
+        text_before = self.card7.read_bytes()
+        for where in ("done", "archive"):
+            if where == "archive":
+                self.close("archive")
+            else:
+                self.close("done")
+            before = tree(self.dir)
+            patches = self.forbidden()
+            for p in patches:
+                p.start()
+            try:
+                got = self.readings()
+                found = brainreviews.index()
+            finally:
+                for p in patches:
+                    p.stop()
+            self.assertEqual(tree(self.dir), before, "a reading wrote something")
+            self.assertFalse((self.work / "brain").exists())
+            for rv in ids["pr"]:
+                row, det = got["listed"][rv], got["detail"][rv]
+                self.assertEqual((row["classification"], row["classified"],
+                                  row["classificationSource"]),
+                                 ("Historical", False, "closed-ticket"), where)
+                self.assertEqual((det["classification"], det["recorded"], det["source"]),
+                                 ("Historical", False, "closed-ticket"))
+                self.assertIn("lifecycle default", det["why"])
+                self.assertEqual(det["history"], [], "a decision was invented")
+                self.assertIsNone(det["override"])
+            # relevance reviews are not touched by the rule
+            rel = got["listed"][ids["rel"][0]]
+            self.assertEqual((rel["classification"], rel["classificationSource"]),
+                             ("Unclassified", "none"))
+            # counts agree with the rows they count
+            self.assertEqual(found["counts"]["Historical"], 2)
+            self.assertEqual(found["counts"]["Unclassified"], 2)
+        # report bytes, verdicts, identities, digests and links are as they were
+        self.assertEqual(self.card7.read_bytes(), text_before)
+        self.assertEqual(self.ids(self.card7), ids)
+        for rv, verdict in zip(ids["pr"], ("REQUEST CHANGES", "APPROVE")):
+            got = brainreviews.review("7", rv)
+            self.assertEqual(got["report"]["verdict"], verdict)
+            self.assertEqual(got["address"], f"/brain/r/7/{rv}")
+            self.assertEqual(got["source"]["reviewsAddress"], f"/cards/7?tab=reviews&review={rv}")
+            self.assertEqual(got["provenance"]["head"]["commit"], HEAD)
+        self.assertEqual(brain.index()["entries"], [])
+
+    def test_reopening_returns_unrecorded_reviews_to_unclassified_never_current(self):
+        rv = self.ids(self.card7)["pr"][0]
+        self.close("done")
+        self.assertEqual(brainreviews.review("7", rv)["classification"]["classification"],
+                         "Historical")
+        rev_closed = brainreviews.index()["revision"]
+        reopened = self.tasks / "in-progress" / self.card7.name
+        self.card7.rename(reopened)
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual((got["classification"], got["source"]), ("Unclassified", "none"))
+        # the page's reading revision moves with the card's stage
+        self.assertNotEqual(brainreviews.index()["revision"], rev_closed)
+
+    def test_a_persons_record_wins_on_a_closed_card_and_survives_reopening(self):
+        rv = self.ids(self.card7)["pr"][1]
+        brainwrite.write("review-classify", {"request": self.req(), "card": "7", "review": rv,
+                                             "classification": "Current",
+                                             "reason": "still explains the routing"})
+        self.close("done")
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual((got["classification"], got["source"], got["recorded"]),
+                         ("Current", "record", True))
+        row = [r for r in brainreviews.index()["reviews"] if r["review"] == rv][0]
+        self.assertEqual(row["classification"], "Current")
+        self.card7.rename(self.tasks / "review" / self.card7.name)
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual(got["classification"], "Current")
+        self.assertEqual([h["classification"] for h in got["history"]], ["Current"])
+
+    def test_an_override_on_a_closed_card_fixes_what_it_reads_as(self):
+        rv = self.ids(self.card7)["pr"][0]
+        self.close("archive")
+        brainwrite.write("review-override", {"request": self.req(), "card": "7", "review": rv,
+                                             "action": "set", "reason": "a person decided"})
+        got = brainreviews.review("7", rv)["classification"]
+        self.assertEqual((got["classification"], got["source"]), ("Historical", "record"))
+        self.assertIn("manual · ronald", got["override"])
+        # reopened, the person's record still stands
+        self.card7.rename(self.tasks / "to-do" / self.card7.name)
+        self.assertEqual(brainreviews.review("7", rv)["classification"]["classification"],
+                         "Historical")
+
+    def test_a_late_filed_review_on_a_closed_card_reads_historical_once(self):
+        self.close("done")
+        with self.card7.open("a", encoding="utf-8") as fh:
+            fh.write(filed("PR review at 0123456789ab", "PR REVIEW: APPROVE\n\nLate.",
+                           PR_PROV, at="2026-11-23 09:00", who="Sage"))
+        late = self.ids(self.card7)["pr"][-1]
+        first = brainreviews.index()
+        brainreviews._CACHE.clear()      # a restart: rebuilt from the cards
+        second = brainreviews.index()
+        self.assertEqual(first["revision"], second["revision"])
+        rows = [r for r in second["reviews"] if r["review"] == late]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["classification"], "Historical")
+        self.assertFalse((self.work / "brain").exists())
 
 
 class RelevanceBindingFromTheLaunch(ProfileCase):
