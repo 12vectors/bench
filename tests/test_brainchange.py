@@ -119,6 +119,21 @@ class Diff(unittest.TestCase):
         self.assertTrue(d["truncated"])
         self.assertGreater(d["omittedHunks"], 0)
 
+    def test_the_browser_journeys_fixture_is_four_separate_changes(self):
+        # verify/browser_cases/case_brain_changes.py navigates these by number
+        before = ("Releases are cut from main by whoever is on duty.\n\n## Prepare\n\n"
+                  "- update the changelog\n- check the version\n- tag the commit\n\n## Publish\n\n"
+                  "Check that CI is green.\n\nConfirm the version.\n\nUpload the tarball.\n\n"
+                  "## Announce\n\nPost in the channel.\n\nPost in the channel.")
+        after = ("## Prepare\n\n- update the changelog\n- check the version\n- tag the commit\n"
+                 "- ship the build notes\n\n## Publish\n\nCheck that CI is green.\n\nConfirm the version.\n\n"
+                 "Run release.sh, which uploads the tarball.\n\n## Announce\n\n"
+                 "Post in the channel.\n\nPost in the channel.\n\n## Sources and claims\n\n- x")
+        d = brainchange.diff(before, after)
+        got = [(h["kind"], h["section"]) for h in d["hunks"]]
+        self.assertEqual(got, [("delete", "Opening"), ("insert", "Prepare"),
+                               ("replace", "Publish"), ("insert", "Sources and claims")])
+
     def test_header_fields_are_compared_apart(self):
         got = brainchange.fields({"title": "A", "summary": "s", "kind": "Guide"},
                                  {"title": "B", "summary": "s", "kind": "Guide"})

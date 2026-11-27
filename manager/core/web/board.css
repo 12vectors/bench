@@ -2280,10 +2280,8 @@
   .b-link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
   .b-scope summary,.b-agent details summary{cursor:pointer;font-weight:600}
   @media (max-width:760px){.b-cols{grid-template-columns:minmax(0,1fr)}}
-  /* exact Brain changes (task 209): marked by words, a heavy edge and an
-     outline — never by colour alone — and read by a screen reader as
-     added or removed */
-  .b-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  /* exact Brain changes (task 209): marked by words and signs, a heavy
+     edge and an outline — never by colour alone */
   .b-diff-add{background:color-mix(in oklab, var(--calm) 12%, transparent)}
   .b-diff-del{background:color-mix(in oklab, var(--alarm) 10%, transparent)}
   .b-diff-sign{font-weight:700}

@@ -130,9 +130,13 @@ def diff(before: str | None, after: str | None) -> dict:
                 first_change_b, first_change_a = j1, i1
             # every section a change falls in: the new text's, and the old
             # text's for what was removed
-            named = [section_at(heads_b, j) for j in range(j1, j2)] if b else []
-            if not named or i2 > i1:
-                named += [section_at(heads_b, j1) if b else section_at(heads_a, i1)]
+            # a blank line names nothing: it belongs to whichever side it sits on
+            named = [section_at(heads_b, j) for j in range(j1, j2) if b[j].strip()] if b else []
+            if i2 > i1 and a:
+                # removed lines are named by the section they were removed from
+                named += [section_at(heads_a, i1)]
+            if not named:
+                named = [section_at(heads_b, j1) if b else "Opening"]
             for name in named:
                 if name not in touches:
                     touches.append(name)
@@ -162,8 +166,7 @@ def diff(before: str | None, after: str | None) -> dict:
         hunks.append({
             "n": len(hunks) + 1,
             "kind": kind,
-            "section": section_at(heads_b, first_change_b if first_change_b is not None
-                                  else after_at) if b else section_at(heads_a, before_at),
+            "section": touches[0] if touches else "Opening",
             "sections": touches,
             "beforeSection": section_at(heads_a, first_change_a or 0) if a else None,
             "beforeAt": first_change_a if first_change_a is not None else before_at,

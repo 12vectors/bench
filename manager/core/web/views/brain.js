@@ -1631,7 +1631,7 @@ function entryHtml(slot, id) {
    it writes and launches nothing. */
 
 const changes = {};                                  // request id -> {data, error, status, at}
-const chg = { draft: null, at: 0, focused: null };   // the change navigated on this page
+const chg = { draft: null, at: 0, focused: null, diffOpen: false };   // the change navigated on this page
 
 async function loadChange(id) {
   const k = 'c:' + id;
@@ -1673,9 +1673,7 @@ function changeLabel(h, total) {
 function hunkHtml(h) {
   const rows = (h.lines || []).map(([op, text]) =>
     `<span class="b-diff-${op === '+' ? 'add' : op === '-' ? 'del' : 'same'}">` +
-    `<span class="b-diff-sign" aria-hidden="true">${op === '+' ? '+ ' : op === '-' ? '− ' : '  '}</span>` +
-    `${op === '+' ? '<span class="b-sr">added: </span>' : op === '-' ? '<span class="b-sr">removed: </span>' : ''}` +
-    `${esc(text)}</span>`).join('\n');
+    `<span class="b-diff-sign">${op === '+' ? '+ ' : op === '-' ? '− ' : '  '}</span>${esc(text)}</span>`).join('\n');
   return `<pre class="b-diff" tabindex="0" aria-label="${esc(KIND_WORD[h.kind] || 'Changed')} lines">${rows}</pre>` +
     (h.droppedLines ? `<p class="b-note">${h.droppedLines} more line(s) of this change are not kept in the record.</p>` : '') +
     (h.renamed && h.renamed.length ? '<p class="b-note">' + h.renamed.map(r =>
@@ -1739,7 +1737,7 @@ function bodyWithChanges(body, view) {
     const removed = m.ns.flatMap(n => (hunks[n].lines || []).filter(r => r[0] === '-').map(r => r[1]));
     const gone = removed.length ? `<details class="b-chg-was"${m.kind === 'gone' ? ' open' : ''}><summary>` +
       `${m.kind === 'gone' ? 'The removed text' : 'What this replaced'} (${removed.length} line${removed.length === 1 ? '' : 's'})</summary>` +
-      `<pre class="b-diff">${removed.map(r => `<span class="b-diff-del"><span class="b-diff-sign" aria-hidden="true">− </span>${esc(r)}</span>`).join('\n')}</pre></details>` : '';
+      `<pre class="b-diff">${removed.map(r => `<span class="b-diff-del"><span class="b-diff-sign">− </span>${esc(r)}</span>`).join('\n')}</pre></details>` : '';
     out += `<section class="b-chg b-chg-${m.kind === 'gone' ? 'gone' : esc(first.kind)}" data-chg="${m.ns.join(' ')}" ` +
       `tabindex="-1" aria-label="${esc(changeLabel(first, total))}">${tags}` +
       (m.kind === 'gone' ? '' : plain(m.s, m.e)) + gone + '</section>';
@@ -1797,7 +1795,8 @@ function changeNavHtml(e, cv) {
       ` · ${esc(String(body.added || 0))} line(s) added, ${esc(String(body.removed || 0))} removed` +
       `${body.truncated ? ' · the record is bounded and leaves part of a very large change out' : ''}.</p>`
     : `<p class="b-warn">${esc(c.why || 'The exact difference was not recorded.')}</p>`;
-  const diff = hunks.length ? `<details class="b-panel b-chgdiff" id="bchg-diff"${v.state === 'current' ? '' : ' open'}>` +
+  const diff = hunks.length ? `<details class="b-panel b-chgdiff" id="bchg-diff" data-bchgdiff` +
+    `${v.state === 'current' && !chg.diffOpen ? '' : ' open'}>` +
     `<summary>Revision diff — <span class="mono">${esc((c.baseRevision || 'new entry').slice(0, 12))}</span> → ` +
     `<span class="mono">${esc((c.resultRevision || '').slice(0, 12))}</span></summary><ol class="b-chglist">` +
     hunks.map(h => `<li id="bchgd-${h.n}" tabindex="-1"><p><strong>${esc(changeLabel(h, total))}</strong>` +
@@ -1828,7 +1827,7 @@ function focusChange(k) {
   let target = document.querySelector(`#bshell #bchg-${n}`)?.closest('.b-chg');
   if (!target) {
     const fold = document.querySelector('#bshell #bchg-diff');
-    if (fold) fold.open = true;
+    if (fold) { fold.open = true; chg.diffOpen = true; }
     target = document.querySelector(`#bshell #bchgd-${n}`);
   }
   if (target) {
@@ -3034,6 +3033,8 @@ function wire(el) {
       revsOpen = d.open ? d.dataset.brevs : null;
       if (d.open) loadRevisions(d.dataset.brevs);
     }
+    // the revision diff stays as the reader left it across repaints (task 209)
+    if (d.dataset && d.dataset.bchgdiff !== undefined) chg.diffOpen = d.open;
   }, true);
   el.addEventListener('focusout', (ev) => { if (isField(ev.target)) setTimeout(() => renderBrain(), 0); });
   el.addEventListener('pointerdown', (ev) => { if (ev.isPrimary !== false) pressing().down(); });
@@ -3241,6 +3242,9 @@ function renderBrain(force) {
         : active.dataset.adop ? `[data-adop="${CSS.escape(active.dataset.adop)}"]`
         : active.dataset.hbrep ? `[data-hbrep="${CSS.escape(active.dataset.hbrep)}"]`
         : active.dataset.brainId ? `[data-brain-id="${CSS.escape(active.dataset.brainId)}"]`
+        // a change the reader moved to (task 209) keeps focus through a live repaint
+        : active.dataset.chg ? `[data-chg="${CSS.escape(active.dataset.chg)}"]`
+        : active.id && active.id.startsWith('bchgd-') ? `#${CSS.escape(active.id)}`
         : active.dataset.bact ? `[data-bact="${CSS.escape(active.dataset.bact)}"]` +
           (active.dataset.barg ? `[data-barg="${CSS.escape(active.dataset.barg)}"]` : '')
           : active.dataset.bf ? `[data-bf="${CSS.escape(active.dataset.bf)}"]` +
@@ -3268,7 +3272,7 @@ function renderBrain(force) {
   }
   // View changes (task 209): once the change and the entry have both been
   // read, the first change is scrolled to and focused — once per opening
-  if (S.brainChange !== chg.draft) { chg.draft = S.brainChange; chg.at = 0; chg.focused = null; }
+  if (S.brainChange !== chg.draft) { chg.draft = S.brainChange; chg.at = 0; chg.focused = null; chg.diffOpen = false; }
   const cv = S.brainChange ? changes[S.brainChange] : null;
   if (cv && cv.data && chg.focused !== S.brainChange && k.startsWith('e:') && !loading &&
       cache.entries[k] && cache.entries[k].data) {
